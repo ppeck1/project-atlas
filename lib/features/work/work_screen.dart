@@ -191,7 +191,7 @@ class _WorkScreenState extends State<WorkScreen> {
 
                           return ListView.separated(
                             itemCount: items.length,
-                            separatorBuilder: (_, __) =>
+                            separatorBuilder: (context, index) =>
                                 const Divider(height: 1),
                             itemBuilder: (context, i) =>
                                 _WorkTile(item: items[i]),

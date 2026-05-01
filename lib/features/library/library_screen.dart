@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../db/app_db.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/widgets/document_preview.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
@@ -39,6 +40,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
     );
     if (path == null || path.trim().isEmpty) return;
+    if (!mounted) return;
     final state = AppStateScope.of(context);
     setState(() => _status = 'Importing...');
     try {
@@ -141,7 +143,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(color: Colors.white.withAlpha(8), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white12)),
                             child: SingleChildScrollView(
-                              child: SelectableText(_selected!.renderedMarkdown ?? _selected!.parseError ?? 'No renderable preview available.'),
+                              child: DocumentPreview(document: _selected!),
                             ),
                           ),
                         ),

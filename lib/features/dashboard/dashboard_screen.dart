@@ -2,7 +2,6 @@
 import '../../shared/models/app_state_scope.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../app/app.dart'; // AppStateScope
 import '../../db/app_db.dart'; // Project model
 
 class DashboardScreen extends StatelessWidget {

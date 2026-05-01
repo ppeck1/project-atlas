@@ -163,7 +163,9 @@ class _WorkRow extends StatelessWidget {
         icon: const Icon(Icons.person_outline),
         onPressed: () async {
           final current = await state.db.getWorkOwner(item.id);
+          if (!context.mounted) return;
           final next = await _promptOwner(context, current);
+          if (!context.mounted) return;
           if (next == null) return; // cancelled
           await state.setWorkOwner(item.id, next);
         },

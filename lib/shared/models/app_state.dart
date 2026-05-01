@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -140,6 +141,29 @@ class AppState extends ChangeNotifier {
   Future<List<WorkItem>> getAllActiveWorkItems() => db.getAllActiveWorkItems();
   Future<List<WorkItem>> getTodayItems() => db.getTodayItems();
   Future<List<WorkItem>> getBlockedItems() => db.getBlockedItems();
+
+  Future<void> logEvent({
+    String level = 'info',
+    required String area,
+    required String action,
+    String? entityType,
+    String? entityId,
+    String? inputJson,
+    String? outputJson,
+    String? error,
+    String? stackTrace,
+  }) =>
+      db.logEvent(
+        level: level,
+        area: area,
+        action: action,
+        entityType: entityType,
+        entityId: entityId,
+        inputJson: inputJson,
+        outputJson: outputJson,
+        error: error,
+        stackTrace: stackTrace == null ? null : StackTrace.fromString(stackTrace),
+      );
 
   // ---------------------------------------------------------------------------
   // Governance
@@ -322,6 +346,73 @@ class AppState extends ChangeNotifier {
     );
   }
 
+  Future<OllamaResult> analyzeWorkItemReadOnly(String workItemId) async {
+    await db.logEvent(
+      area: 'work_item_analysis',
+      action: 'requested',
+      entityType: 'work_item',
+      entityId: workItemId,
+    );
+
+    final host = await getSetting(AppDb.kOllamaHost);
+    final model = await getSetting(AppDb.kOllamaModel);
+    final svc = _buildOllama(host, model);
+    final item = await getWorkItem(workItemId);
+    if (item == null) {
+      return const OllamaResult(
+        input: '',
+        output: null,
+        kind: 'work_item_analysis',
+        title: 'Work Item Analysis',
+      );
+    }
+
+    final docs = await db.getDocumentsForWorkItem(workItemId);
+    final docTexts = docs.map((doc) {
+      final text = (doc.extractedText ?? doc.renderedMarkdown ?? doc.parseError ?? '')
+          .trim();
+      return 'Document: ${doc.title}\nStatus: ${doc.status}\nText:\n${text.isEmpty ? '(no extracted text available)' : text}';
+    }).toList();
+
+    final result = await svc.analyzeWorkItemReadOnly(
+      title: item.title,
+      description: item.description,
+      status: item.status,
+      priority: item.priority,
+      blockedReason: item.blockedReason,
+      linkedDocuments: docTexts,
+    );
+
+    if (!result.isSuccess) {
+      await db.logEvent(
+        level: 'warn',
+        area: 'work_item_analysis',
+        action: 'ollama_unavailable',
+        entityType: 'work_item',
+        entityId: workItemId,
+        inputJson: result.input,
+      );
+      return result;
+    }
+
+    await db.saveWorkItemAnalysis(
+      workItemId: workItemId,
+      prompt: result.input,
+      output: result.output!,
+      model: model?.trim().isNotEmpty == true ? model!.trim() : 'mistral',
+    );
+    await db.logEvent(
+      area: 'work_item_analysis',
+      action: 'saved',
+      entityType: 'work_item',
+      entityId: workItemId,
+      inputJson: result.input,
+      outputJson: jsonEncode({'bytes': result.output!.length}),
+    );
+    notifyListeners();
+    return result;
+  }
+
 
   // ---------------------------------------------------------------------------
   // Documents
@@ -329,16 +420,100 @@ class AppState extends ChangeNotifier {
 
   Stream<List<Document>> watchDocuments() => db.watchDocuments();
 
-  Future<void> importDocumentFromPath(String path, {String? projectId}) async {
+  Stream<List<Document>> watchDocumentsForWorkItem(String workItemId) =>
+      db.watchDocumentsForWorkItem(workItemId);
+
+  Future<void> linkDocumentToWorkItem(String documentId, String workItemId) async {
+    await db.linkDocumentToWorkItem(documentId, workItemId);
+    await db.logEvent(
+      area: 'documents',
+      action: 'linked',
+      entityType: 'work_item',
+      entityId: workItemId,
+      inputJson: jsonEncode({'documentId': documentId}),
+    );
+    notifyListeners();
+  }
+
+  Future<void> unlinkDocumentFromWorkItem(String documentId, String workItemId) async {
+    await db.unlinkDocumentFromWorkItem(documentId, workItemId);
+    await db.logEvent(
+      area: 'documents',
+      action: 'unlinked',
+      entityType: 'work_item',
+      entityId: workItemId,
+      inputJson: jsonEncode({'documentId': documentId}),
+    );
+    notifyListeners();
+  }
+
+  Future<String> importDocumentFromPath(String path, {String? projectId}) async {
     try {
       await db.logEvent(area: 'documents', action: 'import_request', inputJson: path);
-      await db.importDocumentFromPath(path, projectId: projectId ?? activeProject?.id);
+      final id = await db.importDocumentFromPath(path, projectId: projectId ?? activeProject?.id);
       notifyListeners();
+      return id;
     } catch (e, st) {
       await db.logError(area: 'documents', action: 'import_failed', error: e, stackTrace: st, inputJson: path);
       rethrow;
     }
   }
+
+  Future<void> importAndLinkDocumentToWorkItem(String path, String workItemId) async {
+    final id = await importDocumentFromPath(path);
+    await linkDocumentToWorkItem(id, workItemId);
+    await db.logEvent(
+      area: 'documents',
+      action: 'imported_and_linked',
+      entityType: 'work_item',
+      entityId: workItemId,
+      inputJson: jsonEncode({'documentId': id, 'path': path}),
+    );
+  }
+
+  Stream<List<WorkItemNote>> watchNotesForWorkItem(String workItemId) =>
+      db.watchNotesForWorkItem(workItemId);
+
+  Future<void> addWorkItemNote(String workItemId, String body) async {
+    final text = body.trim();
+    if (text.isEmpty) return;
+    await db.addWorkItemNote(workItemId, text);
+    await db.logEvent(area: 'notes', action: 'created', entityType: 'work_item', entityId: workItemId);
+    notifyListeners();
+  }
+
+  Future<void> updateWorkItemNote(String noteId, String body) async {
+    final text = body.trim();
+    if (text.isEmpty) return;
+    final note = await (db.select(db.workItemNotes)..where((t) => t.id.equals(noteId)))
+        .getSingleOrNull();
+    await db.updateWorkItemNote(noteId, text);
+    await db.logEvent(
+      area: 'notes',
+      action: 'updated',
+      entityType: note == null ? 'work_item_note' : 'work_item',
+      entityId: note?.workItemId ?? noteId,
+      inputJson: jsonEncode({'noteId': noteId}),
+    );
+    notifyListeners();
+  }
+
+  Future<void> deleteWorkItemNote(String noteId) async {
+    final note = await (db.select(db.workItemNotes)..where((t) => t.id.equals(noteId)))
+        .getSingleOrNull();
+    await db.deleteWorkItemNote(noteId);
+    await db.logEvent(
+      area: 'notes',
+      action: 'deleted',
+      entityType: note == null ? 'work_item_note' : 'work_item',
+      entityId: note?.workItemId ?? noteId,
+      inputJson: jsonEncode({'noteId': noteId}),
+    );
+    notifyListeners();
+  }
+
+  Stream<List<WorkItemAnalysis>> watchAnalysesForWorkItem(String workItemId) =>
+      db.watchAnalysesForWorkItem(workItemId);
 
   Stream<List<EventLogData>> watchRecentEvents() => db.watchRecentEvents();
   Future<List<EventLogData>> getRecentEvents() => db.getRecentEvents();

@@ -11,13 +11,26 @@ import 'tables.dart';
 part 'app_db.g.dart';
 
 @DriftDatabase(
-  tables: [Projects, AppMeta, Stages, WorkItems, Drafts, DailyReviews, OutboxMessages, EventLog, Documents, DocumentLinks],
+  tables: [
+    Projects,
+    AppMeta,
+    Stages,
+    WorkItems,
+    Drafts,
+    DailyReviews,
+    OutboxMessages,
+    EventLog,
+    Documents,
+    DocumentLinks,
+    WorkItemNotes,
+    WorkItemAnalyses,
+  ],
 )
 class AppDb extends _$AppDb {
   AppDb() : super(openEncryptedExecutor());
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -75,6 +88,10 @@ class AppDb extends _$AppDb {
               status TEXT NOT NULL DEFAULT 'pending',
               error TEXT
             )''');
+          }
+          if (from < 6) {
+            await m.createTable(workItemNotes);
+            await m.createTable(workItemAnalyses);
           }
         },
       );
@@ -205,6 +222,21 @@ class AppDb extends _$AppDb {
       document_id TEXT NOT NULL,
       entity_type TEXT NOT NULL,
       entity_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS work_item_notes (
+      id TEXT NOT NULL PRIMARY KEY,
+      work_item_id TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )''');
+    await customStatement('''CREATE TABLE IF NOT EXISTS work_item_analyses (
+      id TEXT NOT NULL PRIMARY KEY,
+      work_item_id TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      output TEXT NOT NULL,
+      model TEXT,
       created_at INTEGER NOT NULL
     )''');
   }
@@ -728,6 +760,107 @@ class AppDb extends _$AppDb {
   Stream<List<Document>> watchDocuments() =>
       (select(documents)..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
 
+  Stream<List<Document>> watchDocumentsForWorkItem(String workItemId) {
+    final query = select(documents).join([
+      innerJoin(documentLinks, documentLinks.documentId.equalsExp(documents.id)),
+    ])
+      ..where(documentLinks.entityType.equals('work_item') &
+          documentLinks.entityId.equals(workItemId))
+      ..orderBy([OrderingTerm.desc(documents.createdAt)]);
+    return query.watch().map(
+          (rows) => rows.map((row) => row.readTable(documents)).toList(),
+        );
+  }
+
+  Future<List<Document>> getDocumentsForWorkItem(String workItemId) async {
+    final query = select(documents).join([
+      innerJoin(documentLinks, documentLinks.documentId.equalsExp(documents.id)),
+    ])
+      ..where(documentLinks.entityType.equals('work_item') &
+          documentLinks.entityId.equals(workItemId))
+      ..orderBy([OrderingTerm.desc(documents.createdAt)]);
+    final rows = await query.get();
+    return rows.map((row) => row.readTable(documents)).toList();
+  }
+
+  Future<void> linkDocumentToWorkItem(String documentId, String workItemId) async {
+    final existing = await (select(documentLinks)
+          ..where((t) =>
+              t.documentId.equals(documentId) &
+              t.entityType.equals('work_item') &
+              t.entityId.equals(workItemId)))
+        .getSingleOrNull();
+    if (existing != null) return;
+    await into(documentLinks).insert(DocumentLinksCompanion.insert(
+      id: _newId(),
+      documentId: documentId,
+      entityType: 'work_item',
+      entityId: workItemId,
+      createdAt: DateTime.now(),
+    ));
+  }
+
+  Future<void> unlinkDocumentFromWorkItem(String documentId, String workItemId) =>
+      (delete(documentLinks)
+            ..where((t) =>
+                t.documentId.equals(documentId) &
+                t.entityType.equals('work_item') &
+                t.entityId.equals(workItemId)))
+          .go();
+
+  // -------------------------------------------------------------------------
+  // Work item notes and read-only analyses
+  // -------------------------------------------------------------------------
+
+  Stream<List<WorkItemNote>> watchNotesForWorkItem(String workItemId) =>
+      (select(workItemNotes)
+            ..where((t) => t.workItemId.equals(workItemId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
+
+  Future<void> addWorkItemNote(String workItemId, String body) async {
+    final now = DateTime.now();
+    await into(workItemNotes).insert(WorkItemNotesCompanion.insert(
+      id: _newId(),
+      workItemId: workItemId,
+      body: body,
+      createdAt: now,
+      updatedAt: now,
+    ));
+  }
+
+  Future<void> updateWorkItemNote(String noteId, String body) =>
+      (update(workItemNotes)..where((t) => t.id.equals(noteId))).write(
+        WorkItemNotesCompanion(
+          body: Value(body),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+
+  Future<void> deleteWorkItemNote(String noteId) =>
+      (delete(workItemNotes)..where((t) => t.id.equals(noteId))).go();
+
+  Stream<List<WorkItemAnalysis>> watchAnalysesForWorkItem(String workItemId) =>
+      (select(workItemAnalyses)
+            ..where((t) => t.workItemId.equals(workItemId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
+
+  Future<void> saveWorkItemAnalysis({
+    required String workItemId,
+    required String prompt,
+    required String output,
+    String? model,
+  }) async {
+    await into(workItemAnalyses).insert(WorkItemAnalysesCompanion.insert(
+      id: _newId(),
+      workItemId: workItemId,
+      prompt: prompt,
+      output: output,
+      model: Value(model),
+      createdAt: DateTime.now(),
+    ));
+  }
 
   // -------------------------------------------------------------------------
   // Outbox ��������� returns the ID so callers can mark sent/failed

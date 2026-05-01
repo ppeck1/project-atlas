@@ -180,3 +180,27 @@ class DocumentLinks extends Table {
   @override
   Set<Column> get primaryKey => {id};
 }
+
+class WorkItemNotes extends Table {
+  TextColumn get id => text()();
+  TextColumn get workItemId => text()();
+  TextColumn get body => text()();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DataClassName('WorkItemAnalysis')
+class WorkItemAnalyses extends Table {
+  TextColumn get id => text()();
+  TextColumn get workItemId => text()();
+  TextColumn get prompt => text()();
+  TextColumn get output => text()();
+  TextColumn get model => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}

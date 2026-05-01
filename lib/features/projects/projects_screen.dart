@@ -1,7 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import '../../shared/models/app_state_scope.dart';
 import 'package:go_router/go_router.dart';
-import '../../app/app.dart';
 import '../../db/app_db.dart';
 import '../../shared/widgets/create_project_dialog.dart';
 
@@ -44,7 +43,7 @@ class ProjectsScreen extends StatelessWidget {
 
                 return ListView.separated(
                   itemCount: projects.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (context, index) => const Divider(height: 1),
                   itemBuilder: (context, i) {
                     final p = projects[i];
                     final isActive = p.id == activeId;

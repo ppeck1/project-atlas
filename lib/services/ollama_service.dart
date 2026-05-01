@@ -191,6 +191,50 @@ Extract the actionable tasks now.
       title: 'Extracted Tasks from Notes',
     );
   }
+
+  Future<OllamaResult> analyzeWorkItemReadOnly({
+    required String title,
+    required String? description,
+    required String status,
+    required String priority,
+    required String? blockedReason,
+    required List<String> linkedDocuments,
+  }) async {
+    const system = '''
+You are reading a Project Atlas work item and its linked documents.
+
+Do not modify anything.
+Do not invent missing facts.
+Separate observed facts from interpretation.
+Return:
+1. Summary
+2. Relevant document findings
+3. Blockers / ambiguity
+4. Suggested next actions
+5. Risks
+6. Open questions
+''';
+
+    final user = '''
+Work item:
+Title: $title
+Description: ${description?.trim().isNotEmpty == true ? description : '(none)'}
+Status: $status
+Priority: $priority
+Blocked reason: ${blockedReason?.trim().isNotEmpty == true ? blockedReason : '(none)'}
+
+Linked documents:
+${linkedDocuments.isEmpty ? '(none)' : linkedDocuments.join('\n\n---\n\n')}
+''';
+
+    final output = await _chat(system, user);
+    return OllamaResult(
+      input: user,
+      output: output,
+      kind: 'work_item_analysis',
+      title: 'Work Item Analysis - $title',
+    );
+  }
 }
 
 class OllamaResult {

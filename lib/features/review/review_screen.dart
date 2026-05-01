@@ -249,19 +249,19 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 const SizedBox(height: 12),
 
                 if (_blocked.isNotEmpty) ...[
-                  _SectionHeader('������������ Blocked', Colors.red),
+                  _sectionHeader('������������ Blocked', Colors.red),
                   ..._blocked.map((i) => _ReviewTile(item: i, showBlocked: true)),
                   const SizedBox(height: 16),
                 ],
 
                 if (_overdue.isNotEmpty) ...[
-                  _SectionHeader('������������ Overdue', Colors.red.shade300),
+                  _sectionHeader('������������ Overdue', Colors.red.shade300),
                   ..._overdue.map((i) => _ReviewTile(item: i)),
                   const SizedBox(height: 16),
                 ],
 
                 if (_dueToday.isNotEmpty) ...[
-                  _SectionHeader('������������ Due Today', Colors.orange),
+                  _sectionHeader('������������ Due Today', Colors.orange),
                   ..._dueToday.map((i) => _ReviewTile(item: i)),
                   const SizedBox(height: 16),
                 ],
@@ -269,7 +269,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 if (_allActive
                     .where((i) => i.status == 'doing')
                     .isNotEmpty) ...[
-                  _SectionHeader('������������ In Progress', Colors.amber),
+                  _sectionHeader('������������ In Progress', Colors.amber),
                   ..._allActive
                       .where((i) => i.status == 'doing')
                       .map((i) => _ReviewTile(item: i)),
@@ -360,7 +360,7 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-Widget _SectionHeader(String label, Color color) {
+Widget _sectionHeader(String label, Color color) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: Text(

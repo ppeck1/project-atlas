@@ -90,7 +90,9 @@ class TelegramService {
     void section(String header, List<String> lines) {
       if (lines.isEmpty) return;
       buf.writeln('<b>$header</b>');
-      for (final l in lines) buf.writeln(l);
+      for (final l in lines) {
+        buf.writeln(l);
+      }
       buf.writeln();
     }
 

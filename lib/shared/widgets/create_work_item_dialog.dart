@@ -77,7 +77,7 @@ Future<Map<String, String?>?> showCreateWorkItemDialog(
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: status,
+                          initialValue: status,
                           decoration: const InputDecoration(
                             labelText: 'Status',
                             border: OutlineInputBorder(),
@@ -100,7 +100,7 @@ Future<Map<String, String?>?> showCreateWorkItemDialog(
                       const SizedBox(width: 10),
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: priority,
+                          initialValue: priority,
                           decoration: const InputDecoration(
                             labelText: 'Priority',
                             border: OutlineInputBorder(),
