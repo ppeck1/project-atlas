@@ -1,8 +1,7 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../shared/models/app_state_scope.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../app/app.dart'; // AppStateScope
 import '../../db/app_db.dart'; // Project model
 
 class DashboardScreen extends StatelessWidget {
@@ -47,10 +46,15 @@ class DashboardScreen extends StatelessWidget {
                           children: [
                             const Text(
                               'No projects yet',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                             const SizedBox(height: 8),
-                            const Text('Create a project to start tracking work.'),
+                            const Text(
+                              'Create a project to start tracking work.',
+                            ),
                             const SizedBox(height: 12),
                             Row(
                               children: [
@@ -60,7 +64,7 @@ class DashboardScreen extends StatelessWidget {
                                   label: const Text('Create / Select Project'),
                                 ),
                               ],
-                            )
+                            ),
                           ],
                         ),
                       ),
@@ -117,7 +121,9 @@ class _ActiveHeader extends StatelessWidget {
               const Icon(Icons.info_outline),
               const SizedBox(width: 12),
               const Expanded(
-                child: Text('No active project selected. Go to Projects to pick one.'),
+                child: Text(
+                  'No active project selected. Go to Projects to pick one.',
+                ),
               ),
               TextButton(
                 onPressed: () => context.go('/projects'),
@@ -147,7 +153,10 @@ class _ActiveHeader extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     active!.title,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ],
               ),
@@ -198,4 +207,3 @@ class _ProjectCard extends StatelessWidget {
     );
   }
 }
-

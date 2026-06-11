@@ -1,11 +1,20 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../db/app_db.dart';
+import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/widgets/document_preview.dart';
+import '../../shared/widgets/contact_picker.dart';
 import '../work/status_priority_helpers.dart';
 
 /// Opens a bottom sheet to view/edit a work item.
-Future<void> showWorkItemDetailSheet(BuildContext context, String itemId) async {
+Future<void> showWorkItemDetailSheet(
+  BuildContext context,
+  String itemId,
+) async {
   await showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -23,15 +32,21 @@ class _WorkItemDetailSheet extends StatefulWidget {
 }
 
 class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
+  late AppState _state;
   WorkItem? _item;
   bool _loading = true;
   bool _saving = false;
+  bool _didLoad = false;
+  bool _draftingEmail = false;
+  bool _runningAnalysis = false;
+  Document? _selectedDocument;
 
   late TextEditingController _titleCtrl;
   late TextEditingController _descCtrl;
   late TextEditingController _ownerCtrl;
   late TextEditingController _blockedCtrl;
   late TextEditingController _emailInstCtrl;
+  late TextEditingController _noteCtrl;
 
   String _status = 'next';
   String _priority = 'normal';
@@ -46,49 +61,99 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
     _ownerCtrl = TextEditingController();
     _blockedCtrl = TextEditingController();
     _emailInstCtrl = TextEditingController();
-    _load();
+    _noteCtrl = TextEditingController();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _state = AppStateScope.of(context);
+    if (_didLoad) return;
+    _didLoad = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
   }
 
   Future<void> _load() async {
-    final state = AppStateScope.of(context);
-    final item = await state.getWorkItem(widget.itemId);
-    if (item != null && mounted) {
+    try {
+      await _state.db.logEvent(
+        area: 'ui',
+        action: 'work_item_open_request',
+        entityType: 'work_item',
+        entityId: widget.itemId,
+      );
+      final item = await _state.getWorkItem(widget.itemId);
+      if (!mounted) return;
       setState(() {
         _item = item;
-        _titleCtrl.text = item.title;
-        _descCtrl.text = item.description ?? '';
-        _ownerCtrl.text = item.owner ?? '';
-        _blockedCtrl.text = item.blockedReason ?? '';
-        _status = item.status;
-        _priority = item.priority;
-        _dueAt = item.dueAt;
-        _phoneQueue = item.phoneQueue;
+        if (item != null) {
+          _titleCtrl.text = item.title;
+          _descCtrl.text = item.description ?? '';
+          _ownerCtrl.text = item.owner ?? '';
+          _blockedCtrl.text = item.blockedReason ?? '';
+          _status = normalizeStatusValue(item.status);
+          _priority = normalizePriorityValue(item.priority);
+          _dueAt = item.dueAt;
+          _phoneQueue = item.phoneQueue;
+        }
         _loading = false;
       });
+      if (item == null) {
+        await _state.db.logEvent(
+          level: 'error',
+          area: 'ui',
+          action: 'work_item_detail_load_missing',
+          entityType: 'work_item',
+          entityId: widget.itemId,
+          inputJson: widget.itemId,
+        );
+      } else {
+        await _state.db.logEvent(
+          area: 'ui',
+          action: 'work_item_open_success',
+          entityType: 'work_item',
+          entityId: widget.itemId,
+        );
+      }
+    } catch (e, st) {
+      if (!mounted) return;
+      setState(() {
+        _item = null;
+        _loading = false;
+      });
+      await _state.db.logError(
+        area: 'work_item_detail',
+        action: 'load_failed',
+        entityType: 'work_item',
+        entityId: widget.itemId,
+        error: e,
+        stackTrace: st,
+      );
     }
   }
 
   Future<void> _save() async {
-    final state = AppStateScope.of(context);
     setState(() => _saving = true);
-
-    await state.updateWorkItem(
+    await _state.updateWorkItem(
       id: widget.itemId,
       title: _titleCtrl.text.trim(),
       description: _descCtrl.text.trim(),
       owner: _ownerCtrl.text.trim(),
-      status: _status,
-      priority: _priority,
+      status: normalizeStatusValue(_status),
+      priority: normalizePriorityValue(_priority),
       clearDueAt: _dueAt == null,
       dueAt: _dueAt,
       blockedReason: _blockedCtrl.text.trim(),
       clearBlockedReason: _blockedCtrl.text.trim().isEmpty,
       phoneQueue: _phoneQueue,
     );
-
     if (mounted) {
       setState(() => _saving = false);
-      Navigator.of(context).pop();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Work item saved.')));
     }
   }
 
@@ -104,19 +169,11 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
 
   Future<void> _showEmailDraft() async {
     final inst = _emailInstCtrl.text.trim();
-    if (inst.isEmpty) return;
-
-    final state = AppStateScope.of(context);
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-
-    final result = await state.draftEmailForTask(widget.itemId, inst);
-
+    if (inst.isEmpty || _draftingEmail) return;
+    setState(() => _draftingEmail = true);
+    final result = await _state.draftEmailForTask(widget.itemId, inst);
     if (!mounted) return;
-    Navigator.of(context).pop(); // dismiss loading
+    setState(() => _draftingEmail = false);
 
     if (!result.isSuccess) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -127,20 +184,198 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
       return;
     }
 
-    // Show the draft for human review
     await showDialog(
       context: context,
       builder: (ctx) => _OllamaDraftDialog(
         title: 'Email Draft',
         body: result.output!,
         onSave: () async {
-          await state.saveDraft(
+          await _state.saveDraft(
             kind: 'email_draft',
             title: result.title,
             body: result.output!,
             workItemId: widget.itemId,
           );
         },
+      ),
+    );
+  }
+
+  Future<void> _addNote() async {
+    final body = _noteCtrl.text.trim();
+    if (body.isEmpty) return;
+    await _state.addWorkItemNote(widget.itemId, body);
+    _noteCtrl.clear();
+  }
+
+  Future<void> _editNote(WorkItemNote note) async {
+    final ctrl = TextEditingController(text: note.body);
+    final updated = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit note'),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 6,
+          decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (updated != null) await _state.updateWorkItemNote(note.id, updated);
+  }
+
+  Future<void> _deleteNote(WorkItemNote note) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete note?'),
+        content: const Text('This note will be removed from the work item.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await _state.deleteWorkItemNote(note.id);
+  }
+
+  Future<void> _linkExistingDocument(List<Document> alreadyLinked) async {
+    final linkedIds = alreadyLinked.map((d) => d.id).toSet();
+    final document = await showDialog<Document>(
+      context: context,
+      builder: (ctx) => Dialog(
+        child: SizedBox(
+          width: 520,
+          height: 520,
+          child: StreamBuilder<List<Document>>(
+            stream: _state.watchDocuments(),
+            builder: (context, snap) {
+              final docs = snap.data ?? const <Document>[];
+              return Column(
+                children: [
+                  const ListTile(title: Text('Link existing document')),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: docs.isEmpty
+                        ? const Center(child: Text('No library documents yet.'))
+                        : ListView.builder(
+                            itemCount: docs.length,
+                            itemBuilder: (context, index) {
+                              final d = docs[index];
+                              final linked = linkedIds.contains(d.id);
+                              return ListTile(
+                                leading: const Icon(Icons.description_outlined),
+                                title: Text(d.title),
+                                subtitle: Text(d.originalFilename),
+                                enabled: !linked,
+                                trailing: linked ? const Text('Linked') : null,
+                                onTap: linked
+                                    ? null
+                                    : () => Navigator.pop(ctx, d),
+                              );
+                            },
+                          ),
+                  ),
+                  ButtonBar(
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    if (document != null) {
+      await _state.linkDocumentToWorkItem(document.id, widget.itemId);
+      if (mounted) setState(() => _selectedDocument = document);
+    }
+  }
+
+  Future<void> _importDocument() async {
+    final ctrl = TextEditingController();
+    final path = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import document'),
+        content: TextField(
+          controller: ctrl,
+          decoration: const InputDecoration(
+            labelText: 'Local file path',
+            hintText: r'C:\Users\you\Documents\spec.md',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (_) => Navigator.pop(ctx, ctrl.text.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Import'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (path == null || path.trim().isEmpty) return;
+    try {
+      await _state.importDocumentFromPath(path.trim());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Document imported. Use Link existing document to attach it.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+      }
+    }
+  }
+
+  Future<void> _runAnalysis() async {
+    if (_runningAnalysis) return;
+    setState(() => _runningAnalysis = true);
+    final result = await _state.analyzeWorkItemReadOnly(widget.itemId);
+    if (!mounted) return;
+    setState(() => _runningAnalysis = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.isSuccess
+              ? 'Analysis saved.'
+              : 'AI analysis failed. Check Log for details.',
+        ),
       ),
     );
   }
@@ -152,6 +387,7 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
     _ownerCtrl.dispose();
     _blockedCtrl.dispose();
     _emailInstCtrl.dispose();
+    _noteCtrl.dispose();
     super.dispose();
   }
 
@@ -159,283 +395,569 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
   Widget build(BuildContext context) {
     if (_loading) {
       return const SizedBox(
-        height: 200,
+        height: 260,
         child: Center(child: CircularProgressIndicator()),
       );
     }
     if (_item == null) {
-      return const SizedBox(
-        height: 200,
-        child: Center(child: Text('Item not found.')),
+      return SizedBox(
+        height: 320,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, size: 32),
+                const SizedBox(height: 12),
+                const Text(
+                  'Work item could not be loaded.',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 12),
+                const Text('Requested ID:'),
+                SelectableText(widget.itemId),
+                const SizedBox(height: 12),
+                const Text(
+                  'This usually means the row passed the wrong ID. Check Log for known work item IDs.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
     return DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.85,
-      maxChildSize: 0.95,
+      initialChildSize: 0.9,
+      maxChildSize: 0.96,
       builder: (_, scrollCtrl) => Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(context).viewInsets.bottom,
         ),
-        child: Column(
+        child: DefaultTabController(
+          length: 6,
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _item!.title,
+                        style: Theme.of(context).textTheme.titleMedium,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              const TabBar(
+                isScrollable: true,
+                tabs: [
+                  Tab(text: 'Details'),
+                  Tab(text: 'Notes'),
+                  Tab(text: 'Documents'),
+                  Tab(text: 'AI Analysis'),
+                  Tab(text: 'Email Draft'),
+                  Tab(text: 'Activity'),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _detailsTab(scrollCtrl),
+                    _notesTab(),
+                    _documentsTab(),
+                    _analysisTab(),
+                    _emailTab(),
+                    _activityTab(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailsTab(ScrollController scrollCtrl) {
+    return ListView(
+      controller: scrollCtrl,
+      padding: const EdgeInsets.all(20),
+      children: [
+        TextField(
+          controller: _titleCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Title',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _descCtrl,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: 'Description',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
           children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(2),
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: normalizeStatusValue(_status),
+                decoration: const InputDecoration(
+                  labelText: 'Status',
+                  border: OutlineInputBorder(),
+                ),
+                items: statusOptions
+                    .map(
+                      (s) => DropdownMenuItem(
+                        value: s.value,
+                        child: Text(s.label),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) setState(() => _status = v);
+                },
               ),
             ),
+            const SizedBox(width: 12),
             Expanded(
-              child: ListView(
-                controller: scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                children: [
-                  // Title
-                  Text(
-                    'Edit Task',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _titleCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Title',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _descCtrl,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Description (optional)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Status + Priority row
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Status',
-                                style: TextStyle(fontSize: 12, color: Colors.white54)),
-                            const SizedBox(height: 6),
-                            DropdownButtonFormField<String>(
-                              value: _status,
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                                contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                              ),
-                              items: statusOptions
-                                  .map((s) => DropdownMenuItem(
-                                        value: s.value,
-                                        child: Row(
-                                          children: [
-                                            Icon(s.icon, size: 16, color: s.color),
-                                            const SizedBox(width: 8),
-                                            Text(s.label),
-                                          ],
-                                        ),
-                                      ))
-                                  .toList(),
-                              onChanged: (v) {
-                                if (v != null) setState(() => _status = v);
-                              },
-                            ),
-                          ],
-                        ),
+              child: DropdownButtonFormField<String>(
+                value: normalizePriorityValue(_priority),
+                decoration: const InputDecoration(
+                  labelText: 'Priority',
+                  border: OutlineInputBorder(),
+                ),
+                items: priorityOptions
+                    .map(
+                      (p) => DropdownMenuItem(
+                        value: p.value,
+                        child: Text(p.label),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Priority',
-                                style: TextStyle(fontSize: 12, color: Colors.white54)),
-                            const SizedBox(height: 6),
-                            DropdownButtonFormField<String>(
-                              value: _priority,
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                                contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                              ),
-                              items: priorityOptions
-                                  .map((p) => DropdownMenuItem(
-                                        value: p.value,
-                                        child: Row(
-                                          children: [
-                                            Container(
-                                              width: 10,
-                                              height: 10,
-                                              decoration: BoxDecoration(
-                                                color: p.color,
-                                                shape: BoxShape.circle,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(p.label),
-                                          ],
-                                        ),
-                                      ))
-                                  .toList(),
-                              onChanged: (v) {
-                                if (v != null) setState(() => _priority = v);
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Owner + Due date row
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _ownerCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Owner',
-                            prefixIcon: Icon(Icons.person_outline, size: 18),
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: InkWell(
-                          onTap: _pickDueDate,
-                          borderRadius: BorderRadius.circular(4),
-                          child: InputDecorator(
-                            decoration: const InputDecoration(
-                              labelText: 'Due date',
-                              prefixIcon:
-                                  Icon(Icons.calendar_today, size: 18),
-                              border: OutlineInputBorder(),
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    _dueAt != null
-                                        ? '${_dueAt!.month}/${_dueAt!.day}/${_dueAt!.year}'
-                                        : 'None',
-                                    style: TextStyle(
-                                      color: _dueAt != null
-                                          ? Colors.white
-                                          : Colors.white38,
-                                    ),
-                                  ),
-                                ),
-                                if (_dueAt != null)
-                                  GestureDetector(
-                                    onTap: () =>
-                                        setState(() => _dueAt = null),
-                                    child: const Icon(Icons.clear,
-                                        size: 16, color: Colors.white38),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Blocked reason
-                  TextField(
-                    controller: _blockedCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Blocked reason (leave empty if not blocked)',
-                      prefixIcon: Icon(Icons.block, size: 18, color: Colors.red),
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Phone queue toggle
-                  SwitchListTile(
-                    value: _phoneQueue,
-                    onChanged: (v) => setState(() => _phoneQueue = v),
-                    title: const Text('Phone queue / Follow-up call needed'),
-                    secondary: const Icon(Icons.phone, size: 20),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                  const Divider(height: 24),
-
-                  // Email draft via Ollama
-                  const Text(
-                    'Draft email with AI',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 13),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Output is shown for your review before saving.',
-                    style: TextStyle(fontSize: 12, color: Colors.white54),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _emailInstCtrl,
-                          decoration: const InputDecoration(
-                            hintText: 'e.g. "Follow up on delayed delivery"',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed: _showEmailDraft,
-                        child: const Text('Draft'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Actions
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('Cancel'),
-                      ),
-                      const SizedBox(width: 12),
-                      FilledButton(
-                        onPressed: _saving ? null : _save,
-                        child: _saving
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
-                              )
-                            : const Text('Save'),
-                      ),
-                    ],
-                  ),
-                ],
+                    )
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) setState(() => _priority = v);
+                },
               ),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: ContactOwnerField(controller: _ownerCtrl)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _pickDueDate,
+                icon: const Icon(Icons.calendar_today, size: 18),
+                label: Text(
+                  _dueAt == null
+                      ? 'No due date'
+                      : '${_dueAt!.month}/${_dueAt!.day}/${_dueAt!.year}',
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _blockedCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Blocked reason',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        SwitchListTile(
+          value: _phoneQueue,
+          onChanged: (v) => setState(() => _phoneQueue = v),
+          title: const Text('Phone queue / follow-up call needed'),
+          contentPadding: EdgeInsets.zero,
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.icon(
+            onPressed: _saving ? null : _save,
+            icon: _saving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save_outlined),
+            label: const Text('Save Details'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _notesTab() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _noteCtrl,
+                  minLines: 1,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Add note',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(onPressed: _addNote, child: const Text('Add')),
+            ],
+          ),
+        ),
+        Expanded(
+          child: StreamBuilder<List<WorkItemNote>>(
+            stream: _state.watchNotesForWorkItem(widget.itemId),
+            builder: (context, snap) {
+              final notes = snap.data ?? const <WorkItemNote>[];
+              if (notes.isEmpty)
+                return const Center(child: Text('No notes yet.'));
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: notes.length,
+                itemBuilder: (context, index) {
+                  final n = notes[index];
+                  return Card(
+                    child: ListTile(
+                      title: SelectableText(n.body),
+                      subtitle: Text('Updated ${n.updatedAt}'),
+                      trailing: Wrap(
+                        spacing: 4,
+                        children: [
+                          IconButton(
+                            onPressed: () => _editNote(n),
+                            icon: const Icon(Icons.edit_outlined),
+                          ),
+                          IconButton(
+                            onPressed: () => _deleteNote(n),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _documentsTab() {
+    return StreamBuilder<List<Document>>(
+      stream: _state.watchDocumentsForWorkItem(widget.itemId),
+      builder: (context, snap) {
+        final docs = snap.data ?? const <Document>[];
+        final selected =
+            _selectedDocument != null &&
+                docs.any((d) => d.id == _selectedDocument!.id)
+            ? _selectedDocument!
+            : (docs.isNotEmpty ? docs.first : null);
+        return Row(
+          children: [
+            SizedBox(
+              width: 300,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () => _linkExistingDocument(docs),
+                          icon: const Icon(Icons.link),
+                          label: const Text('Link existing document'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _importDocument,
+                          icon: const Icon(Icons.upload_file),
+                          label: const Text('Import document'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: docs.isEmpty
+                        ? const Center(child: Text('No linked documents yet.'))
+                        : ListView.builder(
+                            itemCount: docs.length,
+                            itemBuilder: (context, index) {
+                              final d = docs[index];
+                              return ListTile(
+                                selected: selected?.id == d.id,
+                                leading: const Icon(Icons.description_outlined),
+                                title: Text(
+                                  d.title,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  d.originalFilename,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                onTap: () =>
+                                    setState(() => _selectedDocument = d),
+                                trailing: IconButton(
+                                  tooltip: 'Unlink',
+                                  icon: const Icon(Icons.link_off),
+                                  onPressed: () =>
+                                      _state.unlinkDocumentFromWorkItem(
+                                        d.id,
+                                        widget.itemId,
+                                      ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: selected == null
+                  ? const Center(
+                      child: Text('Select a linked document to preview it.'),
+                    )
+                  : Column(
+                      children: [
+                        ListTile(
+                          title: Text(
+                            selected.title,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Wrap(
+                            spacing: 8,
+                            children: [
+                              IconButton(
+                                tooltip: 'Open original',
+                                icon: const Icon(Icons.open_in_new),
+                                onPressed: selected.storedPath == null
+                                    ? null
+                                    : () => Process.start('explorer.exe', [
+                                        selected.storedPath!,
+                                      ]),
+                              ),
+                              IconButton(
+                                tooltip: 'Copy text',
+                                icon: const Icon(Icons.copy),
+                                onPressed: () {
+                                  Clipboard.setData(
+                                    ClipboardData(
+                                      text:
+                                          selected.renderedMarkdown ??
+                                          selected.extractedText ??
+                                          '',
+                                    ),
+                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Copied document text.'),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        Expanded(child: DocumentPreview(document: selected)),
+                      ],
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _analysisTab() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Read-only analysis can summarize, identify blockers, list next actions, flag ambiguity, and estimate risk. It does not mutate tasks, documents, or notes.',
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: _runningAnalysis ? null : _runAnalysis,
+                icon: _runningAnalysis
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.psychology_outlined),
+                label: const Text('Run Analysis'),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: StreamBuilder<List<WorkItemAnalysis>>(
+            stream: _state.watchAnalysesForWorkItem(widget.itemId),
+            builder: (context, snap) {
+              final analyses = snap.data ?? const <WorkItemAnalysis>[];
+              if (analyses.isEmpty)
+                return const Center(child: Text('No saved analyses yet.'));
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: analyses.length,
+                itemBuilder: (context, index) {
+                  final a = analyses[index];
+                  return Card(
+                    child: ExpansionTile(
+                      title: Text(
+                        a.model == null
+                            ? 'Saved analysis'
+                            : 'Saved analysis - ${a.model}',
+                      ),
+                      subtitle: Text(a.createdAt.toString()),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: SelectableText(a.output),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _emailTab() {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const Text('Output is shown for your review before saving.'),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _emailInstCtrl,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            hintText: 'e.g. Follow up on delayed delivery',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.icon(
+            onPressed: _draftingEmail ? null : _showEmailDraft,
+            icon: _draftingEmail
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.auto_awesome),
+            label: const Text('Draft Email'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _activityTab() {
+    return StreamBuilder<List<EventLogData>>(
+      stream: _state.watchRecentEvents(),
+      builder: (context, snap) {
+        final events = (snap.data ?? const <EventLogData>[])
+            .where(
+              (e) =>
+                  e.entityId == widget.itemId ||
+                  e.inputJson?.contains(widget.itemId) == true,
+            )
+            .toList(growable: false);
+        if (events.isEmpty)
+          return const Center(
+            child: Text('No activity logged for this work item yet.'),
+          );
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: events.length,
+          itemBuilder: (context, index) {
+            final e = events[index];
+            return Card(
+              child: ExpansionTile(
+                title: Text('${e.area}.${e.action}'),
+                subtitle: Text('${e.level} - ${e.timestamp}'),
+                children: [
+                  if (e.inputJson != null)
+                    ListTile(
+                      title: const Text('Input'),
+                      subtitle: SelectableText(e.inputJson!),
+                    ),
+                  if (e.outputJson != null)
+                    ListTile(
+                      title: const Text('Output'),
+                      subtitle: SelectableText(e.outputJson!),
+                    ),
+                  if (e.error != null)
+                    ListTile(
+                      title: const Text('Error'),
+                      subtitle: SelectableText(e.error!),
+                    ),
+                  if (e.stackTrace != null)
+                    ListTile(
+                      title: const Text('Stack'),
+                      subtitle: SelectableText(e.stackTrace!),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -463,7 +985,6 @@ class _OllamaDraftDialog extends StatelessWidget {
           children: [
             const Text(
               'Review the AI output below. Save it as a draft or discard.',
-              style: TextStyle(fontSize: 12, color: Colors.white54),
             ),
             const SizedBox(height: 12),
             Container(
@@ -490,9 +1011,9 @@ class _OllamaDraftDialog extends StatelessWidget {
             await onSave();
             if (context.mounted) {
               Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Saved to Drafts.')),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('Saved to Drafts.')));
             }
           },
           child: const Text('Save Draft'),

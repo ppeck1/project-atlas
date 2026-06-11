@@ -12,7 +12,7 @@ class OllamaService {
 
   OllamaService({
     this.host = 'http://localhost:11434',
-    this.model = 'mistral',
+    this.model = 'qwen3.5:9b',
   });
 
   /// Check whether Ollama is reachable.
@@ -48,7 +48,8 @@ class OllamaService {
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
-        return (data['message'] as Map<String, dynamic>?)?['content'] as String?;
+        return (data['message'] as Map<String, dynamic>?)?['content']
+            as String?;
       }
       return null;
     } catch (e) {
@@ -69,7 +70,8 @@ executive summary (3–5 sentences) covering: what is in progress, what is
 blocked, and any notable completions. Be direct and specific. No fluff.
 ''';
 
-    final user = '''
+    final user =
+        '''
 Project: $projectTitle
 
 Active tasks:
@@ -106,7 +108,8 @@ brief action-oriented daily briefing (4–6 sentences). Focus on: what to
 tackle first, what is at risk, and what needs follow-up. Be concrete.
 ''';
 
-    final user = '''
+    final user =
+        '''
 Doing now:
 ${doingItems.isEmpty ? '(none)' : doingItems.map((t) => '- $t').join('\n')}
 
@@ -144,7 +147,8 @@ messages. Include a subject line starting with "Subject: ". Be specific and
 action-oriented. Do not be verbose.
 ''';
 
-    final user = '''
+    final user =
+        '''
 Task: $taskTitle
 ${taskDescription != null ? 'Context: $taskDescription' : ''}
 ${blockedReason != null ? 'Blocked because: $blockedReason' : ''}
@@ -163,6 +167,61 @@ Draft the email now.
     );
   }
 
+  /// Read-only advisory analysis for one work item and its linked documents.
+  Future<OllamaResult> analyzeWorkItemReadOnly({
+    required String title,
+    required String? description,
+    required String status,
+    required String priority,
+    required String? blockedReason,
+    required List<LinkedDocumentContext> linkedDocuments,
+  }) async {
+    const system = '''
+You are reading a Project Atlas work item and its linked documents.
+
+Do not modify anything.
+Do not invent missing facts.
+Separate observed facts from interpretation.
+Return:
+1. Summary
+2. Relevant document findings
+3. Blockers / ambiguity
+4. Suggested next actions
+5. Risks
+6. Open questions
+''';
+
+    final docs = linkedDocuments.isEmpty
+        ? '(none)'
+        : linkedDocuments
+              .map(
+                (d) =>
+                    'Document: ${d.title}\n${d.text.trim().isEmpty ? '(no extracted text available)' : d.text}',
+              )
+              .join('\n\n---\n\n');
+
+    final user =
+        '''
+Work item:
+$title
+${description ?? ''}
+Status: $status
+Priority: $priority
+Blocked reason: ${blockedReason ?? '(none)'}
+
+Linked documents:
+$docs
+''';
+
+    final output = await _chat(system, user);
+    return OllamaResult(
+      input: user,
+      output: output,
+      kind: 'work_item_analysis',
+      title: 'Read-only Work Item Analysis - $title',
+    );
+  }
+
   /// Extract structured tasks from a block of messy notes.
   Future<OllamaResult> extractTasksFromNote({
     required String rawNote,
@@ -174,7 +233,8 @@ of actionable tasks. Format each task on its own line starting with "- ".
 Include any due dates, owners, or blockers mentioned. Ignore filler text.
 ''';
 
-    final user = '''
+    final user =
+        '''
 Project: $projectTitle
 
 Raw notes:
@@ -207,4 +267,11 @@ class OllamaResult {
   });
 
   bool get isSuccess => output != null && output!.trim().isNotEmpty;
+}
+
+class LinkedDocumentContext {
+  final String title;
+  final String text;
+
+  const LinkedDocumentContext({required this.title, required this.text});
 }

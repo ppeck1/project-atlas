@@ -164,7 +164,7 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds:
 | Field | Source | Default |
 |-------|--------|---------|
 | `host` | `AppDb.kOllamaHost` from AppMeta | `http://localhost:11434` |
-| `model` | `AppDb.kOllamaModel` from AppMeta | `mistral` |
+| `model` | `AppDb.kOllamaModel` from AppMeta | `qwen3.5:9b` |
 
 | Method | Input | Output |
 |--------|-------|--------|
@@ -308,3 +308,43 @@ ExportScreen → "Send to Telegram" button
 | Project snapshots | Not implemented | Phase 5 in roadmap |
 | `app_meta` settings | Plaintext | Bot token stored unencrypted — fine for personal desktop use |
 | `accepted` field on drafts | Schema exists, unused | Reserved for approval flow |
+
+---
+
+## 8. Stabilization Patch Addendum
+
+### Work item detail tables
+
+`work_item_notes` stores persistent notes linked by `work_item_id` with `id`, `body`, `created_at`, and `updated_at`.
+
+`work_item_analyses` stores saved read-only Ollama analysis with `id`, `work_item_id`, `prompt`, `output`, nullable `model`, and `created_at`.
+
+`document_links` is used to connect documents to work items with `entity_type = 'work_item'` and `entity_id = work_items.id`.
+
+### AppState additions
+
+- `watchDocumentsForWorkItem(id)`
+- `linkDocumentToWorkItem(documentId, workItemId)`
+- `unlinkDocumentFromWorkItem(documentId, workItemId)`
+- `watchNotesForWorkItem(id)`
+- `addWorkItemNote(workItemId, body)`
+- `updateWorkItemNote(noteId, body)`
+- `deleteWorkItemNote(noteId)`
+- `watchAnalysesForWorkItem(id)`
+- `analyzeWorkItemReadOnly(workItemId)`
+
+### Ollama additions
+
+Default local model is `qwen3.5:9b` when no setting is saved. `analyzeWorkItemReadOnly()` sends work item fields plus linked document context to Ollama and returns advisory output only. AppState saves successful output to `work_item_analyses`; task, document, and note state is not mutated.
+
+### Schema migration
+
+Schema v7 adds `work_item_notes` and `work_item_analyses`. The normal migration creates both tables, and startup repair also runs `CREATE TABLE IF NOT EXISTS` for both tables to handle partially migrated local databases.
+### contacts
+
+Contacts store reusable people records: id, name, title, phone, alternate phone, email, website, business name, notes, photo path, created_at, and updated_at.
+
+Written by Settings -> Workforce and inline owner/contact creation. Read by owner pickers, Workforce detail, and contact responsibility lookups.
+### Schema v8
+
+Adds contacts plus app-state methods for contact CRUD, JSON import/export, CSV export, and responsibility lookup across project owners, project people records, and active work item owners.

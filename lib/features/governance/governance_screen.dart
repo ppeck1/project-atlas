@@ -2,6 +2,7 @@
 
 import '../../db/app_db.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../today/work_item_detail_sheet.dart';
 
 class GovernanceScreen extends StatelessWidget {
   const GovernanceScreen({super.key});
@@ -141,6 +142,7 @@ class _WorkRow extends StatelessWidget {
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
+      onTap: () => showWorkItemDetailSheet(context, item.id),
       leading: Checkbox(
         value: item.completed,
         onChanged: (_) => state.toggleWorkDone(item.id),

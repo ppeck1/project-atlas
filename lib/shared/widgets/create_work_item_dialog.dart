@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../features/work/status_priority_helpers.dart';
+import 'contact_picker.dart';
 
 Future<Map<String, String?>?> showCreateWorkItemDialog(
-    BuildContext context) async {
+  BuildContext context,
+) async {
   final titleCtrl = TextEditingController();
   final descCtrl = TextEditingController();
   final ownerCtrl = TextEditingController();
@@ -36,13 +38,13 @@ Future<Map<String, String?>?> showCreateWorkItemDialog(
               'owner': ownerCtrl.text.trim().isEmpty
                   ? null
                   : ownerCtrl.text.trim(),
-              'status': status,
-              'priority': priority,
+              'status': normalizeStatusValue(status),
+              'priority': normalizePriorityValue(priority),
               // ISO 8601 date string, or null — parsed by work_screen.dart
               'dueAt': dueAt != null
                   ? '${dueAt!.year}-'
-                      '${dueAt!.month.toString().padLeft(2, '0')}-'
-                      '${dueAt!.day.toString().padLeft(2, '0')}'
+                        '${dueAt!.month.toString().padLeft(2, '0')}-'
+                        '${dueAt!.day.toString().padLeft(2, '0')}'
                   : null,
             });
           }
@@ -77,20 +79,25 @@ Future<Map<String, String?>?> showCreateWorkItemDialog(
                     children: [
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: status,
+                          value: normalizeStatusValue(status),
                           decoration: const InputDecoration(
                             labelText: 'Status',
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
                           ),
                           items: statusOptions
-                              .where((s) =>
-                                  !['done', 'archived'].contains(s.value))
-                              .map((s) => DropdownMenuItem(
-                                    value: s.value,
-                                    child: Text(s.label),
-                                  ))
+                              .where(
+                                (s) => !['done', 'archived'].contains(s.value),
+                              )
+                              .map(
+                                (s) => DropdownMenuItem(
+                                  value: s.value,
+                                  child: Text(s.label),
+                                ),
+                              )
                               .toList(),
                           onChanged: (v) {
                             if (v != null) setState(() => status = v);
@@ -100,18 +107,22 @@ Future<Map<String, String?>?> showCreateWorkItemDialog(
                       const SizedBox(width: 10),
                       Expanded(
                         child: DropdownButtonFormField<String>(
-                          value: priority,
+                          value: normalizePriorityValue(priority),
                           decoration: const InputDecoration(
                             labelText: 'Priority',
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
                           ),
                           items: priorityOptions
-                              .map((p) => DropdownMenuItem(
-                                    value: p.value,
-                                    child: Text(p.label),
-                                  ))
+                              .map(
+                                (p) => DropdownMenuItem(
+                                  value: p.value,
+                                  child: Text(p.label),
+                                ),
+                              )
                               .toList(),
                           onChanged: (v) {
                             if (v != null) setState(() => priority = v);
@@ -124,12 +135,9 @@ Future<Map<String, String?>?> showCreateWorkItemDialog(
                   Row(
                     children: [
                       Expanded(
-                        child: TextField(
+                        child: ContactOwnerField(
                           controller: ownerCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'Owner (optional)',
-                            border: OutlineInputBorder(),
-                          ),
+                          label: 'Owner (optional)',
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -140,8 +148,7 @@ Future<Map<String, String?>?> showCreateWorkItemDialog(
                             decoration: const InputDecoration(
                               labelText: 'Due date',
                               border: OutlineInputBorder(),
-                              prefixIcon:
-                                  Icon(Icons.calendar_today, size: 18),
+                              prefixIcon: Icon(Icons.calendar_today, size: 18),
                             ),
                             child: Row(
                               children: [
@@ -151,16 +158,20 @@ Future<Map<String, String?>?> showCreateWorkItemDialog(
                                         ? '${dueAt!.month}/${dueAt!.day}'
                                         : 'None',
                                     style: TextStyle(
-                                        color: dueAt != null
-                                            ? Colors.white
-                                            : Colors.white38),
+                                      color: dueAt != null
+                                          ? Colors.white
+                                          : Colors.white38,
+                                    ),
                                   ),
                                 ),
                                 if (dueAt != null)
                                   GestureDetector(
                                     onTap: () => setState(() => dueAt = null),
-                                    child: const Icon(Icons.clear,
-                                        size: 16, color: Colors.white38),
+                                    child: const Icon(
+                                      Icons.clear,
+                                      size: 16,
+                                      color: Colors.white38,
+                                    ),
                                   ),
                               ],
                             ),

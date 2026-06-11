@@ -42,9 +42,14 @@ Widget statusChip(String status) {
       children: [
         Icon(s.icon, size: 11, color: s.color),
         const SizedBox(width: 3),
-        Text(s.label,
-            style: TextStyle(
-                fontSize: 10, color: s.color, fontWeight: FontWeight.w600)),
+        Text(
+          s.label,
+          style: TextStyle(
+            fontSize: 10,
+            color: s.color,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ],
     ),
   );
@@ -84,4 +89,62 @@ Widget priorityDot(String priority) {
     margin: const EdgeInsets.only(right: 4),
     decoration: BoxDecoration(color: p.color, shape: BoxShape.circle),
   );
+}
+
+String normalizeStatusValue(String? value, {String fallback = 'next'}) {
+  final raw = (value ?? '').trim().toLowerCase();
+  final normalized = switch (raw) {
+    'todo' || 'to_do' || 'open' => 'next',
+    'in_progress' || 'in progress' => 'doing',
+    'blocked' => 'waiting',
+    'complete' || 'completed' => 'done',
+    _ => raw,
+  };
+  return statusOptions.any((s) => s.value == normalized)
+      ? normalized
+      : fallback;
+}
+
+String? normalizedStatusOrNull(String? value) {
+  final raw = (value ?? '').trim();
+  if (raw.isEmpty) return null;
+  final normalized = normalizeStatusValue(raw);
+  return statusOptions.any((s) => s.value == normalized) ? normalized : null;
+}
+
+String normalizePriorityValue(String? value, {String fallback = 'normal'}) {
+  final raw = (value ?? '').trim().toLowerCase();
+  final normalized = switch (raw) {
+    'medium' || 'med' || 'default' => 'normal',
+    'critical' || 'blocker' => 'urgent',
+    _ => raw,
+  };
+  return priorityOptions.any((p) => p.value == normalized)
+      ? normalized
+      : fallback;
+}
+
+String? normalizedPriorityOrNull(String? value) {
+  final raw = (value ?? '').trim();
+  if (raw.isEmpty) return null;
+  final normalized = normalizePriorityValue(raw);
+  return priorityOptions.any((p) => p.value == normalized) ? normalized : null;
+}
+
+List<DropdownMenuItem<String>> uniqueStringDropdownItems(
+  Iterable<String> values, {
+  String Function(String value)? labelFor,
+}) {
+  final seen = <String>{};
+  final items = <DropdownMenuItem<String>>[];
+  for (final value in values) {
+    if (!seen.add(value)) continue;
+    items.add(
+      DropdownMenuItem<String>(
+        value: value,
+        child: Text(labelFor?.call(value) ?? value),
+      ),
+    );
+  }
+  return items;
 }

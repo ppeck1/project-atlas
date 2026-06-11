@@ -25,7 +25,6 @@ class AppLogger {
         inputJson: inputJson,
         outputJson: outputJson,
         error: error,
-        stackTrace: stackTrace,
         correlationId: correlationId,
       );
 
@@ -34,7 +33,7 @@ class AppLogger {
     required String action,
     String? entityType,
     String? entityId,
-    Object? error,
+    Object error = '',
     StackTrace? stackTrace,
     String? inputJson,
   }) => db.logError(

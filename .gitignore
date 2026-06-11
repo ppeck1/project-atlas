@@ -32,3 +32,6 @@ linux/flutter/ephemeral/
 .env
 secrets.yaml
 telegram_token.txt
+
+# Local demo/runtime scratch
+.demo_appdata/

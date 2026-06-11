@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../db/app_db.dart';
 import '../../shared/models/app_state_scope.dart';
 import 'work_item_detail_sheet.dart';
+import '../work/status_priority_helpers.dart';
 
 class TodayScreen extends StatelessWidget {
   const TodayScreen({super.key});
@@ -19,10 +20,9 @@ class TodayScreen extends StatelessWidget {
             padding: const EdgeInsets.only(right: 12),
             child: Text(
               _formattedDate(),
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: Colors.white54),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.white54),
             ),
           ),
         ],
@@ -42,11 +42,18 @@ class TodayScreen extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.check_circle_outline, size: 48, color: Colors.green),
+                    Icon(
+                      Icons.check_circle_outline,
+                      size: 48,
+                      color: Colors.green,
+                    ),
                     SizedBox(height: 16),
                     Text(
                       'Nothing urgent today.',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     SizedBox(height: 8),
                     Text(
@@ -66,32 +73,40 @@ class TodayScreen extends StatelessWidget {
 
           final doing = items.where((i) => i.status == 'doing').toList();
           final overdue = items
-              .where((i) =>
-                  i.dueAt != null &&
-                  i.dueAt!.isBefore(today) &&
-                  i.status != 'doing')
+              .where(
+                (i) =>
+                    i.dueAt != null &&
+                    i.dueAt!.isBefore(today) &&
+                    i.status != 'doing',
+              )
               .toList();
           final dueToday = items
-              .where((i) =>
-                  i.dueAt != null &&
-                  !i.dueAt!.isBefore(today) &&
-                  i.dueAt!.isBefore(tomorrow) &&
-                  i.status != 'doing')
+              .where(
+                (i) =>
+                    i.dueAt != null &&
+                    !i.dueAt!.isBefore(today) &&
+                    i.dueAt!.isBefore(tomorrow) &&
+                    i.status != 'doing',
+              )
               .toList();
           final phoneQueue = items
-              .where((i) =>
-                  i.phoneQueue &&
-                  i.status != 'doing' &&
-                  !overdue.contains(i) &&
-                  !dueToday.contains(i))
+              .where(
+                (i) =>
+                    i.phoneQueue &&
+                    i.status != 'doing' &&
+                    !overdue.contains(i) &&
+                    !dueToday.contains(i),
+              )
               .toList();
           final highPrio = items
-              .where((i) =>
-                  ['high', 'urgent'].contains(i.priority) &&
-                  i.status != 'doing' &&
-                  !overdue.contains(i) &&
-                  !dueToday.contains(i) &&
-                  !phoneQueue.contains(i))
+              .where(
+                (i) =>
+                    ['high', 'urgent'].contains(i.priority) &&
+                    i.status != 'doing' &&
+                    !overdue.contains(i) &&
+                    !dueToday.contains(i) &&
+                    !phoneQueue.contains(i),
+              )
               .toList();
 
           return ListView(
@@ -101,7 +116,8 @@ class TodayScreen extends StatelessWidget {
               const SizedBox(height: 16),
               if (doing.isNotEmpty) ...[
                 _SectionHeader(
-                  label: '🔄 Doing Now',
+                  label: 'Doing Now',
+                  icon: Icons.sync,
                   count: doing.length,
                   color: Colors.amber,
                 ),
@@ -110,7 +126,8 @@ class TodayScreen extends StatelessWidget {
               ],
               if (overdue.isNotEmpty) ...[
                 _SectionHeader(
-                  label: '🔴 Overdue',
+                  label: 'Overdue',
+                  icon: Icons.warning_amber_rounded,
                   count: overdue.length,
                   color: Colors.red,
                 ),
@@ -119,7 +136,8 @@ class TodayScreen extends StatelessWidget {
               ],
               if (dueToday.isNotEmpty) ...[
                 _SectionHeader(
-                  label: '📅 Due Today',
+                  label: 'Due Today',
+                  icon: Icons.today,
                   count: dueToday.length,
                   color: Colors.orange,
                 ),
@@ -128,7 +146,8 @@ class TodayScreen extends StatelessWidget {
               ],
               if (phoneQueue.isNotEmpty) ...[
                 _SectionHeader(
-                  label: '📞 Phone / Follow-up',
+                  label: 'Phone / Follow-up',
+                  icon: Icons.phone,
                   count: phoneQueue.length,
                   color: Colors.blue,
                 ),
@@ -137,7 +156,8 @@ class TodayScreen extends StatelessWidget {
               ],
               if (highPrio.isNotEmpty) ...[
                 _SectionHeader(
-                  label: '⚡ High Priority',
+                  label: 'High Priority',
+                  icon: Icons.bolt,
                   count: highPrio.length,
                   color: Colors.deepOrange,
                 ),
@@ -154,8 +174,19 @@ class TodayScreen extends StatelessWidget {
   String _formattedDate() {
     final now = DateTime.now();
     const months = [
-      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     final dow = days[now.weekday - 1];
@@ -167,65 +198,239 @@ class _SummaryRow extends StatelessWidget {
   final List<WorkItem> items;
   const _SummaryRow({required this.items});
 
+  Future<void> _showDrilldown(
+    BuildContext context,
+    String title,
+    List<WorkItem> rows,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _TodayDrilldownDialog(title: title, items: rows),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-
+    final tomorrow = today.add(const Duration(days: 1));
     final doingCount = items.where((i) => i.status == 'doing').length;
     final overdueCount = items
-        .where((i) => i.dueAt != null && i.dueAt!.isBefore(today))
+        .where(
+          (i) =>
+              i.dueAt != null &&
+              i.dueAt!.isBefore(today) &&
+              i.status != 'doing',
+        )
         .length;
-    final blockedCount =
-        items.where((i) => i.blockedReason != null).length;
+    final blockedCount = items.where((i) => i.blockedReason != null).length;
+    final totalCount = items
+        .where(
+          (i) =>
+              i.status == 'doing' ||
+              (i.dueAt != null && i.dueAt!.isBefore(tomorrow)) ||
+              i.phoneQueue ||
+              ['high', 'urgent'].contains(i.priority),
+        )
+        .length;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _Stat(label: 'Doing', value: doingCount, color: Colors.amber),
-            _Stat(label: 'Overdue', value: overdueCount, color: Colors.red),
-            _Stat(label: 'Blocked', value: blockedCount, color: Colors.purple),
-            _Stat(label: 'Total', value: items.length, color: Colors.white70),
-          ],
+    return Row(
+      children: [
+        _MetricBox(
+          label: 'Doing',
+          value: doingCount,
+          color: const Color(0xFFFFC107),
+          onTap: () => _showDrilldown(
+            context,
+            'Doing',
+            items
+                .where((i) => normalizeStatusValue(i.status) == 'doing')
+                .toList(),
+          ),
+        ),
+        const SizedBox(width: 10),
+        _MetricBox(
+          label: 'Overdue',
+          value: overdueCount,
+          color: const Color(0xFFF44336),
+          onTap: () => _showDrilldown(
+            context,
+            'Overdue',
+            items
+                .where(
+                  (i) =>
+                      i.dueAt != null &&
+                      i.dueAt!.isBefore(today) &&
+                      normalizeStatusValue(i.status) != 'doing',
+                )
+                .toList(),
+          ),
+        ),
+        const SizedBox(width: 10),
+        _MetricBox(
+          label: 'Blocked',
+          value: blockedCount,
+          color: const Color(0xFF9C27B0),
+          onTap: () => _showDrilldown(
+            context,
+            'Blocked',
+            items.where((i) => i.blockedReason != null).toList(),
+          ),
+        ),
+        const SizedBox(width: 10),
+        _MetricBox(
+          label: 'Total',
+          value: totalCount,
+          color: Colors.white54,
+          onTap: () => _showDrilldown(
+            context,
+            'Today items',
+            items
+                .where(
+                  (i) =>
+                      normalizeStatusValue(i.status) == 'doing' ||
+                      (i.dueAt != null && i.dueAt!.isBefore(tomorrow)) ||
+                      i.phoneQueue ||
+                      [
+                        'high',
+                        'urgent',
+                      ].contains(normalizePriorityValue(i.priority)),
+                )
+                .toList(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MetricBox extends StatelessWidget {
+  final String label;
+  final int value;
+  final Color color;
+  final VoidCallback onTap;
+  const _MetricBox({
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          decoration: BoxDecoration(
+            color: const Color(0xFF151A22),
+            border: Border.all(color: const Color(0xFF273044)),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            children: [
+              Text(
+                '$value',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  color: value > 0 ? color : Colors.white24,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: const TextStyle(fontSize: 12, color: Colors.white54),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _Stat extends StatelessWidget {
-  final String label;
-  final int value;
-  final Color color;
-  const _Stat({required this.label, required this.value, required this.color});
+class _TodayDrilldownDialog extends StatelessWidget {
+  final String title;
+  final List<WorkItem> items;
+  const _TodayDrilldownDialog({required this.title, required this.items});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          '$value',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            color: value > 0 ? color : Colors.white30,
-          ),
+    return AlertDialog(
+      title: Text('$title (${items.length})'),
+      content: SizedBox(
+        width: 760,
+        height: 520,
+        child: items.isEmpty
+            ? const Center(child: Text('No matching items.'))
+            : ListView.separated(
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) =>
+                    _DrilldownRow(item: items[index]),
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
         ),
-        Text(label, style: const TextStyle(fontSize: 11, color: Colors.white54)),
       ],
+    );
+  }
+}
+
+class _DrilldownRow extends StatelessWidget {
+  final WorkItem item;
+  const _DrilldownRow({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return FutureBuilder<Stage?>(
+      future: (state.db.select(
+        state.db.stages,
+      )..where((t) => t.id.equals(item.stageId))).getSingleOrNull(),
+      builder: (context, snap) {
+        final stage = snap.data;
+        return ListTile(
+          title: Text(item.title),
+          subtitle: Text(
+            [
+              if (stage != null) 'Stage: ${stage.title}',
+              'Status: ${normalizeStatusValue(item.status)}',
+              'Priority: ${normalizePriorityValue(item.priority)}',
+              if ((item.owner ?? '').isNotEmpty) 'Owner: ${item.owner}',
+              if (item.dueAt != null)
+                'Due: ${item.dueAt!.month}/${item.dueAt!.day}/${item.dueAt!.year}',
+              if ((item.blockedReason ?? '').isNotEmpty)
+                'Blocked: ${item.blockedReason}',
+              'Last activity: ${item.updatedAt}',
+            ].join('  |  '),
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => showWorkItemDetailSheet(context, item.id),
+        );
+      },
     );
   }
 }
 
 class _SectionHeader extends StatelessWidget {
   final String label;
+  final IconData icon;
   final int count;
   final Color color;
-  const _SectionHeader(
-      {required this.label, required this.count, required this.color});
+  const _SectionHeader({
+    required this.label,
+    required this.icon,
+    required this.count,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -233,6 +438,8 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
           Text(
             label,
             style: TextStyle(
@@ -249,10 +456,7 @@ class _SectionHeader extends StatelessWidget {
               color: color.withAlpha(40),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text(
-              '$count',
-              style: TextStyle(fontSize: 11, color: color),
-            ),
+            child: Text('$count', style: TextStyle(fontSize: 11, color: color)),
           ),
         ],
       ),
@@ -296,8 +500,9 @@ class _TodayTile extends StatelessWidget {
                       item.title,
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
-                        decoration:
-                            item.completed ? TextDecoration.lineThrough : null,
+                        decoration: item.completed
+                            ? TextDecoration.lineThrough
+                            : null,
                         color: item.completed ? Colors.white38 : null,
                       ),
                     ),
@@ -307,7 +512,9 @@ class _TodayTile extends StatelessWidget {
                       Text(
                         item.description!,
                         style: const TextStyle(
-                            fontSize: 12, color: Colors.white54),
+                          fontSize: 12,
+                          color: Colors.white54,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -322,7 +529,9 @@ class _TodayTile extends StatelessWidget {
                             child: Text(
                               item.blockedReason!,
                               style: const TextStyle(
-                                  fontSize: 11, color: Colors.red),
+                                fontSize: 11,
+                                color: Colors.red,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -380,7 +589,10 @@ class _PriorityBadge extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-            fontSize: 10, color: color, fontWeight: FontWeight.bold),
+          fontSize: 10,
+          color: color,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }
@@ -396,13 +608,14 @@ class _DueBadge extends StatelessWidget {
     final today = DateTime(now.year, now.month, now.day);
     final isOverdue = dueAt.isBefore(today);
     final isToday =
-        !dueAt.isBefore(today) && dueAt.isBefore(today.add(const Duration(days: 1)));
+        !dueAt.isBefore(today) &&
+        dueAt.isBefore(today.add(const Duration(days: 1)));
 
     final color = isOverdue
         ? Colors.red
         : isToday
-            ? Colors.orange
-            : Colors.white54;
+        ? Colors.orange
+        : Colors.white54;
 
     return Text(
       '${dueAt.month}/${dueAt.day}',

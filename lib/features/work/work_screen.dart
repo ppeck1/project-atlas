@@ -14,14 +14,12 @@ class WorkScreen extends StatefulWidget {
 }
 
 class _WorkScreenState extends State<WorkScreen> {
-  String? _filterStatus; // null = all active
-
+  String? _filterStatus;
   static const _activeStatuses = ['inbox', 'next', 'doing', 'waiting'];
 
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
-
     return Scaffold(
       appBar: AppBar(title: const Text('Work')),
       body: Padding(
@@ -32,180 +30,221 @@ class _WorkScreenState extends State<WorkScreen> {
             final project = projSnap.data;
             if (project == null) {
               return const Center(
-                  child: Text('No active project — create or select one.'));
+                child: Text('No active project - create or select one.'),
+              );
             }
-
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Stage chips
-                StreamBuilder<List<Stage>>(
-                  stream: state.watchStagesForProject(project.id),
-                  builder: (context, stageListSnap) {
-                    final stages = stageListSnap.data ?? [];
-                    if (stages.isEmpty) return const SizedBox.shrink();
-
-                    return StreamBuilder<Stage?>(
-                      stream: state.watchActiveStageForProject(project.id),
-                      builder: (context, activeStageSnap) {
-                        final activeStageId = activeStageSnap.data?.id;
-                        return SizedBox(
-                          height: 40,
+            return StreamBuilder<List<Stage>>(
+              stream: state.watchStagesForProject(project.id),
+              builder: (context, stagesSnap) {
+                final stages = stagesSnap.data ?? const <Stage>[];
+                return StreamBuilder<Stage?>(
+                  stream: state.watchActiveStageForProject(project.id),
+                  builder: (context, activeStageSnap) {
+                    final activeStage =
+                        activeStageSnap.data ??
+                        (stages.isNotEmpty ? stages.first : null);
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _ProjectSelector(activeProject: project),
+                        const SizedBox(height: 12),
+                        if (stages.isEmpty)
+                          const Text(
+                            'This project has no stages yet.',
+                            style: TextStyle(color: Colors.white54),
+                          )
+                        else
+                          SizedBox(
+                            height: 40,
+                            child: ListView(
+                              scrollDirection: Axis.horizontal,
+                              children: [
+                                for (final s in stages)
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ChoiceChip(
+                                      label: Text(s.title),
+                                      selected: s.id == activeStage?.id,
+                                      onSelected: (_) =>
+                                          state.setActiveStageForProject(
+                                            project.id,
+                                            s.id,
+                                          ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: 32,
                           child: ListView(
                             scrollDirection: Axis.horizontal,
                             children: [
-                              for (final s in stages)
+                              _FilterChip(
+                                label: 'All Active',
+                                selected: _filterStatus == null,
+                                onTap: () =>
+                                    setState(() => _filterStatus = null),
+                              ),
+                              for (final s in statusOptions.where(
+                                (s) => _activeStatuses.contains(s.value),
+                              ))
                                 Padding(
-                                  padding: const EdgeInsets.only(right: 8),
-                                  child: ChoiceChip(
-                                    label: Text(s.title),
-                                    selected: s.id == activeStageId,
-                                    onSelected: (_) =>
-                                        state.setActiveStageForProject(
-                                            project.id, s.id),
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: _FilterChip(
+                                    label: s.label,
+                                    selected: _filterStatus == s.value,
+                                    color: s.color,
+                                    onTap: () =>
+                                        setState(() => _filterStatus = s.value),
                                   ),
                                 ),
                             ],
                           ),
-                        );
-                      },
+                        ),
+                        const SizedBox(height: 12),
+                        const Divider(height: 1),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              activeStage == null
+                                  ? 'Work items'
+                                  : 'Work items - ${activeStage.title}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            FilledButton.icon(
+                              onPressed: activeStage == null
+                                  ? null
+                                  : () => _addTask(context, activeStage.id),
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add task'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: activeStage == null
+                              ? const Center(
+                                  child: Text(
+                                    'Create or select a project stage to add tasks.',
+                                  ),
+                                )
+                              : StreamBuilder<List<WorkItem>>(
+                                  stream: state.watchWorkItemsForStage(
+                                    activeStage.id,
+                                  ),
+                                  builder: (context, workSnap) {
+                                    var items =
+                                        workSnap.data ?? const <WorkItem>[];
+                                    if (_filterStatus != null) {
+                                      items = items
+                                          .where(
+                                            (i) =>
+                                                normalizeStatusValue(
+                                                  i.status,
+                                                ) ==
+                                                _filterStatus,
+                                          )
+                                          .toList();
+                                    } else {
+                                      items = items
+                                          .where(
+                                            (i) =>
+                                                !['done', 'archived'].contains(
+                                                  normalizeStatusValue(
+                                                    i.status,
+                                                  ),
+                                                ),
+                                          )
+                                          .toList();
+                                    }
+                                    if (items.isEmpty) {
+                                      return Center(
+                                        child: Text(
+                                          _filterStatus != null
+                                              ? 'No "${statusFor(_filterStatus!).label}" items in this stage.'
+                                              : 'No active tasks. Use Add task to create one for this project/stage.',
+                                          style: const TextStyle(
+                                            color: Colors.white54,
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    return ListView.separated(
+                                      itemCount: items.length,
+                                      separatorBuilder: (_, __) =>
+                                          const Divider(height: 1),
+                                      itemBuilder: (context, i) =>
+                                          _WorkTile(item: items[i]),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
                     );
                   },
-                ),
-
-                const SizedBox(height: 12),
-
-                // Status filter bar
-                SizedBox(
-                  height: 32,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      _FilterChip(
-                        label: 'All Active',
-                        selected: _filterStatus == null,
-                        onTap: () => setState(() => _filterStatus = null),
-                      ),
-                      for (final s in statusOptions)
-                        if (_activeStatuses.contains(s.value))
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8),
-                            child: _FilterChip(
-                              label: s.label,
-                              selected: _filterStatus == s.value,
-                              color: s.color,
-                              onTap: () =>
-                                  setState(() => _filterStatus = s.value),
-                            ),
-                          ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-                const Divider(height: 1),
-                const SizedBox(height: 12),
-
-                // Header + add button
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Work items',
-                        style: TextStyle(fontWeight: FontWeight.w600)),
-                    StreamBuilder<Stage?>(
-                      stream: state.watchActiveStageForProject(project.id),
-                      builder: (context, activeStageSnap) {
-                        final stage = activeStageSnap.data;
-                        return FilledButton.icon(
-                          onPressed: stage == null
-                              ? null
-                              : () async {
-                                  final draft =
-                                      await showCreateWorkItemDialog(context);
-                                  if (draft == null) return;
-
-                                  // Parse optional ISO date string back to DateTime
-                                  DateTime? dueAt;
-                                  final rawDate = draft['dueAt'];
-                                  if (rawDate != null && rawDate.isNotEmpty) {
-                                    dueAt = DateTime.tryParse(rawDate);
-                                  }
-
-                                  await state.addWorkItem(
-                                    stage.id,
-                                    draft['title']!,
-                                    description: draft['description'],
-                                    owner: draft['owner'],
-                                    status: draft['status'] ?? 'next',
-                                    priority: draft['priority'] ?? 'normal',
-                                    dueAt: dueAt,
-                                  );
-                                },
-                          icon: const Icon(Icons.add),
-                          label: const Text('Add task'),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-
-                // Item list
-                Expanded(
-                  child: StreamBuilder<Stage?>(
-                    stream: state.watchActiveStageForProject(project.id),
-                    builder: (context, activeStageSnap) {
-                      final stage = activeStageSnap.data;
-                      if (stage == null) {
-                        return const Center(
-                            child: Text('Pick a stage above.'));
-                      }
-
-                      return StreamBuilder<List<WorkItem>>(
-                        stream: state.watchWorkItemsForStage(stage.id),
-                        builder: (context, workSnap) {
-                          var items = workSnap.data ?? [];
-
-                          if (_filterStatus != null) {
-                            items = items
-                                .where((i) => i.status == _filterStatus)
-                                .toList();
-                          } else {
-                            items = items
-                                .where((i) =>
-                                    !['done', 'archived'].contains(i.status))
-                                .toList();
-                          }
-
-                          if (items.isEmpty) {
-                            return Center(
-                              child: Text(
-                                _filterStatus != null
-                                    ? 'No "${statusFor(_filterStatus!).label}" items in this stage.'
-                                    : 'No active tasks. Hit Add to create one.',
-                                style:
-                                    const TextStyle(color: Colors.white54),
-                              ),
-                            );
-                          }
-
-                          return ListView.separated(
-                            itemCount: items.length,
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 1),
-                            itemBuilder: (context, i) =>
-                                _WorkTile(item: items[i]),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
+                );
+              },
             );
           },
         ),
       ),
+    );
+  }
+
+  Future<void> _addTask(BuildContext context, String stageId) async {
+    final state = AppStateScope.of(context);
+    final draft = await showCreateWorkItemDialog(context);
+    if (draft == null) return;
+    DateTime? dueAt;
+    final rawDate = draft['dueAt'];
+    if (rawDate != null && rawDate.isNotEmpty)
+      dueAt = DateTime.tryParse(rawDate);
+    await state.addWorkItem(
+      stageId,
+      draft['title']!,
+      description: draft['description'],
+      owner: draft['owner'],
+      status: normalizeStatusValue(draft['status']),
+      priority: normalizePriorityValue(draft['priority']),
+      dueAt: dueAt,
+    );
+  }
+}
+
+class _ProjectSelector extends StatelessWidget {
+  final Project activeProject;
+  const _ProjectSelector({required this.activeProject});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return StreamBuilder<List<Project>>(
+      stream: state.watchProjects(),
+      builder: (context, snap) {
+        final projects = snap.data ?? const <Project>[];
+        final value = projects.any((p) => p.id == activeProject.id)
+            ? activeProject.id
+            : null;
+        return DropdownButtonFormField<String>(
+          value: value,
+          decoration: const InputDecoration(
+            labelText: 'Project',
+            border: OutlineInputBorder(),
+          ),
+          items: projects
+              .map((p) => DropdownMenuItem(value: p.id, child: Text(p.title)))
+              .toList(),
+          onChanged: (id) {
+            if (id != null) state.setActiveById(id);
+          },
+        );
+      },
     );
   }
 }
@@ -215,11 +254,12 @@ class _FilterChip extends StatelessWidget {
   final bool selected;
   final Color? color;
   final VoidCallback onTap;
-  const _FilterChip(
-      {required this.label,
-      required this.selected,
-      required this.onTap,
-      this.color});
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -256,7 +296,6 @@ class _WorkTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
-
     return InkWell(
       onTap: () => showWorkItemDetailSheet(context, item.id),
       child: Padding(
@@ -278,7 +317,7 @@ class _WorkTile extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      priorityDot(item.priority),
+                      priorityDot(normalizePriorityValue(item.priority)),
                       Expanded(
                         child: Text(
                           item.title,
@@ -298,10 +337,13 @@ class _WorkTile extends StatelessWidget {
                     spacing: 6,
                     runSpacing: 4,
                     children: [
-                      statusChip(item.status),
+                      statusChip(normalizeStatusValue(item.status)),
                       if (item.owner != null)
-                        _MetaChip(Icons.person_outline, item.owner!,
-                            Colors.white38),
+                        _MetaChip(
+                          Icons.person_outline,
+                          item.owner!,
+                          Colors.white38,
+                        ),
                       if (item.dueAt != null) _DueDateChip(item.dueAt!),
                       if (item.phoneQueue)
                         _MetaChip(Icons.phone, 'Phone', Colors.blue),
@@ -353,16 +395,17 @@ class _DueDateChip extends StatelessWidget {
     final color = isOverdue
         ? Colors.red
         : isToday
-            ? Colors.orange
-            : Colors.white38;
-
+        ? Colors.orange
+        : Colors.white38;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(Icons.calendar_today, size: 11, color: color),
         const SizedBox(width: 3),
-        Text('${dueAt.month}/${dueAt.day}',
-            style: TextStyle(fontSize: 10, color: color)),
+        Text(
+          '${dueAt.month}/${dueAt.day}',
+          style: TextStyle(fontSize: 10, color: color),
+        ),
       ],
     );
   }

@@ -1,0 +1,460 @@
+BOH_VISUALIZATION_SPEC_v1.1
+(CANON-Integrated, Honest Rendering Layer)
+CORE PRINCIPLE
+
+All visualizations must be projections of:
+
+x
+t+1
+	​
+
+=Π
+K
+	​
+
+(F(x
+t
+	​
+
+))
+
+Where:
+
+F(x) = system evolution (LLM edits, human input, inference)
+Π_K = constraint projection (governance, authority, validity)
+x = node state vector
+NODE STATE (CANON-EXPANDED)
+
+Each node must internally resolve:
+
+NodeState {
+  // Epistemic
+  d ∈ {-1, 0, +1}
+  m ∈ {contain, cancel}
+  q ∈ [0,1]
+  c ∈ [0,1]
+
+  // Temporal
+  t_valid
+  t_now
+
+  // CANON variables
+  ΩV   // viability margin
+  Π    // pressure
+  H    // entropy
+  Γ    // mismatch gradient
+  Δc*  // latent stability signal
+
+  // Derived
+  stability_score
+  drift_rate
+}
+TRUTH CONDITION (MANDATORY)
+
+A node is NOT “true” because:
+
+it exists
+it is connected
+it was written by a human
+
+A node is only viable if:
+
+x∈K(withinconstraintspace)
+
+Visualizations must reflect distance to violation, not just state.
+
+VIEW 1 — NETWORK PLANE (CANON-TRUE GRAPH)
+What this REALLY represents
+
+Not a graph.
+
+This is a projection of the system state under Π_K.
+
+Required Computations
+
+Each node must compute:
+
+ΩV=distance
+t
+	​
+
+o
+c
+	​
+
+onstraint
+b
+	​
+
+oundaryΠ=incoming
+c
+	​
+
+onflict
+p
+	​
+
+ressureH=entropy
+o
+	​
+
+f
+s
+	​
+
+upporting
+e
+	​
+
+videnceΓ=gradientofcontradictionacrossedges
+Visual Encoding (CORRECTED)
+Variable	Visual
+d	base color
+ΩV	distance from cluster center
+Π	node deformation / vibration
+H	fuzziness / blur
+Γ	directional arrow
+Δc*	shadow/ghost offset
+Critical Truth Addition (NON-NEGOTIABLE)
+Projection Loss (L_P)
+
+You must render:
+
+L
+P
+	​
+
+=∣∣F(x)−Π
+K
+	​
+
+(F(x))∣∣
+
+If this is hidden, the system lies.
+
+Visualization:
+
+halo distortion
+jitter
+partial transparency
+Pressure Zones (Correct Definition)
+
+NOT:
+“clusters of red nodes”
+
+BUT:
+
+ZonewhereΣΠexceedsthreshold
+
+Meaning:
+
+accumulated unresolved constraint violation
+Drift Vectors (Correct Definition)
+Γ=∇(constraint
+v
+	​
+
+iolation)
+
+Show:
+
+direction system is moving toward failure
+HONEST LIMITATION
+
+This view cannot prove truth.
+
+It can only show:
+
+consistency
+pressure
+drift
+VIEW 2 — AUTHORITY CENTER (Π_K ENFORCEMENT LAYER)
+What this REALLY is
+
+This is the explicit visualization of Π_K.
+
+Required Computations
+
+For each node:
+
+valid
+r
+	​
+
+esolution=actor∈authority(node)
+
+If false:
+
+mutation
+a
+	​
+
+ttempt→rejected
+Additional CANON Variables
+
+Introduce:
+
+AuthorityMismatch = {
+  Δ_authority = required - actual
+}
+Escalation Ladder (TRUE FORM)
+
+Must map to:
+
+Π(t)increasingovertime
+State	Meaning
+moderate	Π rising
+high	ΩV shrinking
+forced	x → boundary
+HONEST RULE
+
+This view must:
+
+block actions, not just warn
+expose illegitimate authority clearly
+
+If it allows invalid mutation → system is invalid.
+
+VIEW 3 — STABILITY VIEW (Δc* CORE VIEW)
+This is your most important analytical view.
+Required Signals
+Observed Stability
+S
+o
+	​
+
+bs=f(q,c)
+Latent Stability (Δc*)
+Δc∗=latent
+v
+	​
+
+iability
+e
+	​
+
+stimate
+
+Derived from:
+
+inconsistency accumulation
+pressure trends
+entropy growth
+REQUIRED VISUALIZATION
+
+Plot BOTH:
+
+S_obs (what system thinks)
+Δc* (what system actually is trending toward)
+Critical Insight
+
+Failure begins when:
+
+Δc∗↓whileS
+o
+	​
+
+bsremainsstable
+Expiry Cliff (TRUE FORM)
+t
+n
+	​
+
+ow→t
+v
+	​
+
+alidΩV→0
+HONEST LIMITATION
+
+Δc* is an estimate.
+
+Must be labeled as:
+
+inferred
+not authoritative
+VIEW 4 — RESOLUTION DIFF (TRUTH BOUNDARY)
+This is where Π_K is applied explicitly.
+Required Check
+
+Every change must evaluate:
+
+x
+′
+=Π
+K
+	​
+
+(F(x))
+Display MUST include:
+Element	Meaning
+raw change	F(x)
+constrained result	Π_K(F(x))
+difference	projection loss
+NEW REQUIREMENT
+
+Show:
+
+Δ
+p
+	​
+
+rojection=F(x)−Π
+K
+	​
+
+(F(x))
+HONEST RULE
+
+User must see:
+
+what was attempted
+what was allowed
+what was rejected
+
+Otherwise:
+system hides governance
+
+VIEW 5 — RISK MAP (FIELD OF Π)
+This is NOT a heatmap.
+
+This is a scalar field visualization of Π.
+
+Compute:
+Π
+f
+	​
+
+ield(x)=Σ(localconstraintviolations)
+Visualization
+smooth gradient field
+nodes embedded inside field
+field distorts topology
+Critical Zones
+Zone	Meaning
+low Π	stable
+medium Π	degraded
+high Π	imminent failure
+HONEST NOTE
+
+Risk map does not show:
+
+causality
+authority
+
+Only pressure distribution
+
+VIEW 6 — EVIDENCE STATE (H + Γ VIEW)
+What this represents
+
+The structure of belief.
+
+Required Metrics
+H=entropyofevidenceΓ=disagreementgradient
+Interpretation
+Condition	Meaning
+low H, low Γ	strong coherence
+high H, high Γ	unstable
+low H, high Γ	polarized
+high H, low Γ	diffuse uncertainty
+HONEST LIMITATION
+
+Evidence strength ≠ truth.
+
+Must not imply correctness.
+
+VIEW 7 — AUTHORITY TOPOLOGY (3D)
+This is structural governance truth.
+Required Computation
+
+Graph:
+
+User→Role→Domain→Node
+Detect:
+Gaps
+
+No authority path
+
+Overlaps
+
+Conflicting authority
+
+Illegitimate path
+user→nodeWITHOUTvalidchain
+HONEST RULE
+
+This view must expose:
+
+governance flaws
+not hide them
+VIEW 8 — DRIFT PROPAGATION (Γ DYNAMICS)
+This is dynamic simulation.
+Core Equation
+x
+i
+	​
+
+(t+1)=f(x
+i
+	​
+
+,neighbors,Π)
+Simulation Steps
+force node to invalid
+propagate via dependencies
+recompute ΩV globally
+Output
+cascade size
+critical nodes
+time to failure
+HONEST LIMITATION
+
+Simulation depends on:
+
+model assumptions
+edge correctness
+
+Must be labeled as:
+
+predictive, not definitive
+VIEW 9 — CONSTRAINT BOUNDARY (CANON CORE)
+This is the only view that shows TRUE system condition.
+Definition
+K=viablestatespace
+Each node:
+distance
+t
+	​
+
+o
+b
+	​
+
+oundary=ΩV
+Visualization
+central stable region
+boundary surface
+outer invalid region
+Projection Loss
+
+Nodes must show:
+
+F(x)outsideK→projectedbackviaΠ
+K
+	​
+
+HONEST RULE
+
+This view must make visible:
+
+that the system is constantly correcting itself
+not perfectly stable
+CROSS-VIEW TRUTH ALIGNMENT
+
+All views must reconcile:
+
+Variable	Must match
+ΩV	everywhere
+Π	everywhere
+authority	everywhere
+Δc*	stability + network

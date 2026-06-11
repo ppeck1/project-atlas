@@ -1,370 +1,502 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart';
 
 import 'db_open.dart';
 import 'tables.dart';
 
 part 'app_db.g.dart';
 
+// ---------------------------------------------------------------------------
+// Convenience type aliases
+// Drift auto-generates a data class per table, e.g. Project for Projects,
+// Stage for Stages, etc. These aliases let the rest of the app use the
+// names that the UI code already references.
+// ---------------------------------------------------------------------------
+
+/// Full project data. Since we added description/desiredOutcome/successCriteria
+/// directly to the Projects table, the Drift-generated [Project] class already
+/// carries them. This typedef keeps call-sites unchanged.
+typedef ProjectFull = Project;
+
+// Drift generates:
+//   ProjectPeopleData  (from ProjectPeople — doesn't end in 's', so adds 'Data')
+//   ProjectRisk        (from ProjectRisks  — removes 's')
+//   ProjectDecision    (from ProjectDecisions — removes 's')
+//   EventLogData       (from EventLog — no 's', adds 'Data')
+//   OutboxMessage      (from OutboxMessages — removes 's')
+typedef ProjectPerson = ProjectPeopleData;
+
+// ---------------------------------------------------------------------------
+// AppDb
+// ---------------------------------------------------------------------------
+
 @DriftDatabase(
-  tables: [Projects, AppMeta, Stages, WorkItems, Drafts, DailyReviews, OutboxMessages, EventLog, Documents, DocumentLinks],
+  tables: [
+    Projects,
+    AppMeta,
+    Stages,
+    WorkItems,
+    WorkItemNotes,
+    WorkItemAnalyses,
+    Drafts,
+    DailyReviews,
+    OutboxMessages,
+    EventLog,
+    Documents,
+    DocumentLinks,
+    Contacts,
+    ProjectPeople,
+    ProjectRisks,
+    ProjectDecisions,
+  ],
 )
 class AppDb extends _$AppDb {
   AppDb() : super(openEncryptedExecutor());
 
+  // ── AppMeta keys ──────────────────────────────────────────────────────────
+  static const kActiveProjectId = 'active_project_id';
+  static const kOllamaHost = 'ollama_host';
+  static const kOllamaModel = 'ollama_model';
+  static const kTelegramBotToken = 'telegram_bot_token';
+  static const kTelegramChatId = 'telegram_chat_id';
+  static const kTelegramEnabled = 'telegram_enabled';
+
+  // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onCreate: (m) async {
-          await m.createAll();
-        },
-        beforeOpen: (details) async {
-          await repairSchema();
-        },
-        onUpgrade: (m, from, to) async {
-          if (from < 2) await m.createTable(stages);
-          if (from < 3) await m.createTable(workItems);
-          if (from < 4) {
-            // Each addColumn is wrapped individually so a partially-applied
-            // migration (e.g. from a prior crash) doesn't crash again on the
-            // duplicate column name SQLite error.
-            await _safeAddColumn(m, workItems, workItems.description);
-            await _safeAddColumn(m, workItems, workItems.status);
-            await _safeAddColumn(m, workItems, workItems.priority);
-            await _safeAddColumn(m, workItems, workItems.dueAt);
-            await _safeAddColumn(m, workItems, workItems.updatedAt);
-            await _safeAddColumn(m, workItems, workItems.blockedReason);
-            await _safeAddColumn(m, workItems, workItems.source);
-            await _safeAddColumn(m, workItems, workItems.phoneQueue);
-
-            await customStatement(
-              "UPDATE work_items SET status = 'done' WHERE completed = 1 AND status IS NULL",
-            );
-
-            // Use IF NOT EXISTS so these are idempotent on re-runs
-            await customStatement('''CREATE TABLE IF NOT EXISTS drafts (
-              id TEXT NOT NULL PRIMARY KEY,
-              project_id TEXT,
-              work_item_id TEXT,
-              kind TEXT NOT NULL,
-              title TEXT NOT NULL,
-              body TEXT NOT NULL,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL,
-              accepted INTEGER NOT NULL DEFAULT 0
-            )''');
-            await customStatement('''CREATE TABLE IF NOT EXISTS daily_reviews (
-              id TEXT NOT NULL PRIMARY KEY,
-              review_date INTEGER NOT NULL,
-              summary TEXT NOT NULL,
-              created_at INTEGER NOT NULL
-            )''');
-            await customStatement('''CREATE TABLE IF NOT EXISTS outbox_messages (
-              id TEXT NOT NULL PRIMARY KEY,
-              channel TEXT NOT NULL,
-              title TEXT NOT NULL,
-              body TEXT NOT NULL,
-              sent_at INTEGER,
-              created_at INTEGER NOT NULL,
-              status TEXT NOT NULL DEFAULT 'pending',
-              error TEXT
-            )''');
-          }
-        },
-      );
-
-  /// Ignores duplicate-column errors from prior partial migrations, but logs all other failures.
-  Future<void> _safeAddColumn(
-      Migrator m, TableInfo table, GeneratedColumn column) async {
-    try {
-      await m.addColumn(table, column);
-    } catch (e, st) {
-      if (!e.toString().toLowerCase().contains('duplicate column')) {
-        await logError(area: 'migration', action: 'add_column', error: e, stackTrace: st, inputJson: column.name);
+    onCreate: (m) async {
+      await m.createAll();
+    },
+    onUpgrade: (m, from, to) async {
+      if (from < 2) await m.createTable(stages);
+      if (from < 3) await m.createTable(workItems);
+      if (from < 4) {
+        // Defensive: ignore duplicate-column errors from partial migrations
+        for (final col in [
+          workItems.blockedReason,
+          workItems.source,
+          workItems.phoneQueue,
+          workItems.priority,
+          workItems.dueAt,
+          workItems.updatedAt,
+        ]) {
+          try {
+            await m.addColumn(workItems, col);
+          } catch (_) {}
+        }
+        for (final fn in <Future<void> Function()>[
+          () => m.createTable(drafts),
+          () => m.createTable(dailyReviews),
+          () => m.createTable(outboxMessages),
+        ]) {
+          try {
+            await fn();
+          } catch (_) {}
+        }
       }
-    }
-  }
+      if (from < 5) {
+        for (final fn in <Future<void> Function()>[
+          () => m.createTable(eventLog),
+          () => m.createTable(documents),
+          () => m.createTable(documentLinks),
+          () => m.createTable(projectPeople),
+          () => m.createTable(projectRisks),
+          () => m.createTable(projectDecisions),
+        ]) {
+          try {
+            await fn();
+          } catch (_) {}
+        }
+        for (final col in [
+          projects.description,
+          projects.desiredOutcome,
+          projects.successCriteria,
+          projects.status,
+          projects.deletedAt,
+          projects.deleteReason,
+        ]) {
+          try {
+            await m.addColumn(projects, col);
+          } catch (_) {}
+        }
+        for (final col in [stages.bottleneckOwner, stages.isBottleneck]) {
+          try {
+            await m.addColumn(stages, col);
+          } catch (_) {}
+        }
+      }
+      if (from < 6) {
+        for (final col in [
+          projects.phase,
+          projects.priority,
+          projects.scopeIncluded,
+          projects.scopeExcluded,
+          projects.outcomeSummary,
+          projects.lessonsLearned,
+        ]) {
+          try {
+            await m.addColumn(projects, col);
+          } catch (_) {}
+        }
+      }
+      if (from < 7) {
+        for (final fn in <Future<void> Function()>[
+          () => m.createTable(workItemNotes),
+          () => m.createTable(workItemAnalyses),
+        ]) {
+          try {
+            await fn();
+          } catch (_) {}
+        }
+      }
+      if (from < 8) {
+        try {
+          await m.createTable(contacts);
+        } catch (_) {}
+      }
+    },
+    beforeOpen: (_) async {
+      await _ensureProjectCompatibilityColumns();
+    },
+  );
 
+  /// Repairs older or partially migrated local databases that already report
+  /// schemaVersion 5 but are missing nullable project columns used by the
+  /// current Drift-generated Projects table. Without this, even a plain
+  /// select(projects) can fail with: no such column: deleted_at.
+  Future<void> _ensureProjectCompatibilityColumns() async {
+    final addColumns = <String>[
+      'ALTER TABLE projects ADD COLUMN description TEXT NULL',
+      'ALTER TABLE projects ADD COLUMN desired_outcome TEXT NULL',
+      'ALTER TABLE projects ADD COLUMN success_criteria TEXT NULL',
+      // Use nullable here — we backfill below so the NOT NULL alias still holds.
+      "ALTER TABLE projects ADD COLUMN status TEXT DEFAULT 'active'",
+      'ALTER TABLE projects ADD COLUMN deleted_at INTEGER NULL',
+      'ALTER TABLE projects ADD COLUMN delete_reason TEXT NULL',
+      // v6 lifecycle columns
+      'ALTER TABLE projects ADD COLUMN phase TEXT NULL',
+      'ALTER TABLE projects ADD COLUMN priority TEXT NULL',
+      'ALTER TABLE projects ADD COLUMN scope_included TEXT NULL',
+      'ALTER TABLE projects ADD COLUMN scope_excluded TEXT NULL',
+      'ALTER TABLE projects ADD COLUMN outcome_summary TEXT NULL',
+      'ALTER TABLE projects ADD COLUMN lessons_learned TEXT NULL',
+      // work_items columns that may be absent on very old schemas
+      "ALTER TABLE work_items ADD COLUMN completed INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE work_items ADD COLUMN phone_queue INTEGER NOT NULL DEFAULT 0",
+      // project_people compatibility columns (older local DBs may miss these)
+      'ALTER TABLE project_people ADD COLUMN role TEXT NULL',
+      'ALTER TABLE project_people ADD COLUMN authority TEXT NULL',
+      // stages compatibility columns (legacy DBs may miss these)
+      "ALTER TABLE stages ADD COLUMN is_bottleneck INTEGER NOT NULL DEFAULT 0",
+      'ALTER TABLE stages ADD COLUMN bottleneck_owner TEXT NULL',
+    ];
 
-  // -------------------------------------------------------------------------
-  // Defensive schema repair - runs on every DB open, including already-v4 DBs.
-  // -------------------------------------------------------------------------
-
-  Future<void> repairSchema() async {
-    try {
-      await _ensureBaseTablesForRepair();
-      await _ensureColumns('work_items', {
-        'description': 'TEXT',
-        'owner': 'TEXT',
-        'status': "TEXT NOT NULL DEFAULT 'next'",
-        'priority': "TEXT NOT NULL DEFAULT 'normal'",
-        'due_at': 'INTEGER',
-        'updated_at': 'INTEGER NOT NULL DEFAULT 0',
-        'blocked_reason': 'TEXT',
-        'source': 'TEXT',
-        'phone_queue': 'INTEGER NOT NULL DEFAULT 0',
-        'completed': 'INTEGER NOT NULL DEFAULT 0',
-      });
-      await _ensureColumns('projects', {'owner': 'TEXT'});
-      await _ensureColumns('stages', {'owner': 'TEXT'});
-      await _ensureColumns('drafts', {
-        'project_id': 'TEXT',
-        'work_item_id': 'TEXT',
-        'input_json': 'TEXT',
-        'updated_at': 'INTEGER NOT NULL DEFAULT 0',
-        'accepted': 'INTEGER NOT NULL DEFAULT 0',
-      });
-      await _ensureColumns('outbox_messages', {
-        'sent_at': 'INTEGER',
-        'status': "TEXT NOT NULL DEFAULT 'pending'",
-        'error': 'TEXT',
-      });
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-      await customStatement("UPDATE work_items SET status = 'next' WHERE status IS NULL OR status = ''");
-      await customStatement("UPDATE work_items SET priority = 'normal' WHERE priority IS NULL OR priority = ''");
-      await customStatement("UPDATE work_items SET updated_at = COALESCE(created_at, $nowMs) WHERE updated_at IS NULL OR updated_at = 0");
-      await customStatement('UPDATE work_items SET completed = 0 WHERE completed IS NULL');
-      await customStatement('UPDATE work_items SET phone_queue = 0 WHERE phone_queue IS NULL');
-      await customStatement("UPDATE drafts SET updated_at = COALESCE(created_at, $nowMs) WHERE updated_at IS NULL OR updated_at = 0");
-      await customStatement('UPDATE drafts SET accepted = 0 WHERE accepted IS NULL');
-      await logEvent(level: 'info', area: 'migration', action: 'schema_repair', outputJson: '{"status":"ok"}');
-    } catch (e, st) {
-      await logError(area: 'migration', action: 'schema_repair', error: e, stackTrace: st);
-      rethrow;
-    }
-  }
-
-  Future<void> _ensureBaseTablesForRepair() async {
-    await customStatement('''CREATE TABLE IF NOT EXISTS event_log (
-      id TEXT NOT NULL PRIMARY KEY,
-      timestamp INTEGER NOT NULL,
-      level TEXT NOT NULL,
-      area TEXT NOT NULL,
-      action TEXT NOT NULL,
-      entity_type TEXT,
-      entity_id TEXT,
-      input_json TEXT,
-      output_json TEXT,
-      error TEXT,
-      stack_trace TEXT,
-      correlation_id TEXT
-    )''');
-    await customStatement('''CREATE TABLE IF NOT EXISTS drafts (
-      id TEXT NOT NULL PRIMARY KEY,
-      project_id TEXT,
-      work_item_id TEXT,
-      kind TEXT NOT NULL,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      input_json TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      accepted INTEGER NOT NULL DEFAULT 0
-    )''');
-    await customStatement('''CREATE TABLE IF NOT EXISTS daily_reviews (
-      id TEXT NOT NULL PRIMARY KEY,
-      review_date INTEGER NOT NULL,
-      summary TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    )''');
-    await customStatement('''CREATE TABLE IF NOT EXISTS outbox_messages (
-      id TEXT NOT NULL PRIMARY KEY,
-      channel TEXT NOT NULL,
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      sent_at INTEGER,
-      created_at INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      error TEXT
-    )''');
-    await customStatement('''CREATE TABLE IF NOT EXISTS documents (
-      id TEXT NOT NULL PRIMARY KEY,
-      title TEXT NOT NULL,
-      original_filename TEXT NOT NULL,
-      stored_path TEXT,
-      mime_type TEXT,
-      extension TEXT,
-      project_id TEXT,
-      source TEXT,
-      status TEXT NOT NULL DEFAULT 'imported',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      metadata_json TEXT,
-      extracted_text TEXT,
-      rendered_markdown TEXT,
-      parse_error TEXT
-    )''');
-    await customStatement('''CREATE TABLE IF NOT EXISTS document_links (
-      id TEXT NOT NULL PRIMARY KEY,
-      document_id TEXT NOT NULL,
-      entity_type TEXT NOT NULL,
-      entity_id TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    )''');
-  }
-
-  Future<void> _ensureColumns(String tableName, Map<String, String> columns) async {
-    final rows = await customSelect('PRAGMA table_info($tableName)').get();
-    final existing = rows.map((r) => (r.data['name'] as String).toLowerCase()).toSet();
-    for (final entry in columns.entries) {
-      if (existing.contains(entry.key.toLowerCase())) continue;
+    for (final stmt in addColumns) {
       try {
-        await customStatement('ALTER TABLE $tableName ADD COLUMN ${entry.key} ${entry.value}');
-        await logEvent(level: 'info', area: 'migration', action: 'add_column', entityType: tableName, entityId: entry.key);
-      } catch (e, st) {
-        await logError(area: 'migration', action: 'add_column', entityType: tableName, entityId: entry.key, error: e, stackTrace: st);
+        await customStatement(stmt);
+      } catch (_) {
+        // Expected when column already exists — ignore.
       }
+    }
+
+    final createTables = <String>[
+      '''CREATE TABLE IF NOT EXISTS contacts (
+        id TEXT NOT NULL PRIMARY KEY,
+        name TEXT NOT NULL,
+        title TEXT NULL,
+        phone TEXT NULL,
+        alternate_phone TEXT NULL,
+        email TEXT NULL,
+        website TEXT NULL,
+        business_name TEXT NULL,
+        notes TEXT NULL,
+        photo_path TEXT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )''',
+      '''CREATE TABLE IF NOT EXISTS work_item_notes (
+        id TEXT NOT NULL PRIMARY KEY,
+        work_item_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )''',
+      '''CREATE TABLE IF NOT EXISTS work_item_analyses (
+        id TEXT NOT NULL PRIMARY KEY,
+        work_item_id TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        output TEXT NOT NULL,
+        model TEXT NULL,
+        created_at INTEGER NOT NULL
+      )''',
+    ];
+
+    for (final stmt in createTables) {
+      try {
+        await customStatement(stmt);
+      } catch (_) {}
+    }
+
+    // If project_people came from an alternate schema branch (role_type / authority_level),
+    // rebuild it into the current expected shape so inserts don't fail on NOT NULL legacy cols.
+    try {
+      final cols = await customSelect('PRAGMA table_info(project_people)').get();
+      final names = cols
+          .map((row) => (row.data['name']?.toString() ?? '').toLowerCase())
+          .where((name) => name.isNotEmpty)
+          .toSet();
+      final needsRebuild =
+          names.contains('role_type') || names.contains('authority_level');
+      if (needsRebuild) {
+        await transaction(() async {
+          await customStatement('''CREATE TABLE IF NOT EXISTS project_people_new (
+            id TEXT NOT NULL PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            role TEXT NULL,
+            authority TEXT NULL,
+            created_at INTEGER NOT NULL
+          )''');
+
+          final roleExpr = names.contains('role')
+              ? (names.contains('role_type') ? 'COALESCE(role, role_type)' : 'role')
+              : (names.contains('role_type') ? 'role_type' : 'NULL');
+          final authorityExpr = names.contains('authority')
+              ? (names.contains('authority_level')
+                  ? 'COALESCE(authority, authority_level)'
+                  : 'authority')
+              : (names.contains('authority_level') ? 'authority_level' : 'NULL');
+
+          await customStatement(
+            "INSERT INTO project_people_new (id, project_id, name, role, authority, created_at) "
+            "SELECT id, project_id, name, $roleExpr, $authorityExpr, "
+            "COALESCE(created_at, CAST(strftime('%s','now') AS INTEGER) * 1000) "
+            "FROM project_people",
+          );
+
+          await customStatement('DROP TABLE project_people');
+          await customStatement('ALTER TABLE project_people_new RENAME TO project_people');
+        });
+      }
+    } catch (_) {
+      // If table doesn't exist yet or pragma fails, regular migrations handle creation.
+    }
+    // Backfill any rows where non-nullable columns ended up NULL due to
+    // partial migrations or SQLite schema-default edge cases.
+    final backfills = <String>[
+      "UPDATE projects SET status = 'active' WHERE status IS NULL",
+      "UPDATE work_items SET status = 'next' WHERE status IS NULL",
+      "UPDATE work_items SET priority = 'normal' WHERE priority IS NULL",
+      "UPDATE work_items SET completed = 0 WHERE completed IS NULL",
+      "UPDATE work_items SET phone_queue = 0 WHERE phone_queue IS NULL",
+      // Prevent null-mapping crashes for non-null Drift stage fields
+      "UPDATE stages SET title = 'Tasks' WHERE title IS NULL OR TRIM(title) = ''",
+      "UPDATE stages SET position = 0 WHERE position IS NULL",
+      "UPDATE stages SET created_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE created_at IS NULL",
+      "UPDATE stages SET is_bottleneck = 0 WHERE is_bottleneck IS NULL",
+    ];
+
+    for (final stmt in backfills) {
+      try {
+        await customStatement(stmt);
+      } catch (_) {}
     }
   }
 
-  Future<void> logEvent({
-    String level = 'info',
-    required String area,
-    required String action,
-    String? entityType,
-    String? entityId,
-    String? inputJson,
-    String? outputJson,
-    String? error,
-    StackTrace? stackTrace,
-    String? correlationId,
-  }) async {
-    try {
-      await into(eventLog).insert(EventLogCompanion.insert(
-        id: '${DateTime.now().microsecondsSinceEpoch}_${area}_$action',
-        timestamp: DateTime.now(),
-        level: level,
-        area: area,
-        action: action,
-        entityType: Value(entityType),
-        entityId: Value(entityId),
-        inputJson: Value(inputJson),
-        outputJson: Value(outputJson),
-        error: Value(error),
-        stackTrace: Value(stackTrace?.toString()),
-        correlationId: Value(correlationId),
-      ));
-    } catch (_) {}
+  // ── AppMeta helpers ───────────────────────────────────────────────────────
+
+  Future<String?> getMetaString(String key) async {
+    final row = await (select(
+      appMeta,
+    )..where((t) => t.key.equals(key))).getSingleOrNull();
+    return row?.value;
   }
-
-  Future<void> logError({
-    required String area,
-    required String action,
-    String? entityType,
-    String? entityId,
-    Object? error,
-    StackTrace? stackTrace,
-    String? inputJson,
-  }) => logEvent(level: 'error', area: area, action: action, entityType: entityType, entityId: entityId, inputJson: inputJson, error: error?.toString(), stackTrace: stackTrace);
-
-  Stream<List<EventLogData>> watchRecentEvents() =>
-      (select(eventLog)..orderBy([(t) => OrderingTerm.desc(t.timestamp)])..limit(250)).watch();
-  Future<List<EventLogData>> getRecentEvents() =>
-      (select(eventLog)..orderBy([(t) => OrderingTerm.desc(t.timestamp)])..limit(250)).get();
-  Future<void> clearEventLog() => delete(eventLog).go();
-
-  // -------------------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------------------
-
-  String _newId() => DateTime.now().millisecondsSinceEpoch.toString();
-
-  // -------------------------------------------------------------------------
-  // AppMeta
-  // -------------------------------------------------------------------------
-
-  static const _activeProjectKey = 'active_project_id';
-  static String _activeStageKeyFor(String projectId) =>
-      'active_stage_id::$projectId';
-  static String _isBottleneckKeyFor(String stageId) =>
-      'is_bottleneck::$stageId';
-
-  static const kTelegramBotToken = 'setting::telegram_bot_token';
-  static const kTelegramChatId   = 'setting::telegram_chat_id';
-  static const kTelegramEnabled  = 'setting::telegram_enabled';
-  static const kOllamaHost       = 'setting::ollama_host';
-  static const kOllamaModel      = 'setting::ollama_model';
-
-  Stream<String?> watchMetaString(String key) =>
-      (select(appMeta)..where((t) => t.key.equals(key)))
-          .watchSingleOrNull()
-          .map((row) => row?.value);
-
-  Future<String?> getMetaString(String key) async =>
-      ((await (select(appMeta)..where((t) => t.key.equals(key)))
-              .getSingleOrNull()))
-          ?.value;
 
   Future<void> setMetaString(String key, String? value) async {
     if (value == null || value.isEmpty) {
       await (delete(appMeta)..where((t) => t.key.equals(key))).go();
     } else {
       await into(appMeta).insertOnConflictUpdate(
-        AppMetaCompanion.insert(key: key, value: value),
+        AppMetaCompanion(key: Value(key), value: Value(value)),
       );
     }
   }
 
-  Stream<bool> watchMetaBool(String key) =>
-      watchMetaString(key).map((v) => (v ?? '') == '1');
+  Stream<String?> watchMetaString(String key) {
+    return (select(appMeta)..where((t) => t.key.equals(key)))
+        .watchSingleOrNull()
+        .map((row) => row?.value);
+  }
 
-  Future<void> setMetaBool(String key, bool value) =>
-      setMetaString(key, value ? '1' : '0');
-
-  // -------------------------------------------------------------------------
-  // Projects
-  // -------------------------------------------------------------------------
+  // ── Projects ──────────────────────────────────────────────────────────────
 
   Stream<List<Project>> watchProjects() =>
-      (select(projects)..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+      (select(projects)
+            ..where((t) => t.deletedAt.isNull())
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .watch();
 
+  Stream<Project?> watchProject(String id) =>
+      (select(projects)..where((t) => t.id.equals(id))).watchSingleOrNull();
+
   Stream<Project?> watchActiveProject() {
-    final metaRow = (select(appMeta)
-          ..where((t) => t.key.equals(_activeProjectKey)))
-        .watchSingleOrNull();
-    return metaRow.asyncMap((row) async {
-      final id = row?.value;
+    return watchMetaString(kActiveProjectId).asyncMap((id) async {
       if (id == null || id.isEmpty) return null;
-      return (select(projects)..where((t) => t.id.equals(id)))
-          .getSingleOrNull();
+      return (select(
+        projects,
+      )..where((t) => t.id.equals(id))).getSingleOrNull();
     });
   }
 
-  Future<void> setActiveProjectId(String? id) async {
-    if (id == null || id.isEmpty) {
-      await (delete(appMeta)..where((t) => t.key.equals(_activeProjectKey)))
-          .go();
-      return;
-    }
-    await into(appMeta).insertOnConflictUpdate(
-      AppMetaCompanion.insert(key: _activeProjectKey, value: id),
-    );
-    await _ensureDefaultStages(id);
-    final current =
-        await getActiveStageForProject(id) ?? await _fallbackStage0(id);
-    if (current != null) await setActiveStageIdForProject(id, current.id);
-  }
-
   Future<void> createProject(
-      String id, String title, DateTime createdAt) async {
+    String id,
+    String title,
+    DateTime createdAt,
+  ) async {
+    debugPrint('[Atlas] createProject: id=$id title="$title"');
     await into(projects).insert(
-      ProjectsCompanion.insert(id: id, title: title, createdAt: createdAt),
-      mode: InsertMode.insertOrReplace,
+      ProjectsCompanion(
+        id: Value(id),
+        title: Value(title),
+        createdAt: Value(createdAt),
+        status: const Value('active'),
+      ),
     );
-    await _ensureDefaultStages(id);
-    await setActiveProjectId(id);
+
+    // Auto-create a default stage so the Work screen is immediately usable
+    final stageId = '${DateTime.now().microsecondsSinceEpoch}_stage';
+    debugPrint(
+      '[Atlas] createProject: creating default stage $stageId for project $id',
+    );
+    await into(stages).insert(
+      StagesCompanion(
+        id: Value(stageId),
+        projectId: Value(id),
+        title: const Value('Tasks'),
+        position: const Value(0),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+
+    // Activate if active_project_id is absent, empty, or points to a missing/deleted project
+    final current = await getMetaString(kActiveProjectId);
+    debugPrint('[Atlas] createProject: current active_project_id=$current');
+    bool shouldActivate = current == null || current.isEmpty;
+    if (!shouldActivate) {
+      final existing = await (select(
+        projects,
+      )..where((t) => t.id.equals(current))).getSingleOrNull();
+      if (existing == null) {
+        debugPrint(
+          '[Atlas] createProject: active project "$current" is missing/deleted – switching to $id',
+        );
+        shouldActivate = true;
+      }
+    }
+    if (shouldActivate) {
+      await setMetaString(kActiveProjectId, id);
+      debugPrint('[Atlas] createProject: set active_project_id=$id');
+    }
+
+    try {
+      final allActive = await (select(
+        projects,
+      )..where((t) => t.deletedAt.isNull())).get();
+      final stageCount = (await getStagesForProject(id)).length;
+      debugPrint(
+        '[Atlas] createProject: done – total projects=${allActive.length}, stages for new=$stageCount',
+      );
+    } catch (e) {
+      debugPrint('[Atlas] createProject: done (log query failed: $e)');
+    }
   }
 
-  // -------------------------------------------------------------------------
-  // Stages
-  // -------------------------------------------------------------------------
+  Future<void> setActiveProjectId(String? id) =>
+      setMetaString(kActiveProjectId, id);
+
+  /// Ensures every non-deleted project has at least one stage.
+  /// Run at startup to heal projects created before auto-stage logic existed.
+  Future<void> ensureDefaultStagesForProjects() async {
+    final allProjects = await (select(
+      projects,
+    )..where((t) => t.deletedAt.isNull())).get();
+    debugPrint(
+      '[Atlas] ensureDefaultStages: checking ${allProjects.length} project(s)',
+    );
+    for (final p in allProjects) {
+      final existing = await getStagesForProject(p.id);
+      debugPrint(
+        '[Atlas] ensureDefaultStages: project "${p.title}" has ${existing.length} stage(s)',
+      );
+      if (existing.isEmpty) {
+        final stageId = '${DateTime.now().microsecondsSinceEpoch}_stage';
+        debugPrint(
+          '[Atlas] ensureDefaultStages: creating default stage for project ${p.id}',
+        );
+        await into(stages).insert(
+          StagesCompanion(
+            id: Value(stageId),
+            projectId: Value(p.id),
+            title: const Value('Tasks'),
+            position: const Value(0),
+            createdAt: Value(DateTime.now()),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> updateProjectMeta(String id, Map<String, Object?> fields) async {
+    Value<T?> _v<T>(String key) => fields.containsKey(key)
+        ? Value(fields[key] as T?)
+        : const Value.absent();
+
+    final companion = ProjectsCompanion(
+      title: fields.containsKey('title')
+          ? Value(fields['title'] as String)
+          : const Value.absent(),
+      owner: _v<String>('owner'),
+      status: fields.containsKey('status')
+          ? Value(fields['status'] as String? ?? 'active')
+          : const Value.absent(),
+      description: _v<String>('description'),
+      desiredOutcome: _v<String>('desiredOutcome'),
+      successCriteria: _v<String>('successCriteria'),
+      phase: _v<String>('phase'),
+      priority: _v<String>('priority'),
+      scopeIncluded: _v<String>('scopeIncluded'),
+      scopeExcluded: _v<String>('scopeExcluded'),
+      outcomeSummary: _v<String>('outcomeSummary'),
+      lessonsLearned: _v<String>('lessonsLearned'),
+    );
+    await (update(projects)..where((t) => t.id.equals(id))).write(companion);
+  }
+
+  Future<void> softDeleteProject(String id, String reason) async {
+    await (update(projects)..where((t) => t.id.equals(id))).write(
+      ProjectsCompanion(
+        status: const Value('deleted'),
+        deletedAt: Value(DateTime.now()),
+        deleteReason: Value(reason),
+      ),
+    );
+  }
+
+  // ProjectFull is just a Project (typedef). These return all non-deleted.
+  Stream<List<ProjectFull>> watchProjectsFull() => watchProjects();
+
+  Future<List<ProjectFull>> getProjectsFull() =>
+      (select(projects)..where((t) => t.status.equals('active'))).get();
+
+  Future<ProjectFull?> getProjectFull(String id) =>
+      (select(projects)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  // ── Stages ────────────────────────────────────────────────────────────────
 
   Stream<List<Stage>> watchStagesForProject(String projectId) =>
       (select(stages)
@@ -373,137 +505,114 @@ class AppDb extends _$AppDb {
           .watch();
 
   Future<List<Stage>> getStagesForProject(String projectId) =>
-      (select(stages)..where((t) => t.projectId.equals(projectId))).get();
-
-  Future<void> _ensureDefaultStages(String projectId) async {
-    final countExp = stages.id.count();
-    final q = selectOnly(stages)
-      ..addColumns([countExp])
-      ..where(stages.projectId.equals(projectId));
-    final row = await q.getSingle();
-    final count = row.read(countExp) ?? 0;
-
-    if (count > 0) {
-      final active = await getActiveStageForProject(projectId);
-      if (active == null) {
-        await setActiveStageIdForProject(projectId, '${projectId}_stage_0');
-      }
-      return;
-    }
-
-    final now = DateTime.now();
-    const defaults = ['Idea', 'Design', 'Build', 'Test', 'Ship', 'Stabilize'];
-    for (var i = 0; i < defaults.length; i++) {
-      await into(stages).insert(
-        StagesCompanion.insert(
-          id: '${projectId}_stage_$i',
-          projectId: projectId,
-          title: defaults[i],
-          position: i,
-          createdAt: now,
-        ),
-        mode: InsertMode.insertOrReplace,
-      );
-    }
-    await setActiveStageIdForProject(projectId, '${projectId}_stage_0');
-  }
+      (select(stages)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.asc(t.position)]))
+          .get();
 
   Stream<Stage?> watchActiveStageForProject(String projectId) {
-    final key = _activeStageKeyFor(projectId);
-    return (select(appMeta)..where((t) => t.key.equals(key)))
-        .watchSingleOrNull()
-        .asyncMap((row) async {
-      final id = row?.value;
-      if (id == null || id.isEmpty) return null;
+    final key = 'active_stage_$projectId';
+    return watchMetaString(key).asyncMap((id) async {
+      if (id == null || id.isEmpty) {
+        // Default to first stage
+        return (select(stages)
+              ..where((t) => t.projectId.equals(projectId))
+              ..orderBy([(t) => OrderingTerm.asc(t.position)])
+              ..limit(1))
+            .getSingleOrNull();
+      }
       return (select(stages)..where((t) => t.id.equals(id))).getSingleOrNull();
     });
   }
 
-  Future<void> setActiveStageIdForProject(
-      String projectId, String? stageId) async {
-    final key = _activeStageKeyFor(projectId);
-    if (stageId == null || stageId.isEmpty) {
-      await (delete(appMeta)..where((t) => t.key.equals(key))).go();
-    } else {
-      await into(appMeta).insertOnConflictUpdate(
-        AppMetaCompanion.insert(key: key, value: stageId),
-      );
-    }
+  Future<void> setActiveStageIdForProject(String projectId, String stageId) =>
+      setMetaString('active_stage_$projectId', stageId);
+
+  // Bottleneck / owner on Stage
+  Stream<String?> watchBottleneckOwner(String stageId) =>
+      (select(stages)..where((t) => t.id.equals(stageId)))
+          .watchSingleOrNull()
+          .map((s) => s?.bottleneckOwner);
+
+  Future<void> setBottleneckOwner(String stageId, String? owner) async {
+    await (update(stages)..where((t) => t.id.equals(stageId))).write(
+      StagesCompanion(bottleneckOwner: Value(owner)),
+    );
   }
 
-  Future<Stage?> getActiveStageForProject(String projectId) async {
-    final key = _activeStageKeyFor(projectId);
-    final row = await (select(appMeta)..where((t) => t.key.equals(key)))
-        .getSingleOrNull();
-    final stageId = row?.value;
-    if (stageId == null || stageId.isEmpty) return null;
-    return (select(stages)..where((t) => t.id.equals(stageId)))
-        .getSingleOrNull();
+  Stream<bool> watchIsBottleneck(String stageId) =>
+      (select(stages)..where((t) => t.id.equals(stageId)))
+          .watchSingleOrNull()
+          .map((s) => s?.isBottleneck ?? false);
+
+  Future<void> setIsBottleneck(String stageId, bool v) async {
+    await (update(stages)..where((t) => t.id.equals(stageId))).write(
+      StagesCompanion(isBottleneck: Value(v)),
+    );
   }
 
-  Future<Stage?> _fallbackStage0(String projectId) =>
-      (select(stages)..where((t) => t.id.equals('${projectId}_stage_0')))
-          .getSingleOrNull();
-
-  // -------------------------------------------------------------------------
-  // Work items
-  // -------------------------------------------------------------------------
+  // ── Work Items ────────────────────────────────────────────────────────────
 
   Stream<List<WorkItem>> watchWorkItemsForStage(String stageId) =>
       (select(workItems)
-            ..where((t) => t.stageId.equals(stageId))
-            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+            ..where(
+              (t) =>
+                  t.stageId.equals(stageId) &
+                  t.status.isNotIn(['done', 'archived']),
+            )
+            ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
           .watch();
-
-  Future<List<WorkItem>> getAllActiveWorkItems() =>
-      (select(workItems)
-            ..where((t) => t.status.isNotIn(['done', 'archived']))
-            ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
-          .get();
-
-  Future<List<WorkItem>> getTodayItems() async {
-    final now = DateTime.now();
-    final todayEnd = DateTime(now.year, now.month, now.day, 23, 59, 59);
-    return (select(workItems)
-          ..where(
-            (t) =>
-                t.status.isNotIn(['done', 'archived']) &
-                (t.status.equals('doing') |
-                    t.phoneQueue.equals(true) |
-                    t.priority.isIn(['high', 'urgent']) |
-                    t.dueAt.isSmallerOrEqualValue(todayEnd)),
-          )
-          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
-        .get();
-  }
 
   Stream<List<WorkItem>> watchTodayItems() {
     final now = DateTime.now();
-    final todayEnd = DateTime(now.year, now.month, now.day, 23, 59, 59);
-    return (select(workItems)
-          ..where(
-            (t) =>
-                t.status.isNotIn(['done', 'archived']) &
-                (t.status.equals('doing') |
-                    t.phoneQueue.equals(true) |
-                    t.priority.isIn(['high', 'urgent']) |
-                    t.dueAt.isSmallerOrEqualValue(todayEnd)),
-          )
-          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    return (select(workItems)..where(
+          (t) =>
+              t.status.isNotIn(['done', 'archived']) &
+              (t.status.equals('doing') |
+                  t.phoneQueue.equals(true) |
+                  t.dueAt.isSmallerOrEqualValue(tomorrow) |
+                  t.priority.isIn(['high', 'urgent'])),
+        ))
         .watch();
   }
 
+  Future<List<WorkItem>> getTodayItems() {
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    return (select(workItems)..where(
+          (t) =>
+              t.status.isNotIn(['done', 'archived']) &
+              (t.status.equals('doing') |
+                  t.phoneQueue.equals(true) |
+                  t.dueAt.isSmallerOrEqualValue(tomorrow) |
+                  t.priority.isIn(['high', 'urgent'])),
+        ))
+        .get();
+  }
+
+  Future<List<WorkItem>> getAllActiveWorkItems() => (select(
+    workItems,
+  )..where((t) => t.status.isNotIn(['done', 'archived']))).get();
+
   Future<List<WorkItem>> getBlockedItems() =>
-      (select(workItems)
-            ..where(
-              (t) =>
-                  t.blockedReason.isNotNull() &
-                  t.status.isNotIn(['done', 'archived']),
-            ))
+      (select(workItems)..where(
+            (t) =>
+                t.blockedReason.isNotNull() &
+                t.status.isNotIn(['done', 'archived']),
+          ))
           .get();
 
   Future<WorkItem?> getWorkItem(String id) =>
       (select(workItems)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<List<WorkItem>> getWorkItemsForProject(String projectId) async {
+    final stageList = await getStagesForProject(projectId);
+    if (stageList.isEmpty) return [];
+    final ids = stageList.map((s) => s.id).toList();
+    return (select(workItems)..where((t) => t.stageId.isIn(ids))).get();
+  }
 
   Future<void> addWorkItem({
     required String stageId,
@@ -515,19 +624,20 @@ class AppDb extends _$AppDb {
     DateTime? dueAt,
     String? source,
   }) async {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
     final now = DateTime.now();
     await into(workItems).insert(
-      WorkItemsCompanion.insert(
-        id: _newId(),
-        stageId: stageId,
-        title: title,
+      WorkItemsCompanion(
+        id: Value(id),
+        stageId: Value(stageId),
+        title: Value(title),
         description: Value(description),
-        owner: Value(owner?.trim().isEmpty ?? true ? null : owner?.trim()),
+        owner: Value(owner),
         status: Value(status),
         priority: Value(priority),
         dueAt: Value(dueAt),
+        createdAt: Value(now),
         updatedAt: Value(now),
-        createdAt: now,
         source: Value(source),
       ),
     );
@@ -540,36 +650,35 @@ class AppDb extends _$AppDb {
     String? owner,
     String? status,
     String? priority,
-    required bool clearDueAt,
+    bool clearDueAt = false,
     DateTime? dueAt,
     String? blockedReason,
-    required bool clearBlockedReason,
+    bool clearBlockedReason = false,
     bool? phoneQueue,
   }) async {
-    final now = DateTime.now();
     await (update(workItems)..where((t) => t.id.equals(id))).write(
       WorkItemsCompanion(
         title: title != null ? Value(title) : const Value.absent(),
         description: description != null
-            ? Value(description.isEmpty ? null : description)
+            ? Value(description)
             : const Value.absent(),
-        owner: owner != null
-            ? Value(owner.trim().isEmpty ? null : owner.trim())
-            : const Value.absent(),
+        owner: owner != null ? Value(owner) : const Value.absent(),
         status: status != null ? Value(status) : const Value.absent(),
         priority: priority != null ? Value(priority) : const Value.absent(),
-        // Explicit typed nullable Values prevent Value<dynamic> inference
         dueAt: clearDueAt
-            ? const Value<DateTime?>(null)
-            : (dueAt != null ? Value(dueAt) : const Value.absent()),
+            ? const Value(null)
+            : dueAt != null
+            ? Value(dueAt)
+            : const Value.absent(),
         blockedReason: clearBlockedReason
-            ? const Value<String?>(null)
-            : (blockedReason != null
-                ? Value(blockedReason.isEmpty ? null : blockedReason)
-                : const Value.absent()),
-        phoneQueue: phoneQueue != null ? Value(phoneQueue) : const Value.absent(),
-        updatedAt: Value(now),
-        completed: status != null ? Value(status == 'done') : const Value.absent(),
+            ? const Value(null)
+            : blockedReason != null
+            ? Value(blockedReason)
+            : const Value.absent(),
+        phoneQueue: phoneQueue != null
+            ? Value(phoneQueue)
+            : const Value.absent(),
+        updatedAt: Value(DateTime.now()),
       ),
     );
   }
@@ -584,63 +693,33 @@ class AppDb extends _$AppDb {
     );
   }
 
-  Future<void> toggleWorkDone(String workItemId) async {
-    final item = await getWorkItem(workItemId);
+  Future<void> toggleWorkDone(String id) async {
+    final item = await getWorkItem(id);
     if (item == null) return;
-    final newDone = !item.completed;
-    await (update(workItems)..where((t) => t.id.equals(workItemId))).write(
-      WorkItemsCompanion(
-        completed: Value(newDone),
-        status: Value(newDone ? 'done' : 'next'),
-        updatedAt: Value(DateTime.now()),
-      ),
-    );
+    final isDone = item.status == 'done';
+    await setWorkItemStatus(id, isDone ? 'next' : 'done');
   }
 
-  // -------------------------------------------------------------------------
-  // Governance
-  // -------------------------------------------------------------------------
-
-  Future<String?> getWorkOwner(String workItemId) async =>
-      (await getWorkItem(workItemId))?.owner;
-
+  // Work item owner (used in governance)
   Stream<String?> watchWorkOwner(String workItemId) =>
       (select(workItems)..where((t) => t.id.equals(workItemId)))
           .watchSingleOrNull()
-          .map((row) => row?.owner);
+          .map((i) => i?.owner);
+
+  Future<String?> getWorkOwner(String workItemId) async {
+    final item = await getWorkItem(workItemId);
+    return item?.owner;
+  }
 
   Future<void> setWorkOwner(String workItemId, String? owner) async {
-    final o = owner?.trim();
-    await (update(workItems)..where((t) => t.id.equals(workItemId))).write(
-      WorkItemsCompanion(owner: Value(o == null || o.isEmpty ? null : o)),
-    );
+    await updateWorkItem(id: workItemId, owner: owner ?? '');
   }
 
-  Stream<String?> watchBottleneckOwner(String stageId) =>
-      (select(stages)..where((t) => t.id.equals(stageId)))
-          .watchSingleOrNull()
-          .map((row) => row?.owner);
+  // ── Drafts ────────────────────────────────────────────────────────────────
 
-  Future<void> setBottleneckOwner(String stageId, String? owner) async {
-    final o = owner?.trim();
-    await (update(stages)..where((t) => t.id.equals(stageId))).write(
-      StagesCompanion(owner: Value(o == null || o.isEmpty ? null : o)),
-    );
-  }
-
-  Stream<bool> watchIsBottleneck(String stageId) =>
-      watchMetaBool(_isBottleneckKeyFor(stageId));
-
-  Future<void> setIsBottleneck(String stageId, bool isBottleneck) =>
-      setMetaBool(_isBottleneckKeyFor(stageId), isBottleneck);
-
-  // -------------------------------------------------------------------------
-  // Drafts
-  // -------------------------------------------------------------------------
-
-  Stream<List<Draft>> watchDrafts() =>
-      (select(drafts)..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
-          .watch();
+  Stream<List<Draft>> watchDrafts() => (select(
+    drafts,
+  )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
 
   Future<void> saveDraft({
     required String kind,
@@ -650,18 +729,19 @@ class AppDb extends _$AppDb {
     String? projectId,
     String? workItemId,
   }) async {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
     final now = DateTime.now();
     await into(drafts).insert(
-      DraftsCompanion.insert(
-        id: _newId(),
-        kind: kind,
-        title: title,
-        body: body,
+      DraftsCompanion(
+        id: Value(id),
+        kind: Value(kind),
+        title: Value(title),
+        body: Value(body),
         inputJson: Value(inputJson),
         projectId: Value(projectId),
         workItemId: Value(workItemId),
-        createdAt: now,
-        updatedAt: now,
+        createdAt: Value(now),
+        updatedAt: Value(now),
       ),
     );
   }
@@ -669,138 +749,466 @@ class AppDb extends _$AppDb {
   Future<void> deleteDraft(String id) =>
       (delete(drafts)..where((t) => t.id.equals(id))).go();
 
-  // -------------------------------------------------------------------------
-  // Document library
-  // -------------------------------------------------------------------------
+  // ── Project governance ────────────────────────────────────────────────────
 
-  Future<String> importDocumentFromPath(String sourcePath, {String? projectId}) async {
-    final src = File(sourcePath.trim());
-    if (!await src.exists()) throw FileSystemException('File not found', sourcePath);
-    final now = DateTime.now();
-    final id = _newId();
-    final filename = p.basename(src.path);
-    final ext = p.extension(filename).replaceFirst('.', '').toLowerCase();
-    final appDir = await getApplicationSupportDirectory();
-    final docDir = Directory(p.join(appDir.path, 'documents', id));
-    await docDir.create(recursive: true);
-    final destPath = p.join(docDir.path, filename);
-    await src.copy(destPath);
-    String status = 'imported';
-    String? extracted;
-    String? rendered;
-    String? parseError;
-    try {
-      if (['txt', 'md', 'json', 'csv'].contains(ext)) {
-        extracted = await File(destPath).readAsString();
-        rendered = ext == 'json'
-            ? const JsonEncoder.withIndent('  ').convert(jsonDecode(extracted))
-            : extracted;
-        status = 'parsed';
-      } else if (['pdf', 'docx'].contains(ext)) {
-        rendered = 'Stored original file. External opening/parsing can be added later.';
-      } else {
-        rendered = 'Stored original file. No parser registered for .$ext.';
-      }
-    } catch (e) {
-      status = 'failed';
-      parseError = e.toString();
+  Stream<List<Contact>> watchContacts() =>
+      (select(contacts)..orderBy([(t) => OrderingTerm.asc(t.name)])).watch();
+
+  Future<List<Contact>> getContacts() =>
+      (select(contacts)..orderBy([(t) => OrderingTerm.asc(t.name)])).get();
+
+  Future<Contact?> getContact(String id) =>
+      (select(contacts)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<String> saveContact({
+    String? id,
+    required String name,
+    String? title,
+    String? phone,
+    String? alternatePhone,
+    String? email,
+    String? website,
+    String? businessName,
+    String? notes,
+    String? photoPath,
+  }) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      throw ArgumentError('Contact name is required.');
     }
-    await into(documents).insert(DocumentsCompanion.insert(
-      id: id,
-      title: filename,
-      originalFilename: filename,
-      storedPath: Value(destPath),
-      extension: Value(ext),
-      projectId: Value(projectId),
-      source: const Value('local_import'),
-      status: Value(status),
-      createdAt: now,
-      updatedAt: now,
-      metadataJson: Value(jsonEncode({'sourcePath': sourcePath, 'bytes': await src.length()})),
-      extractedText: Value(extracted),
-      renderedMarkdown: Value(rendered),
-      parseError: Value(parseError),
-    ));
-    await logEvent(level: status == 'failed' ? 'warn' : 'info', area: 'documents', action: 'import', entityType: 'document', entityId: id, inputJson: sourcePath, outputJson: jsonEncode({'status': status, 'extension': ext}), error: parseError);
-    return id;
+    final now = DateTime.now();
+    final contactId = id ?? now.microsecondsSinceEpoch.toString();
+    final existing = await getContact(contactId);
+    await into(contacts).insertOnConflictUpdate(
+      ContactsCompanion(
+        id: Value(contactId),
+        name: Value(trimmedName),
+        title: Value(_blankToNull(title)),
+        phone: Value(_blankToNull(phone)),
+        alternatePhone: Value(_blankToNull(alternatePhone)),
+        email: Value(_blankToNull(email)),
+        website: Value(_blankToNull(website)),
+        businessName: Value(_blankToNull(businessName)),
+        notes: Value(_blankToNull(notes)),
+        photoPath: Value(_blankToNull(photoPath)),
+        createdAt: Value(existing?.createdAt ?? now),
+        updatedAt: Value(now),
+      ),
+    );
+    return contactId;
   }
 
-  Stream<List<Document>> watchDocuments() =>
-      (select(documents)..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
+  Future<void> deleteContact(String id) =>
+      (delete(contacts)..where((t) => t.id.equals(id))).go();
 
+  Future<Contact?> findContactForImport({
+    String? id,
+    String? email,
+    String? name,
+  }) async {
+    final cleanId = _blankToNull(id);
+    if (cleanId != null) {
+      final byId = await getContact(cleanId);
+      if (byId != null) return byId;
+    }
+    final cleanEmail = _blankToNull(email)?.toLowerCase();
+    if (cleanEmail != null) {
+      final byEmail = await (select(
+        contacts,
+      )..where((t) => t.email.lower().equals(cleanEmail))).getSingleOrNull();
+      if (byEmail != null) return byEmail;
+    }
+    final cleanName = _blankToNull(name)?.toLowerCase();
+    if (cleanName != null) {
+      return (select(
+        contacts,
+      )..where((t) => t.name.lower().equals(cleanName))).getSingleOrNull();
+    }
+    return null;
+  }
 
-  // -------------------------------------------------------------------------
-  // Outbox ��������� returns the ID so callers can mark sent/failed
-  // -------------------------------------------------------------------------
+  String? _blankToNull(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  Future<List<ProjectPerson>> getProjectPeople(String projectId) =>
+      (select(projectPeople)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+          .get();
+
+  Future<void> addProjectPerson(
+    String projectId,
+    String name,
+    String? role,
+    String? authority,
+  ) async {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    await into(projectPeople).insert(
+      ProjectPeopleCompanion(
+        id: Value(id),
+        projectId: Value(projectId),
+        name: Value(name),
+        role: Value(role),
+        authority: Value(authority),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> updateProjectPerson(
+    String personId,
+    String name,
+    String? role,
+    String? authority,
+  ) async {
+    await (update(projectPeople)..where((t) => t.id.equals(personId))).write(
+      ProjectPeopleCompanion(
+        name: Value(name),
+        role: Value(role),
+        authority: Value(authority),
+      ),
+    );
+  }
+
+  Future<void> deleteProjectPerson(String personId) =>
+      (delete(projectPeople)..where((t) => t.id.equals(personId))).go();
+
+  Future<List<ProjectRisk>> getProjectRisks(String projectId) =>
+      (select(projectRisks)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .get();
+
+  Future<void> addProjectRisk(
+    String projectId,
+    String title,
+    String? desc,
+    String severity,
+  ) async {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    await into(projectRisks).insert(
+      ProjectRisksCompanion(
+        id: Value(id),
+        projectId: Value(projectId),
+        title: Value(title),
+        desc: Value(desc),
+        severity: Value(severity),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> deleteProjectRisk(String riskId) =>
+      (delete(projectRisks)..where((t) => t.id.equals(riskId))).go();
+
+  Future<List<ProjectDecision>> getProjectDecisions(String projectId) =>
+      (select(projectDecisions)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .get();
+
+  Future<void> addProjectDecision(
+    String projectId,
+    String title,
+    String? ctx,
+    String? decider,
+  ) async {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    await into(projectDecisions).insert(
+      ProjectDecisionsCompanion(
+        id: Value(id),
+        projectId: Value(projectId),
+        title: Value(title),
+        ctx: Value(ctx),
+        decider: Value(decider),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> deleteProjectDecision(String decisionId) =>
+      (delete(projectDecisions)..where((t) => t.id.equals(decisionId))).go();
+
+  // ── Documents ─────────────────────────────────────────────────────────────
+
+  Stream<List<Document>> watchDocuments() => (select(
+    documents,
+  )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
+
+  Stream<List<Document>> watchDocumentsForProject(String projectId) =>
+      (select(documents)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
+
+  Future<void> importDocumentFromPath(String path, {String? projectId}) async {
+    final file = File(path);
+    if (!file.existsSync()) {
+      throw FileSystemException('File not found', path);
+    }
+    final name = file.uri.pathSegments.last;
+    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : null;
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final now = DateTime.now();
+    await into(documents).insert(
+      DocumentsCompanion(
+        id: Value(id),
+        title: Value(name),
+        originalFilename: Value(name),
+        storedPath: Value(path),
+        extension: Value(ext),
+        projectId: Value(projectId),
+        status: const Value('imported'),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
+  // ── Event log ─────────────────────────────────────────────────────────────
+
+  Stream<List<Document>> watchDocumentsForWorkItem(String workItemId) {
+    final query =
+        select(documents).join([
+            innerJoin(
+              documentLinks,
+              documentLinks.documentId.equalsExp(documents.id),
+            ),
+          ])
+          ..where(
+            documentLinks.entityType.equals('work_item') &
+                documentLinks.entityId.equals(workItemId),
+          )
+          ..orderBy([OrderingTerm.desc(documents.createdAt)]);
+    return query.watch().map(
+      (rows) =>
+          rows.map((row) => row.readTable(documents)).toList(growable: false),
+    );
+  }
+
+  Future<List<Document>> getDocumentsForWorkItem(String workItemId) {
+    final query =
+        select(documents).join([
+            innerJoin(
+              documentLinks,
+              documentLinks.documentId.equalsExp(documents.id),
+            ),
+          ])
+          ..where(
+            documentLinks.entityType.equals('work_item') &
+                documentLinks.entityId.equals(workItemId),
+          )
+          ..orderBy([OrderingTerm.desc(documents.createdAt)]);
+    return query.get().then(
+      (rows) =>
+          rows.map((row) => row.readTable(documents)).toList(growable: false),
+    );
+  }
+
+  Future<void> linkDocumentToWorkItem(
+    String documentId,
+    String workItemId,
+  ) async {
+    final existing =
+        await (select(documentLinks)..where(
+              (t) =>
+                  t.documentId.equals(documentId) &
+                  t.entityType.equals('work_item') &
+                  t.entityId.equals(workItemId),
+            ))
+            .getSingleOrNull();
+    if (existing != null) return;
+    await into(documentLinks).insert(
+      DocumentLinksCompanion(
+        id: Value('${documentId}_${workItemId}_work_item'),
+        documentId: Value(documentId),
+        entityType: const Value('work_item'),
+        entityId: Value(workItemId),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> unlinkDocumentFromWorkItem(
+    String documentId,
+    String workItemId,
+  ) async {
+    await (delete(documentLinks)..where(
+          (t) =>
+              t.documentId.equals(documentId) &
+              t.entityType.equals('work_item') &
+              t.entityId.equals(workItemId),
+        ))
+        .go();
+  }
+
+  Stream<List<WorkItemNote>> watchNotesForWorkItem(String workItemId) =>
+      (select(workItemNotes)
+            ..where((t) => t.workItemId.equals(workItemId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
+
+  Future<void> addWorkItemNote(String workItemId, String body) async {
+    final now = DateTime.now();
+    await into(workItemNotes).insert(
+      WorkItemNotesCompanion(
+        id: Value(now.microsecondsSinceEpoch.toString()),
+        workItemId: Value(workItemId),
+        body: Value(body),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
+  Future<void> updateWorkItemNote(String noteId, String body) async {
+    await (update(workItemNotes)..where((t) => t.id.equals(noteId))).write(
+      WorkItemNotesCompanion(
+        body: Value(body),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> deleteWorkItemNote(String noteId) =>
+      (delete(workItemNotes)..where((t) => t.id.equals(noteId))).go();
+
+  Stream<List<WorkItemAnalysis>> watchAnalysesForWorkItem(String workItemId) =>
+      (select(workItemAnalyses)
+            ..where((t) => t.workItemId.equals(workItemId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
+
+  Future<void> saveWorkItemAnalysis({
+    required String workItemId,
+    required String prompt,
+    required String output,
+    String? model,
+  }) async {
+    await into(workItemAnalyses).insert(
+      WorkItemAnalysesCompanion(
+        id: Value(DateTime.now().microsecondsSinceEpoch.toString()),
+        workItemId: Value(workItemId),
+        prompt: Value(prompt),
+        output: Value(output),
+        model: Value(model),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> logEvent({
+    String level = 'info',
+    required String area,
+    required String action,
+    String? entityType,
+    String? entityId,
+    String? inputJson,
+    String? outputJson,
+    String? correlationId,
+    String? error,
+  }) async {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    await into(eventLog).insert(
+      EventLogCompanion(
+        id: Value(id),
+        timestamp: Value(DateTime.now()),
+        level: Value(level),
+        area: Value(area),
+        action: Value(action),
+        entityType: Value(entityType),
+        entityId: Value(entityId),
+        inputJson: Value(inputJson),
+        outputJson: Value(outputJson),
+        error: Value(error),
+      ),
+    );
+  }
+
+  Future<void> logError({
+    required String area,
+    required String action,
+    required Object error,
+    StackTrace? stackTrace,
+    String? inputJson,
+    String? entityId,
+    String? entityType,
+  }) async {
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    await into(eventLog).insert(
+      EventLogCompanion(
+        id: Value(id),
+        timestamp: Value(DateTime.now()),
+        level: const Value('error'),
+        area: Value(area),
+        action: Value(action),
+        entityType: Value(entityType),
+        entityId: Value(entityId),
+        inputJson: Value(inputJson),
+        error: Value(error.toString()),
+        stackTrace: Value(stackTrace?.toString()),
+      ),
+    );
+  }
+
+  Stream<List<EventLogData>> watchRecentEvents() =>
+      (select(eventLog)
+            ..orderBy([(t) => OrderingTerm.desc(t.timestamp)])
+            ..limit(500))
+          .watch();
+
+  Future<List<EventLogData>> getRecentEvents() =>
+      (select(eventLog)
+            ..orderBy([(t) => OrderingTerm.desc(t.timestamp)])
+            ..limit(500))
+          .get();
+
+  Future<void> clearEventLog() => delete(eventLog).go();
+
+  // ── Outbox ────────────────────────────────────────────────────────────────
 
   Future<String> addOutboxMessage({
     required String channel,
     required String title,
     required String body,
   }) async {
-    final id = _newId();
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
     await into(outboxMessages).insert(
-      OutboxMessagesCompanion.insert(
-        id: id,
-        channel: channel,
-        title: title,
-        body: body,
-        createdAt: DateTime.now(),
+      OutboxMessagesCompanion(
+        id: Value(id),
+        channel: Value(channel),
+        title: Value(title),
+        body: Value(body),
+        createdAt: Value(DateTime.now()),
+        status: const Value('pending'),
       ),
     );
     return id;
   }
 
-  Future<void> markOutboxSent(String id) =>
-      (update(outboxMessages)..where((t) => t.id.equals(id))).write(
-        OutboxMessagesCompanion(
-          status: const Value('sent'),
-          sentAt: Value(DateTime.now()),
-        ),
-      );
+  Future<void> markOutboxSent(String id) async {
+    await (update(outboxMessages)..where((t) => t.id.equals(id))).write(
+      OutboxMessagesCompanion(
+        status: const Value('sent'),
+        sentAt: Value(DateTime.now()),
+      ),
+    );
+  }
 
-  Future<void> markOutboxFailed(String id, String error) =>
-      (update(outboxMessages)..where((t) => t.id.equals(id))).write(
-        OutboxMessagesCompanion(
-          status: const Value('failed'),
-          error: Value(error),
-        ),
-      );
+  Future<void> markOutboxFailed(String id, String error) async {
+    await (update(outboxMessages)..where((t) => t.id.equals(id))).write(
+      OutboxMessagesCompanion(
+        status: const Value('failed'),
+        error: Value(error),
+      ),
+    );
+  }
 
   Stream<List<OutboxMessage>> watchOutboxMessages() =>
       (select(outboxMessages)
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
             ..limit(50))
           .watch();
-
-  // -------------------------------------------------------------------------
-  // Daily reviews
-  // -------------------------------------------------------------------------
-
-  Future<void> saveDailyReview(String summary) async {
-    final now = DateTime.now();
-    await into(dailyReviews).insert(
-      DailyReviewsCompanion.insert(
-        id: _newId(),
-        reviewDate: DateTime(now.year, now.month, now.day),
-        summary: summary,
-        createdAt: now,
-      ),
-    );
-  }
-
-  Future<DailyReview?> getTodayReview() async {
-    final now = DateTime.now();
-    final todayStart = DateTime(now.year, now.month, now.day);
-    final todayEnd = todayStart.add(const Duration(days: 1));
-    return (select(dailyReviews)
-          ..where(
-            (t) =>
-                t.reviewDate.isBiggerOrEqualValue(todayStart) &
-                t.reviewDate.isSmallerThanValue(todayEnd),
-          )
-          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
-          ..limit(1))
-        .getSingleOrNull();
-  }
 }
