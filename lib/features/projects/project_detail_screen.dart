@@ -862,14 +862,22 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             FilledButton(
               onPressed: () async {
                 if (title.text.trim().isEmpty) return;
-                await state.addProjectRisk(
-                  widget.projectId,
-                  title.text.trim(),
-                  _nt(desc.text),
-                  severity,
-                );
-                if (ctx.mounted) Navigator.of(ctx).pop();
-                await _loadAll();
+                try {
+                  await state.addProjectRisk(
+                    widget.projectId,
+                    title.text.trim(),
+                    _nt(desc.text),
+                    severity,
+                  );
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                  await _loadAll();
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to add risk: $e')),
+                    );
+                  }
+                }
               },
               child: const Text('Add'),
             ),
@@ -885,57 +893,103 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     final state = AppStateScope.of(context);
     final title = TextEditingController();
     final ctx2 = TextEditingController();
-    final decider = TextEditingController();
+    final contacts = await state.getContacts();
+    final selectedNames = <String>{};
 
+    if (!context.mounted) return;
     await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: _kPanel,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: const BorderSide(color: _kLine),
-        ),
-        title: const Text('Log decision'),
-        content: SizedBox(
-          width: 460,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _mf(title, 'What was decided?'),
-              _mf(ctx2, 'Context & rationale', multiline: true),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: ContactOwnerField(
-                  controller: decider,
-                  label: 'Decided by',
-                ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: _kPanel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: _kLine),
+          ),
+          title: const Text('Log decision'),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _mf(title, 'What was decided?'),
+                  _mf(ctx2, 'Context & rationale', multiline: true),
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      'Decided by (select all that apply)',
+                      style: TextStyle(fontSize: 12, color: Colors.white54),
+                    ),
+                  ),
+                  if (contacts.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        'No contacts loaded — add contacts in Settings → Workforce.',
+                        style: TextStyle(fontSize: 12, color: Colors.white38),
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        for (final c in contacts)
+                          FilterChip(
+                            label: Text(c.name),
+                            selected: selectedNames.contains(c.name),
+                            onSelected: (v) => setLocal(() {
+                              if (v) {
+                                selectedNames.add(c.name);
+                              } else {
+                                selectedNames.remove(c.name);
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                ],
               ),
-            ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                if (title.text.trim().isEmpty) return;
+                final deciderStr = selectedNames.isEmpty
+                    ? null
+                    : selectedNames.join(', ');
+                try {
+                  await state.addProjectDecision(
+                    widget.projectId,
+                    title.text.trim(),
+                    _nt(ctx2.text),
+                    deciderStr,
+                  );
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                  await _loadAll();
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to log decision: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Log'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              if (title.text.trim().isEmpty) return;
-              await state.addProjectDecision(
-                widget.projectId,
-                title.text.trim(),
-                _nt(ctx2.text),
-                _nt(decider.text),
-              );
-              if (ctx.mounted) Navigator.of(ctx).pop();
-              await _loadAll();
-            },
-            child: const Text('Log'),
-          ),
-        ],
       ),
     );
-    for (final c in [title, ctx2, decider]) c.dispose();
+    title.dispose();
+    ctx2.dispose();
   }
 
   Future<void> _showClosureDialog(BuildContext context, Project project) async {
