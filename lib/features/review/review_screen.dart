@@ -52,6 +52,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
         _overdue = allItems.where((i) => i.dueAt != null && i.dueAt!.isBefore(today)).toList();
         _dueToday = allItems.where((i) => i.dueAt != null && !i.dueAt!.isBefore(today) && i.dueAt!.isBefore(tomorrow)).toList();
       });
+      final generated = _buildDeterministicSummary();
+      state.saveDailyReview(generated); // persist to DailyReviews
       await state.db.logEvent(area: 'ui', action: 'review_load_success', outputJson: '{"count":${allItems.length}}');
     } catch (e, st) {
       await state.db.logError(area: 'ui', action: 'review_load_failed', error: e, stackTrace: st);

@@ -23,45 +23,65 @@ class _LibraryEntry {
   final String id;
   final String title;
   final bool isDraft;
+  final bool isMedia;
   final String? projectId;
   final String? extension;
   final String? content;
   final DateTime createdAt;
   final String? kind;
   final String? storedPath;
+  final String? mediaType;
+  final String? caption;
 
   const _LibraryEntry({
     required this.id,
     required this.title,
     required this.isDraft,
+    this.isMedia = false,
     this.projectId,
     this.extension,
     this.content,
     required this.createdAt,
     this.kind,
     this.storedPath,
+    this.mediaType,
+    this.caption,
   });
 
   static _LibraryEntry fromDocument(Document d) => _LibraryEntry(
-        id: d.id,
-        title: d.title,
-        isDraft: false,
-        projectId: d.projectId,
-        extension: d.extension,
-        content: d.renderedMarkdown ?? d.extractedText,
-        createdAt: d.createdAt,
-        storedPath: d.storedPath,
-      );
+    id: d.id,
+    title: d.title,
+    isDraft: false,
+    projectId: d.projectId,
+    extension: d.extension,
+    content: d.renderedMarkdown ?? d.extractedText,
+    createdAt: d.createdAt,
+    storedPath: d.storedPath,
+  );
+
+  static _LibraryEntry fromMedia(ProjectMediaItem m) => _LibraryEntry(
+    id: m.id,
+    title: m.title,
+    isDraft: false,
+    isMedia: true,
+    projectId: m.projectId,
+    extension: m.extension,
+    content: m.caption,
+    createdAt: m.createdAt,
+    storedPath: m.storedPath,
+    mediaType: m.mediaType,
+    caption: m.caption,
+  );
 
   static _LibraryEntry fromDraft(Draft d) => _LibraryEntry(
-        id: d.id,
-        title: d.title,
-        isDraft: true,
-        projectId: d.projectId,
-        content: d.body,
-        createdAt: d.createdAt,
-        kind: d.kind,
-      );
+    id: d.id,
+    title: d.title,
+    isDraft: true,
+    projectId: d.projectId,
+    content: d.body,
+    createdAt: d.createdAt,
+    kind: d.kind,
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,7 +115,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       list = list.where((e) => e.projectId == _filterProjectId).toList();
     }
     if (_filterType == 'documents') {
-      list = list.where((e) => !e.isDraft).toList();
+      list = list.where((e) => !e.isDraft && !e.isMedia).toList();
+    } else if (_filterType == 'media') {
+      list = list.where((e) => e.isMedia).toList();
+    } else if (_filterType == 'images') {
+      list = list.where((e) => e.mediaType == 'image').toList();
     } else if (_filterType == 'drafts') {
       list = list.where((e) => e.isDraft).toList();
     }
@@ -111,6 +135,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _importByPath() async {
+    final state = AppStateScope.of(context);
     final c = TextEditingController();
     final path = await showDialog<String>(
       context: context,
@@ -125,35 +150,40 @@ class _LibraryScreenState extends State<LibraryScreen> {
             hintText: r'C:\Users\you\Documents\spec.md',
             labelStyle: const TextStyle(color: _text54),
             enabledBorder: const OutlineInputBorder(
-                borderSide: BorderSide(color: _line)),
+              borderSide: BorderSide(color: _line),
+            ),
             focusedBorder: const OutlineInputBorder(
-                borderSide: BorderSide(color: _primary)),
+              borderSide: BorderSide(color: _primary),
+            ),
           ),
           autofocus: true,
           onSubmitted: (_) => Navigator.of(ctx).pop(c.text.trim()),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(c.text.trim()),
-              child: const Text('Import')),
+            onPressed: () => Navigator.of(ctx).pop(c.text.trim()),
+            child: const Text('Import'),
+          ),
         ],
       ),
     );
     if (path == null || path.trim().isEmpty) return;
-    final state = AppStateScope.of(context);
     try {
       await state.importDocumentFromPath(path);
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Document imported.')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Document imported.')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Import failed: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
       }
     }
   }
@@ -163,8 +193,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await Process.start('explorer.exe', [path]);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Open failed: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Open failed: $e')));
       }
     }
   }
@@ -184,155 +215,173 @@ class _LibraryScreenState extends State<LibraryScreen> {
             return StreamBuilder<List<Draft>>(
               stream: state.watchDrafts(),
               builder: (context, draftSnap) {
-                final docs = docSnap.data ?? const <Document>[];
-                final drafts = draftSnap.data ?? const <Draft>[];
+                return StreamBuilder<List<ProjectMediaItem>>(
+                  stream: state.watchAllProjectMedia(),
+                  builder: (context, mediaSnap) {
+                    final docs = docSnap.data ?? const <Document>[];
+                    final drafts = draftSnap.data ?? const <Draft>[];
+                    final media = mediaSnap.data ?? const <ProjectMediaItem>[];
 
-                final all = [
-                  ...docs.map(_LibraryEntry.fromDocument),
-                  ...drafts.map(_LibraryEntry.fromDraft),
-                ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                    final all = [
+                      ...media.map(_LibraryEntry.fromMedia),
+                      ...docs.map(_LibraryEntry.fromDocument),
+                      ...drafts.map(_LibraryEntry.fromDraft),
+                    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-                final filtered = _filter(all);
+                    final filtered = _filter(all);
 
-                final selected = filtered
-                    .where((e) =>
-                        e.id == _selectedId &&
-                        e.isDraft == _selectedIsDraft)
-                    .firstOrNull;
+                    final selected = filtered
+                        .where(
+                          (e) =>
+                              e.id == _selectedId &&
+                              e.isDraft == _selectedIsDraft,
+                        )
+                        .firstOrNull;
 
-                return Scaffold(
-                  backgroundColor: _bg,
-                  body: Column(
-                    children: [
-                      _Header(
-                        projects: projects,
-                        filterProjectId: _filterProjectId,
-                        filterType: _filterType,
-                        searchCtrl: _searchCtrl,
-                        onSearch: (q) =>
-                            setState(() => _searchQuery = q),
-                        onProjectFilter: (pid) =>
-                            setState(() => _filterProjectId = pid),
-                        onTypeFilter: (t) =>
-                            setState(() => _filterType = t),
-                        onImport: _importByPath,
-                        totalCount: all.length,
-                        filteredCount: filtered.length,
-                      ),
-                      const Divider(height: 1, color: _line),
-                      Expanded(
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 320,
-                              child: filtered.isEmpty
-                                  ? Center(
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(24),
-                                        child: Text(
-                                          _searchQuery.isNotEmpty ||
-                                                  _filterProjectId !=
-                                                      null ||
-                                                  _filterType != 'all'
-                                              ? 'No items match the current filters.'
-                                              : 'No documents or drafts yet.\nImport a file to get started.',
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(
-                                              color: _text38),
-                                        ),
-                                      ),
-                                    )
-                                  : ListView.builder(
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 8),
-                                      itemCount: filtered.length,
-                                      itemBuilder: (ctx, i) {
-                                        final entry = filtered[i];
-                                        final isSel =
-                                            _selectedId == entry.id &&
+                    return Scaffold(
+                      backgroundColor: _bg,
+                      body: Column(
+                        children: [
+                          _Header(
+                            projects: projects,
+                            filterProjectId: _filterProjectId,
+                            filterType: _filterType,
+                            searchCtrl: _searchCtrl,
+                            onSearch: (q) => setState(() => _searchQuery = q),
+                            onProjectFilter: (pid) =>
+                                setState(() => _filterProjectId = pid),
+                            onTypeFilter: (t) =>
+                                setState(() => _filterType = t),
+                            onImport: _importByPath,
+                            totalCount: all.length,
+                            filteredCount: filtered.length,
+                          ),
+                          const Divider(height: 1, color: _line),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 320,
+                                  child: filtered.isEmpty
+                                      ? Center(
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(24),
+                                            child: Text(
+                                              _searchQuery.isNotEmpty ||
+                                                      _filterProjectId !=
+                                                          null ||
+                                                      _filterType != 'all'
+                                                  ? 'No items match the current filters.'
+                                                  : 'No documents, media, or drafts yet.\nImport a file to get started.',
+                                              textAlign: TextAlign.center,
+                                              style: const TextStyle(
+                                                color: _text38,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      : ListView.builder(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 8,
+                                          ),
+                                          itemCount: filtered.length,
+                                          itemBuilder: (ctx, i) {
+                                            final entry = filtered[i];
+                                            final isSel =
+                                                _selectedId == entry.id &&
                                                 _selectedIsDraft ==
                                                     entry.isDraft;
-                                        return _EntryTile(
-                                          entry: entry,
+                                            return _EntryTile(
+                                              entry: entry,
+                                              projects: projects,
+                                              isSelected: isSel,
+                                              onTap: () => setState(() {
+                                                _selectedId = entry.id;
+                                                _selectedIsDraft =
+                                                    entry.isDraft;
+                                              }),
+                                            );
+                                          },
+                                        ),
+                                ),
+                                const VerticalDivider(width: 1, color: _line),
+                                Expanded(
+                                  child: selected == null
+                                      ? const Center(
+                                          child: Text(
+                                            'Select an item to view it.',
+                                            style: TextStyle(color: _text38),
+                                          ),
+                                        )
+                                      : _EntryViewer(
+                                          entry: selected,
                                           projects: projects,
-                                          isSelected: isSel,
-                                          onTap: () => setState(() {
-                                            _selectedId = entry.id;
-                                            _selectedIsDraft =
-                                                entry.isDraft;
-                                          }),
-                                        );
-                                      },
-                                    ),
-                            ),
-                            const VerticalDivider(
-                                width: 1, color: _line),
-                            Expanded(
-                              child: selected == null
-                                  ? const Center(
-                                      child: Text(
-                                        'Select an item to view it.',
-                                        style:
-                                            TextStyle(color: _text38),
-                                      ),
-                                    )
-                                  : _EntryViewer(
-                                      entry: selected,
-                                      projects: projects,
-                                      onOpenFile: selected.storedPath !=
-                                              null
-                                          ? () => _openFile(
-                                              selected.storedPath!)
-                                          : null,
-                                      onDeleteDraft: selected.isDraft
-                                          ? () async {
-                                              final ok =
-                                                  await showDialog<bool>(
-                                                context: context,
-                                                builder: (ctx) =>
-                                                    AlertDialog(
-                                                  backgroundColor: _panel,
-                                                  title: const Text(
-                                                      'Delete draft?'),
-                                                  content: const Text(
-                                                      'This cannot be undone.'),
-                                                  actions: [
-                                                    TextButton(
-                                                      onPressed: () =>
-                                                          Navigator.pop(
-                                                              ctx, false),
-                                                      child: const Text(
-                                                          'Cancel'),
+                                          onOpenFile:
+                                              selected.storedPath != null
+                                              ? () => _openFile(
+                                                  selected.storedPath!,
+                                                )
+                                              : null,
+                                          onDeleteDraft: selected.isDraft
+                                              ? () async {
+                                                  final ok = await showDialog<bool>(
+                                                    context: context,
+                                                    builder: (ctx) => AlertDialog(
+                                                      backgroundColor: _panel,
+                                                      title: const Text(
+                                                        'Delete draft?',
+                                                      ),
+                                                      content: const Text(
+                                                        'This cannot be undone.',
+                                                      ),
+                                                      actions: [
+                                                        TextButton(
+                                                          onPressed: () =>
+                                                              Navigator.pop(
+                                                                ctx,
+                                                                false,
+                                                              ),
+                                                          child: const Text(
+                                                            'Cancel',
+                                                          ),
+                                                        ),
+                                                        FilledButton(
+                                                          style:
+                                                              FilledButton.styleFrom(
+                                                                backgroundColor:
+                                                                    Colors.red,
+                                                              ),
+                                                          onPressed: () =>
+                                                              Navigator.pop(
+                                                                ctx,
+                                                                true,
+                                                              ),
+                                                          child: const Text(
+                                                            'Delete',
+                                                          ),
+                                                        ),
+                                                      ],
                                                     ),
-                                                    FilledButton(
-                                                      style: FilledButton
-                                                          .styleFrom(
-                                                              backgroundColor:
-                                                                  Colors.red),
-                                                      onPressed: () =>
-                                                          Navigator.pop(
-                                                              ctx, true),
-                                                      child: const Text(
-                                                          'Delete'),
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-                                              if (ok == true && mounted) {
-                                                await state.deleteDraft(
-                                                    selected.id);
-                                                setState(() =>
-                                                    _selectedId = null);
-                                              }
-                                            }
-                                          : null,
-                                    ),
+                                                  );
+                                                  if (ok == true && mounted) {
+                                                    await state.deleteDraft(
+                                                      selected.id,
+                                                    );
+                                                    setState(
+                                                      () => _selectedId = null,
+                                                    );
+                                                  }
+                                                }
+                                              : null,
+                                        ),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 );
               },
             );
@@ -382,9 +431,10 @@ class _Header extends StatelessWidget {
           const Text(
             'Library',
             style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: _text87),
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: _text87,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -394,21 +444,20 @@ class _Header extends StatelessWidget {
               style: const TextStyle(color: _text87, fontSize: 13),
               decoration: InputDecoration(
                 hintText: 'Search title and content...',
-                hintStyle:
-                    const TextStyle(color: _text38, fontSize: 13),
-                prefixIcon: const Icon(Icons.search,
-                    size: 18, color: _text54),
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 8),
+                hintStyle: const TextStyle(color: _text38, fontSize: 13),
+                prefixIcon: const Icon(Icons.search, size: 18, color: _text54),
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
                 isDense: true,
                 filled: true,
                 fillColor: _bg,
                 enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: _line)),
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: _line),
+                ),
                 focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: _primary)),
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: _primary),
+                ),
               ),
             ),
           ),
@@ -416,13 +465,13 @@ class _Header extends StatelessWidget {
           _Dropdown<String?>(
             value: filterProjectId,
             items: [
-              const DropdownMenuItem(
-                  value: null, child: Text('All projects')),
-              ...projects.map((p) => DropdownMenuItem(
-                    value: p.id,
-                    child: Text(p.title,
-                        overflow: TextOverflow.ellipsis),
-                  )),
+              const DropdownMenuItem(value: null, child: Text('All projects')),
+              ...projects.map(
+                (p) => DropdownMenuItem(
+                  value: p.id,
+                  child: Text(p.title, overflow: TextOverflow.ellipsis),
+                ),
+              ),
             ],
             onChanged: onProjectFilter,
             width: 160,
@@ -432,10 +481,10 @@ class _Header extends StatelessWidget {
             value: filterType,
             items: const [
               DropdownMenuItem(value: 'all', child: Text('All types')),
-              DropdownMenuItem(
-                  value: 'documents', child: Text('Documents')),
-              DropdownMenuItem(
-                  value: 'drafts', child: Text('AI Drafts')),
+              DropdownMenuItem(value: 'documents', child: Text('Documents')),
+              DropdownMenuItem(value: 'media', child: Text('Media')),
+              DropdownMenuItem(value: 'images', child: Text('Images')),
+              DropdownMenuItem(value: 'drafts', child: Text('AI Drafts')),
             ],
             onChanged: (v) {
               if (v != null) onTypeFilter(v);
@@ -446,7 +495,9 @@ class _Header extends StatelessWidget {
           filteredCount != totalCount
               ? Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: _primary.withAlpha(30),
                     borderRadius: BorderRadius.circular(12),
@@ -454,14 +505,12 @@ class _Header extends StatelessWidget {
                   ),
                   child: Text(
                     '$filteredCount / $totalCount',
-                    style: const TextStyle(
-                        fontSize: 11, color: _primary),
+                    style: const TextStyle(fontSize: 11, color: _primary),
                   ),
                 )
               : Text(
                   '$totalCount items',
-                  style:
-                      const TextStyle(fontSize: 12, color: _text38),
+                  style: const TextStyle(fontSize: 12, color: _text38),
                 ),
           const SizedBox(width: 12),
           FilledButton.icon(
@@ -471,10 +520,11 @@ class _Header extends StatelessWidget {
             style: FilledButton.styleFrom(
               backgroundColor: _primary,
               foregroundColor: _bg,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               textStyle: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w600),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -543,6 +593,8 @@ class _EntryTile extends StatelessWidget {
 
   IconData _icon() {
     if (entry.isDraft) return Icons.auto_awesome;
+    if (entry.mediaType == 'image') return Icons.image_outlined;
+    if (entry.isMedia) return Icons.perm_media_outlined;
     return switch (entry.extension?.toLowerCase()) {
       'pdf' => Icons.picture_as_pdf_outlined,
       'md' => Icons.article_outlined,
@@ -554,14 +606,12 @@ class _EntryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final project =
-        projects.where((p) => p.id == entry.projectId).firstOrNull;
+    final project = projects.where((p) => p.id == entry.projectId).firstOrNull;
 
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: isSelected ? _primary.withAlpha(25) : Colors.transparent,
           border: Border(
@@ -605,12 +655,13 @@ class _EntryTile extends StatelessWidget {
                         const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 1),
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
                           decoration: BoxDecoration(
                             color: _green.withAlpha(35),
                             borderRadius: BorderRadius.circular(4),
-                            border: Border.all(
-                                color: _green.withAlpha(90)),
+                            border: Border.all(color: _green.withAlpha(90)),
                           ),
                           child: const Text(
                             'AI Draft',
@@ -622,29 +673,53 @@ class _EntryTile extends StatelessWidget {
                           ),
                         ),
                       ],
+                      if (entry.isMedia) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _primary.withAlpha(35),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: _primary.withAlpha(90)),
+                          ),
+                          child: Text(
+                            entry.mediaType == 'image' ? 'Image' : 'Media',
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: _primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 3),
                   Row(
                     children: [
                       if (project != null) ...[
-                        const Icon(Icons.folder_open,
-                            size: 11, color: _text38),
+                        const Icon(Icons.folder_open, size: 11, color: _text38),
                         const SizedBox(width: 3),
                         Expanded(
                           child: Text(
                             project.title,
                             style: const TextStyle(
-                                fontSize: 11, color: _text38),
+                              fontSize: 11,
+                              color: _text38,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ] else
                         const Expanded(
-                          child: Text('No project',
-                              style: TextStyle(
-                                  fontSize: 11, color: _text38)),
+                          child: Text(
+                            'No project',
+                            style: TextStyle(fontSize: 11, color: _text38),
+                          ),
                         ),
                     ],
                   ),
@@ -677,17 +752,30 @@ class _EntryViewer extends StatelessWidget {
 
   String _formatDate(DateTime dt) {
     const months = [
-      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return '${months[dt.month]} ${dt.day}, ${dt.year}';
   }
 
   @override
   Widget build(BuildContext context) {
-    final project =
-        projects.where((p) => p.id == entry.projectId).firstOrNull;
+    final project = projects.where((p) => p.id == entry.projectId).firstOrNull;
     final content = entry.content;
+    final imageFile = entry.mediaType == 'image' && entry.storedPath != null
+        ? File(entry.storedPath!)
+        : null;
 
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -706,12 +794,13 @@ class _EntryViewer extends StatelessWidget {
                       Container(
                         margin: const EdgeInsets.only(bottom: 6),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: _green.withAlpha(35),
                           borderRadius: BorderRadius.circular(5),
-                          border: Border.all(
-                              color: _green.withAlpha(90)),
+                          border: Border.all(color: _green.withAlpha(90)),
                         ),
                         child: Text(
                           'AI Draft${entry.kind != null ? ' · ${entry.kind}' : ''}',
@@ -734,37 +823,44 @@ class _EntryViewer extends StatelessWidget {
                     Row(
                       children: [
                         if (project != null) ...[
-                          const Icon(Icons.folder_open,
-                              size: 13, color: _text38),
+                          const Icon(
+                            Icons.folder_open,
+                            size: 13,
+                            color: _text38,
+                          ),
                           const SizedBox(width: 4),
-                          Text(project.title,
-                              style: const TextStyle(
-                                  fontSize: 12, color: _text54)),
+                          Text(
+                            project.title,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: _text54,
+                            ),
+                          ),
                           const SizedBox(width: 12),
                         ],
-                        const Icon(Icons.schedule,
-                            size: 13, color: _text38),
+                        const Icon(Icons.schedule, size: 13, color: _text38),
                         const SizedBox(width: 4),
                         Text(
                           _formatDate(entry.createdAt),
-                          style: const TextStyle(
-                              fontSize: 12, color: _text54),
+                          style: const TextStyle(fontSize: 12, color: _text54),
                         ),
-                        if (!entry.isDraft &&
-                            entry.extension != null) ...[
+                        if (!entry.isDraft && entry.extension != null) ...[
                           const SizedBox(width: 12),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 1),
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
                             decoration: BoxDecoration(
                               color: _line,
-                              borderRadius:
-                                  BorderRadius.circular(4),
+                              borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
                               '.${entry.extension!.toUpperCase()}',
                               style: const TextStyle(
-                                  fontSize: 10, color: _text54),
+                                fontSize: 10,
+                                color: _text54,
+                              ),
                             ),
                           ),
                         ],
@@ -788,11 +884,9 @@ class _EntryViewer extends StatelessWidget {
                       icon: Icons.copy,
                       label: 'Copy',
                       onTap: () {
-                        Clipboard.setData(
-                            ClipboardData(text: content));
+                        Clipboard.setData(ClipboardData(text: content));
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text('Copied to clipboard.')),
+                          const SnackBar(content: Text('Copied to clipboard.')),
                         );
                       },
                     ),
@@ -811,10 +905,33 @@ class _EntryViewer extends StatelessWidget {
           const Divider(color: _line),
           const SizedBox(height: 12),
           Expanded(
-            child: content == null || content.isEmpty
+            child: imageFile != null
+                ? Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: _panel,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: _line),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: imageFile.existsSync()
+                        ? InteractiveViewer(
+                            child: Image.file(imageFile, fit: BoxFit.contain),
+                          )
+                        : const Center(
+                            child: Text(
+                              'Image file is missing.',
+                              style: TextStyle(color: _text38),
+                            ),
+                          ),
+                  )
+                : content == null || content.isEmpty
                 ? const Center(
-                    child: Text('No content available.',
-                        style: TextStyle(color: _text38)))
+                    child: Text(
+                      'No content available.',
+                      style: TextStyle(color: _text38),
+                    ),
+                  )
                 : Container(
                     width: double.infinity,
                     decoration: BoxDecoration(
@@ -857,8 +974,7 @@ class _ActionBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = danger ? Colors.red : _text54;
-    final borderColor =
-        danger ? Colors.red.withAlpha(80) : _line;
+    final borderColor = danger ? Colors.red.withAlpha(80) : _line;
     return OutlinedButton.icon(
       onPressed: onTap,
       icon: Icon(icon, size: 14),
@@ -866,8 +982,7 @@ class _ActionBtn extends StatelessWidget {
       style: OutlinedButton.styleFrom(
         foregroundColor: color,
         side: BorderSide(color: borderColor),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         textStyle: const TextStyle(fontSize: 12),
       ),
     );

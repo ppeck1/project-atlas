@@ -136,6 +136,8 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
   final _ollamaModelCtrl = TextEditingController();
   bool _ollamaTesting = false;
   String? _ollamaResult;
+  List<String> _availableModels = [];
+  bool _loadingModels = false;
 
   bool _loaded = false;
 
@@ -163,7 +165,22 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
         _ollamaHostCtrl.text = host ?? 'http://localhost:11434';
         _ollamaModelCtrl.text = model ?? 'mistral';
       });
+      _fetchModels();
     }
+  }
+
+  Future<void> _fetchModels() async {
+    final host = _ollamaHostCtrl.text.trim().isEmpty
+        ? 'http://localhost:11434'
+        : _ollamaHostCtrl.text.trim();
+    setState(() => _loadingModels = true);
+    final svc = OllamaService(host: host, model: '');
+    final models = await svc.getAvailableModels();
+    if (!mounted) return;
+    setState(() {
+      _loadingModels = false;
+      _availableModels = models;
+    });
   }
 
   Future<void> _save() async {
@@ -232,11 +249,19 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
     });
     final svc = OllamaService(host: host, model: model);
     final available = await svc.isAvailable();
+    if (!available) {
+      setState(() {
+        _ollamaTesting = false;
+        _ollamaResult = 'Ollama not reachable at $host — is it running?';
+      });
+      return;
+    }
+    final modelOk = await svc.isModelAvailable();
     setState(() {
       _ollamaTesting = false;
-      _ollamaResult = available
-          ? 'Ollama running at $host'
-          : 'Ollama not available at $host — is it running?';
+      _ollamaResult = modelOk
+          ? 'Ollama running at $host · model "$model" ready ✓'
+          : 'Ollama running but model "$model" not found — run: ollama pull $model';
     });
   }
 
@@ -314,11 +339,43 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
           hint: 'http://localhost:11434',
         ),
         const SizedBox(height: 12),
-        _Field(
-          ctrl: _ollamaModelCtrl,
-          label: 'Model name',
-          hint: 'mistral',
-          helper: 'Run: ollama pull mistral',
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _availableModels.isEmpty
+                  ? _Field(
+                      ctrl: _ollamaModelCtrl,
+                      label: 'Model name',
+                      hint: 'mistral',
+                      helper: _loadingModels
+                          ? 'Fetching models from Ollama…'
+                          : 'Click refresh to load available models',
+                    )
+                  : _ModelDropdown(
+                      models: _availableModels,
+                      selected: _ollamaModelCtrl.text.trim(),
+                      onChanged: (v) {
+                        if (v != null) setState(() => _ollamaModelCtrl.text = v);
+                      },
+                    ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              height: 56,
+              child: IconButton(
+                onPressed: _loadingModels ? null : _fetchModels,
+                tooltip: 'Fetch available models from Ollama',
+                icon: _loadingModels
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, color: _text54),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         _TestRow(
@@ -505,12 +562,14 @@ class _ActivityLogTabState extends State<_ActivityLogTab>
                             : _text54;
                         return Container(
                           margin: const EdgeInsets.only(bottom: 4),
+                          clipBehavior: Clip.antiAlias,
                           decoration: BoxDecoration(
-                            color: _panel,
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: _line),
                           ),
-                          child: ExpansionTile(
+                          child: Material(
+                            color: _panel,
+                            child: ExpansionTile(
                             tilePadding: const EdgeInsets.symmetric(
                               horizontal: 12,
                               vertical: 0,
@@ -563,6 +622,7 @@ class _ActivityLogTabState extends State<_ActivityLogTab>
                                   ),
                                 ),
                             ],
+                          ),
                           ),
                         );
                       },
@@ -1002,6 +1062,7 @@ class _WorkforceTabState extends State<_WorkforceTab> {
   }
 
   Future<void> _delete(Contact contact) async {
+    final appState = AppStateScope.of(context);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1024,7 +1085,7 @@ class _WorkforceTabState extends State<_WorkforceTab> {
       ),
     );
     if (ok == true) {
-      await AppStateScope.of(context).deleteContact(contact.id);
+      await appState.deleteContact(contact.id);
       if (mounted) {
         setState(() {
           if (_selected?.id == contact.id) _selected = null;
@@ -1329,8 +1390,55 @@ class _ResponsibilityGroup extends StatelessWidget {
 // Tab 5 — Admin
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _AdminTab extends StatelessWidget {
+class _AdminTab extends StatefulWidget {
   const _AdminTab();
+
+  @override
+  State<_AdminTab> createState() => _AdminTabState();
+}
+
+class _AdminTabState extends State<_AdminTab> {
+  String? _status;
+
+  Future<String?> _askPath(String title, String hint) async {
+    final controller = TextEditingController();
+    final path = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          style: const TextStyle(color: _text87),
+          decoration: InputDecoration(
+            labelText: 'File path',
+            hintText: hint,
+            labelStyle: const TextStyle(color: _text54),
+            enabledBorder: const OutlineInputBorder(
+              borderSide: BorderSide(color: _line),
+            ),
+            focusedBorder: const OutlineInputBorder(
+              borderSide: BorderSide(color: _primary),
+            ),
+          ),
+          autofocus: true,
+          onSubmitted: (_) => Navigator.of(ctx).pop(controller.text.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Use path'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return path?.trim().isEmpty == true ? null : path;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1348,10 +1456,66 @@ class _AdminTab extends StatelessWidget {
         const SizedBox(height: 10),
         const Text(
           'Local-first personal project management.\n'
-          'Data stored in encrypted SQLite on this machine.\n'
+          'Data stored in local SQLite on this machine.\n'
           'No cloud. No telemetry.',
           style: TextStyle(fontSize: 12, color: _text54, height: 1.6),
         ),
+        const SizedBox(height: 28),
+        const Divider(color: _line),
+        const SizedBox(height: 24),
+
+        _SectionTitle(
+          icon: Icons.inventory_2_outlined,
+          iconColor: _primary,
+          title: 'Local data',
+          subtitle: 'Backup and inspect your local Atlas files.',
+        ),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            OutlinedButton.icon(
+              onPressed: () async {
+                final path = await _askPath(
+                  'Export operational backup',
+                  r'C:\Users\you\Documents\project_atlas_backup.json',
+                );
+                if (path == null) return;
+                try {
+                  await state.exportOperationalBackupToJson(path);
+                  if (mounted) {
+                    setState(() => _status = 'Backup exported: $path');
+                  }
+                } catch (e) {
+                  if (mounted) setState(() => _status = 'Backup failed: $e');
+                }
+              },
+              icon: const Icon(Icons.save_alt, size: 16),
+              label: const Text('Export backup JSON'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () async {
+                try {
+                  await state.openAppDataFolder();
+                } catch (e) {
+                  if (mounted) {
+                    setState(() => _status = 'Open app data failed: $e');
+                  }
+                }
+              },
+              icon: const Icon(Icons.folder_open, size: 16),
+              label: const Text('Open app data folder'),
+            ),
+          ],
+        ),
+        if (_status != null) ...[
+          const SizedBox(height: 10),
+          SelectableText(
+            _status!,
+            style: const TextStyle(fontSize: 12, color: _text54),
+          ),
+        ],
         const SizedBox(height: 28),
         const Divider(color: _line),
         const SizedBox(height: 24),
@@ -1499,6 +1663,54 @@ class _Field extends StatelessWidget {
         filled: true,
         fillColor: _bg,
       ),
+    );
+  }
+}
+
+class _ModelDropdown extends StatelessWidget {
+  final List<String> models;
+  final String selected;
+  final ValueChanged<String?> onChanged;
+
+  const _ModelDropdown({
+    required this.models,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final value = models.contains(selected) ? selected : models.first;
+    return DropdownButtonFormField<String>(
+      value: value,
+      items: models
+          .map(
+            (m) => DropdownMenuItem(
+              value: m,
+              child: Text(
+                m,
+                style: const TextStyle(color: _text87, fontSize: 14),
+              ),
+            ),
+          )
+          .toList(),
+      onChanged: onChanged,
+      dropdownColor: _panel,
+      decoration: const InputDecoration(
+        labelText: 'Model',
+        labelStyle: TextStyle(color: _text54),
+        helperText: 'Select a model from your local Ollama install',
+        helperStyle: TextStyle(fontSize: 11, color: _text38),
+        enabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: _line),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: _primary),
+        ),
+        filled: true,
+        fillColor: _bg,
+      ),
+      style: const TextStyle(color: _text87, fontSize: 14),
     );
   }
 }

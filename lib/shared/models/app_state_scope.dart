@@ -13,7 +13,12 @@ class AppStateScope extends InheritedNotifier<AppState> {
 
   static AppState of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<AppStateScope>();
-    assert(scope != null, 'AppStateScope not found above this context');
-    return scope!.notifier!;
+    if (scope == null) {
+      throw FlutterError(
+        'AppStateScope.of() called with a context that does not contain an AppStateScope.\n'
+        'Ensure AppStateScope wraps your MaterialApp or top-level widget.',
+      );
+    }
+    return scope.notifier!;
   }
 }

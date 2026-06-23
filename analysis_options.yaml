@@ -29,7 +29,6 @@ linter:
     # prefer_single_quotes: true  # Uncomment to enable the prefer_single_quotes rule
     unnecessary_underscores: false
     no_leading_underscores_for_local_identifiers: false
-    use_build_context_synchronously: false
     curly_braces_in_flow_control_structures: false
     non_constant_identifier_names: false
     use_super_parameters: false

@@ -15,13 +15,55 @@ class OllamaService {
     this.model = 'qwen3.5:9b',
   });
 
-  /// Check whether Ollama is reachable.
+  /// Check whether the Ollama server is reachable (does not verify the model).
   Future<bool> isAvailable() async {
     try {
       final res = await http
           .get(Uri.parse('$host/api/tags'))
           .timeout(const Duration(seconds: 4));
       return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Return the names of all models installed in Ollama, sorted alphabetically.
+  /// Returns an empty list if Ollama is unreachable.
+  Future<List<String>> getAvailableModels() async {
+    try {
+      final res = await http
+          .get(Uri.parse('$host/api/tags'))
+          .timeout(const Duration(seconds: 4));
+      if (res.statusCode != 200) return [];
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final models =
+          (data['models'] as List? ?? []).cast<Map<String, dynamic>>();
+      final names = models
+          .map((m) => (m['name'] as String? ?? ''))
+          .where((n) => n.isNotEmpty)
+          .toList()
+        ..sort();
+      return names;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Check whether [model] is present in the Ollama model list.
+  /// Requires [isAvailable()] to return true first.
+  Future<bool> isModelAvailable() async {
+    try {
+      final res = await http
+          .get(Uri.parse('$host/api/tags'))
+          .timeout(const Duration(seconds: 4));
+      if (res.statusCode != 200) return false;
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final models = (data['models'] as List? ?? []).cast<Map<String, dynamic>>();
+      final base = model.toLowerCase().split(':').first;
+      return models.any((m) {
+        final name = (m['name'] as String? ?? '').toLowerCase();
+        return name == model.toLowerCase() || name.startsWith('$base:');
+      });
     } catch (_) {
       return false;
     }

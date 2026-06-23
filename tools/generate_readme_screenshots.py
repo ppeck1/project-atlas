@@ -105,8 +105,8 @@ def make_today():
             "Doing Now",
             AMBER,
             [
-                ("Update README and variable map", "Docs: reflect schema v9, tags, contacts, media", "HIGH", "6/23", False),
-                ("Regenerate app icon from new PNG", "windows/runner/resources/app_icon.ico updated", "URGENT", "6/23", True),
+                ("Update docs to schema v10", "README, HANDOFF, VARIABLE_MAP updated; screenshots refreshed", "HIGH", "6/23", False),
+                ("Run flutter test — all 10 tests passing", "smoke_test + schema_media_test + widget_test", "URGENT", "6/23", True),
             ],
         ),
         (
@@ -210,7 +210,7 @@ def make_library():
     entries = [
         ("Project Atlas — Today Summary", "AI Draft", GREEN),
         ("Contact import format spec", "MD", MUTED),
-        ("Schema v9 migration notes", "TXT", MUTED),
+        ("Schema v10 migration notes", "TXT", MUTED),
         ("Launch checklist", "MD", MUTED),
         ("Governance bottleneck review", "AI Draft", GREEN),
     ]
@@ -228,10 +228,10 @@ def make_library():
     text(d, (430, 190), "Jun 23, 2026  ·  Project Atlas", MUTED, FONT_S)
     rr(d, [430, 234, 1178, 700], 8, PANEL, LINE)
     body = [
-        "Today summary (schema v9):",
+        "Today summary (schema v10):",
         "- 2 items doing: app icon updated, README refresh in progress.",
         "- 1 overdue: encryption plan review (SQLCipher passphrase).",
-        "- 1 blocked: Telegram inbound — awaiting webhook endpoint.",
+        "- Stage CRUD API available (addStage / updateStageTitle / deleteStage).",
         "- Contacts linked across work items, projects, and governance.",
         "- Project tags (home/work/dev) active on 4 projects.",
         "- Media gallery: 3 images attached to Project Atlas.",

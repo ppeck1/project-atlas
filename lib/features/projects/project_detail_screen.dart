@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -37,6 +39,14 @@ const _kPriorityColors = <String, Color>{
 Color _sc(String? s) => _kStatusColors[s] ?? const Color(0x61FFFFFF);
 Color _pc(String? p) => _kPhaseColors[p] ?? const Color(0x61FFFFFF);
 Color _prc(String? p) => _kPriorityColors[p] ?? const Color(0x61FFFFFF);
+Color _tagColor(Tag tag) {
+  final raw = tag.color;
+  if (raw != null && raw.startsWith('#') && raw.length == 7) {
+    final parsed = int.tryParse(raw.substring(1), radix: 16);
+    if (parsed != null) return Color(0xFF000000 | parsed);
+  }
+  return _kPrimary;
+}
 
 const _kStatuses = ['active', 'paused', 'blocked', 'completed', 'archived'];
 const _kPhases = ['', 'idea', 'design', 'build', 'test', 'ship', 'stabilize'];
@@ -219,6 +229,17 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
               // Expandable sections
               _Section(
+                id: 'tags',
+                title: 'Tags',
+                subtitle: 'Separate home, work, personal, and other contexts',
+                expanded: _expandedSection == 'tags',
+                onTap: () => _toggleSection('tags'),
+                child: _TagsSection(
+                  projectId: widget.projectId,
+                  onEdit: () => _showTagsDialog(context),
+                ),
+              ),
+              _Section(
                 id: 'identity',
                 title: 'Project Identity',
                 subtitle: 'Purpose, outcome, success criteria, scope',
@@ -288,12 +309,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 ),
               ),
               _Section(
-                id: 'docs',
-                title: 'Documents',
-                subtitle: 'Documents linked to this project',
-                expanded: _expandedSection == 'docs',
-                onTap: () => _toggleSection('docs'),
-                child: _DocsSection(projectId: widget.projectId),
+                id: 'media',
+                title: 'Media & Documents',
+                subtitle: 'Images, reference files, and project evidence',
+                expanded: _expandedSection == 'media',
+                onTap: () => _toggleSection('media'),
+                child: _MediaSection(
+                  projectId: widget.projectId,
+                  onImportMedia: () => _showImportMediaDialog(context),
+                ),
               ),
               _Section(
                 id: 'closure',
@@ -465,6 +489,175 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       ),
     );
     for (final c in [desc, outcome, criteria, included, excluded]) c.dispose();
+  }
+
+  Future<void> _showTagsDialog(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final allTags = await state.getTags();
+    final selectedTags = await state.getTagsForProject(widget.projectId);
+    final selectedIds = selectedTags.map((tag) => tag.id).toSet();
+    final newTagCtrl = TextEditingController();
+
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: _kPanel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: _kLine),
+          ),
+          title: const Text('Edit project tags'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (allTags.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'No tags yet. Add home, work, personal, or anything useful.',
+                        style: TextStyle(color: Colors.white54),
+                      ),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final tag in allTags)
+                          FilterChip(
+                            label: Text(tag.name),
+                            selected: selectedIds.contains(tag.id),
+                            onSelected: (selected) => setLocal(() {
+                              if (selected) {
+                                selectedIds.add(tag.id);
+                              } else {
+                                selectedIds.remove(tag.id);
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(child: _mf(newTagCtrl, 'New tag name')),
+                      const SizedBox(width: 8),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: FilledButton.icon(
+                          onPressed: () async {
+                            final name = _nt(newTagCtrl.text);
+                            if (name == null) return;
+                            final id = await state.saveTag(name: name);
+                            selectedIds.add(id);
+                            newTagCtrl.clear();
+                            if (ctx.mounted) {
+                              Navigator.of(ctx).pop();
+                              await _showTagsDialog(context);
+                            }
+                          },
+                          icon: const Icon(Icons.add, size: 16),
+                          label: const Text('Add'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                await state.setProjectTags(widget.projectId, selectedIds);
+                if (ctx.mounted) Navigator.of(ctx).pop();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    newTagCtrl.dispose();
+  }
+
+  Future<void> _showImportMediaDialog(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final pathCtrl = TextEditingController();
+    final titleCtrl = TextEditingController();
+    final captionCtrl = TextEditingController();
+    var makeCover = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: _kPanel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: _kLine),
+          ),
+          title: const Text('Add project media'),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _mf(pathCtrl, r'Local image or file path'),
+                  _mf(titleCtrl, 'Title (optional)'),
+                  _mf(captionCtrl, 'Caption / note', multiline: true),
+                  CheckboxListTile(
+                    value: makeCover,
+                    onChanged: (v) => setLocal(() => makeCover = v ?? false),
+                    title: const Text('Use as cover image'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                final path = _nt(pathCtrl.text);
+                if (path == null) return;
+                final mediaId = await state.importProjectMediaFromPath(
+                  widget.projectId,
+                  path,
+                  title: _nt(titleCtrl.text),
+                  caption: _nt(captionCtrl.text),
+                  isCover: makeCover,
+                );
+                if (makeCover) {
+                  await state.setProjectCoverMedia(widget.projectId, mediaId);
+                }
+                if (ctx.mounted) Navigator.of(ctx).pop();
+              },
+              icon: const Icon(Icons.upload_file, size: 16),
+              label: const Text('Import'),
+            ),
+          ],
+        ),
+      ),
+    );
+    pathCtrl.dispose();
+    titleCtrl.dispose();
+    captionCtrl.dispose();
   }
 
   Future<void> _showAddPersonDialog(BuildContext context) async {
@@ -1628,6 +1821,7 @@ class _ProjectWorkSection extends StatelessWidget {
                   }
                   return;
                 }
+                if (!context.mounted) return;
                 final draft = await showCreateWorkItemDialog(context);
                 if (draft == null) return;
                 DateTime? dueAt;
@@ -1754,77 +1948,288 @@ class _ProjectStatusColumn extends StatelessWidget {
   }
 }
 
-class _DocsSection extends StatelessWidget {
+class _TagsSection extends StatelessWidget {
   final String projectId;
-  const _DocsSection({required this.projectId});
+  final VoidCallback onEdit;
+
+  const _TagsSection({required this.projectId, required this.onEdit});
 
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
-    return StreamBuilder<List<Document>>(
-      stream: state.watchDocumentsForProject(projectId),
+    return StreamBuilder<List<Tag>>(
+      stream: state.watchTagsForProject(projectId),
       builder: (context, snap) {
-        final docs = snap.data ?? const [];
+        final tags = snap.data ?? const <Tag>[];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (docs.isEmpty)
+            if (tags.isEmpty)
               const Padding(
-                padding: EdgeInsets.only(bottom: 8),
+                padding: EdgeInsets.only(bottom: 10),
                 child: Text(
-                  'No documents linked to this project. Import from Library.',
-                  style: TextStyle(fontSize: 13, color: Colors.white24),
+                  'No tags assigned yet.',
+                  style: TextStyle(fontSize: 13, color: Colors.white38),
                 ),
-              ),
-            ...docs.map(
-              (d) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    const Icon(
-                      Icons.description_outlined,
-                      size: 16,
-                      color: _kPrimary,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            d.title,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          Text(
-                            d.originalFilename,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.white38,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Icon(
-                      Icons.chevron_right,
-                      size: 16,
-                      color: Colors.white24,
-                    ),
+                    for (final tag in tags)
+                      _Pill(label: '#${tag.name}', color: _tagColor(tag)),
                   ],
                 ),
               ),
-            ),
             OutlinedButton.icon(
-              onPressed: () => context.go('/library'),
-              icon: const Icon(Icons.library_books_outlined, size: 16),
-              label: const Text('Open Library'),
+              onPressed: onEdit,
+              icon: const Icon(Icons.sell_outlined, size: 16),
+              label: const Text('Edit tags'),
             ),
           ],
         );
       },
+    );
+  }
+}
+
+class _MediaSection extends StatelessWidget {
+  final String projectId;
+  final VoidCallback onImportMedia;
+
+  const _MediaSection({required this.projectId, required this.onImportMedia});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return StreamBuilder<List<ProjectMediaItem>>(
+      stream: state.watchProjectMedia(projectId),
+      builder: (context, mediaSnap) {
+        final media = mediaSnap.data ?? const <ProjectMediaItem>[];
+        final cover = media.where((item) => item.isCover).firstOrNull;
+        return StreamBuilder<List<Document>>(
+          stream: state.watchDocumentsForProject(projectId),
+          builder: (context, docSnap) {
+            final docs = docSnap.data ?? const <Document>[];
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (cover != null && cover.mediaType == 'image') ...[
+                  _CoverImage(item: cover),
+                  const SizedBox(height: 12),
+                ],
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: onImportMedia,
+                      icon: const Icon(
+                        Icons.add_photo_alternate_outlined,
+                        size: 16,
+                      ),
+                      label: const Text('Add image/file'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => context.go('/library'),
+                      icon: const Icon(Icons.library_books_outlined, size: 16),
+                      label: const Text('Open Library'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (media.isEmpty && docs.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'No media or documents linked to this project yet.',
+                      style: TextStyle(fontSize: 13, color: Colors.white38),
+                    ),
+                  ),
+                if (media.isNotEmpty) ...[
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 190,
+                          mainAxisExtent: 190,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                        ),
+                    itemCount: media.length,
+                    itemBuilder: (context, i) => _MediaTile(
+                      item: media[i],
+                      onSetCover: () =>
+                          state.setProjectCoverMedia(projectId, media[i].id),
+                      onDelete: () => state.deleteProjectMedia(media[i].id),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (docs.isNotEmpty)
+                  ...docs.map(
+                    (d) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.description_outlined,
+                            size: 16,
+                            color: _kPrimary,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  d.title,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                Text(
+                                  d.originalFilename,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.white38,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(
+                            Icons.chevron_right,
+                            size: 16,
+                            color: Colors.white24,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _CoverImage extends StatelessWidget {
+  final ProjectMediaItem item;
+
+  const _CoverImage({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final file = File(item.storedPath);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: AspectRatio(
+        aspectRatio: 16 / 7,
+        child: file.existsSync()
+            ? Image.file(file, fit: BoxFit.cover)
+            : Container(
+                color: const Color(0xFF0F1115),
+                alignment: Alignment.center,
+                child: const Text(
+                  'Cover file is missing',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+class _MediaTile extends StatelessWidget {
+  final ProjectMediaItem item;
+  final VoidCallback onSetCover;
+  final VoidCallback onDelete;
+
+  const _MediaTile({
+    required this.item,
+    required this.onSetCover,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final file = File(item.storedPath);
+    final isImage = item.mediaType == 'image';
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1115),
+        border: Border.all(color: item.isCover ? _kPrimary : _kLine),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              color: const Color(0xFF10151E),
+              child: isImage && file.existsSync()
+                  ? Image.file(file, fit: BoxFit.cover)
+                  : Icon(
+                      isImage
+                          ? Icons.broken_image_outlined
+                          : Icons.insert_drive_file_outlined,
+                      color: Colors.white38,
+                      size: 32,
+                    ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if ((item.caption ?? '').isNotEmpty)
+                  Text(
+                    item.caption!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
+                Row(
+                  children: [
+                    if (!item.isCover)
+                      IconButton(
+                        tooltip: 'Use as cover',
+                        onPressed: isImage ? onSetCover : null,
+                        icon: const Icon(Icons.wallpaper, size: 16),
+                      ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Remove media',
+                      onPressed: onDelete,
+                      icon: const Icon(Icons.delete_outline, size: 16),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

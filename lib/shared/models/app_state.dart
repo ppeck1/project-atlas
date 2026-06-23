@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../../db/app_db.dart';
 import '../../services/ollama_service.dart';
@@ -74,6 +76,34 @@ class AppState extends ChangeNotifier {
     await db.setActiveStageIdForProject(projectId, stageId);
     notifyListeners();
   }
+
+  // Stage management
+  Future<void> addStage(String projectId, String title) async {
+    await db.addStage(projectId, title);
+    notifyListeners();
+  }
+
+  Future<void> updateStageTitle(String stageId, String title) async {
+    await db.updateStageTitle(stageId, title);
+    notifyListeners();
+  }
+
+  Future<void> deleteStage(String stageId) async {
+    await db.deleteStage(stageId);
+    notifyListeners();
+  }
+
+  Future<void> reorderStage(String stageId, int newPosition) async {
+    await db.reorderStage(stageId, newPosition);
+    notifyListeners();
+  }
+
+  // Daily reviews
+  Future<void> saveDailyReview(String summary) => db.saveDailyReview(summary);
+  Future<DailyReview?> getDailyReviewForDate(DateTime date) =>
+      db.getDailyReviewForDate(date);
+  Stream<List<DailyReview>> watchRecentDailyReviews({int limit = 30}) =>
+      db.watchRecentDailyReviews(limit: limit);
 
   // ---------------------------------------------------------------------------
   // Work items
@@ -647,6 +677,207 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Tags
+  Stream<List<Tag>> watchTags() => db.watchTags();
+  Future<List<Tag>> getTags() => db.getTags();
+  Stream<List<Tag>> watchTagsForProject(String projectId) =>
+      db.watchTagsForProject(projectId);
+  Future<List<Tag>> getTagsForProject(String projectId) =>
+      db.getTagsForProject(projectId);
+  Stream<List<Project>> watchProjectsForTag(String tagId) =>
+      db.watchProjectsForTag(tagId);
+  Future<List<Project>> getProjectsForTag(String tagId) =>
+      db.getProjectsForTag(tagId);
+  Future<List<Project>> getProjectsMatchingTags(
+    Iterable<String> tagIds, {
+    bool matchAll = false,
+  }) => db.getProjectsMatchingTags(tagIds, matchAll: matchAll);
+
+  Future<String> saveTag({
+    String? id,
+    required String name,
+    String? color,
+  }) async {
+    final tagId = await db.saveTag(id: id, name: name, color: color);
+    notifyListeners();
+    return tagId;
+  }
+
+  Future<void> updateTag(String id, {String? name, String? color}) async {
+    await db.updateTag(id, name: name, color: color);
+    notifyListeners();
+  }
+
+  Future<void> deleteTag(String id) async {
+    await db.deleteTag(id);
+    notifyListeners();
+  }
+
+  Future<void> assignTagToProject(String projectId, String tagId) async {
+    await db.assignTagToProject(projectId, tagId);
+    notifyListeners();
+  }
+
+  Future<void> unassignTagFromProject(String projectId, String tagId) async {
+    await db.unassignTagFromProject(projectId, tagId);
+    notifyListeners();
+  }
+
+  Future<void> setProjectTags(String projectId, Iterable<String> tagIds) async {
+    await db.setProjectTags(projectId, tagIds);
+    notifyListeners();
+  }
+
+  // Project media
+  Stream<List<ProjectMediaItem>> watchAllProjectMedia() =>
+      db.watchAllProjectMedia();
+  Future<List<ProjectMediaItem>> getAllProjectMedia() =>
+      db.getAllProjectMedia();
+  Stream<List<ProjectMediaItem>> watchProjectMedia(String projectId) =>
+      db.watchProjectMedia(projectId);
+  Future<List<ProjectMediaItem>> getProjectMedia(String projectId) =>
+      db.getProjectMedia(projectId);
+  Future<ProjectMediaItem?> getProjectMediaItem(String id) =>
+      db.getProjectMediaItem(id);
+
+  Future<String> saveProjectMedia({
+    String? id,
+    required String projectId,
+    required String title,
+    required String originalFilename,
+    required String storedPath,
+    String mediaType = 'file',
+    String? mimeType,
+    String? extension,
+    int? byteSize,
+    DateTime? fileModifiedAt,
+    String? caption,
+    bool isCover = false,
+    String? source,
+    String? metadataJson,
+  }) async {
+    final mediaId = await db.saveProjectMedia(
+      id: id,
+      projectId: projectId,
+      title: title,
+      originalFilename: originalFilename,
+      storedPath: storedPath,
+      mediaType: mediaType,
+      mimeType: mimeType,
+      extension: extension,
+      byteSize: byteSize,
+      fileModifiedAt: fileModifiedAt,
+      caption: caption,
+      isCover: isCover,
+      source: source,
+      metadataJson: metadataJson,
+    );
+    notifyListeners();
+    return mediaId;
+  }
+
+  Future<String> importProjectMediaFromPath(
+    String projectId,
+    String path, {
+    String? title,
+    String? caption,
+    bool isCover = false,
+    String? source,
+    String? metadataJson,
+  }) async {
+    final sourceFile = File(path);
+    if (!sourceFile.existsSync()) {
+      throw FileSystemException('File not found', path);
+    }
+    final mediaDir = await _projectMediaDirectory(projectId);
+    final storedPath = await _copyIntoMediaVault(sourceFile, mediaDir);
+    final sourcePayload = source?.trim().isNotEmpty == true
+        ? source
+        : sourceFile.path;
+    final metadataPayload = _mergeMediaMetadata(metadataJson, {
+      'originalPath': sourceFile.path,
+    });
+    final mediaId = await db.importProjectMediaFromPath(
+      projectId,
+      storedPath,
+      title: title,
+      caption: caption,
+      isCover: isCover,
+      source: sourcePayload,
+      metadataJson: metadataPayload,
+    );
+    notifyListeners();
+    return mediaId;
+  }
+
+  Future<void> updateProjectMedia(
+    String id, {
+    String? title,
+    String? caption,
+    bool? isCover,
+    String? source,
+    String? metadataJson,
+  }) async {
+    await db.updateProjectMedia(
+      id,
+      title: title,
+      caption: caption,
+      isCover: isCover,
+      source: source,
+      metadataJson: metadataJson,
+    );
+    notifyListeners();
+  }
+
+  Future<void> setProjectCoverMedia(String projectId, String mediaId) async {
+    await db.setProjectCoverMedia(projectId, mediaId);
+    notifyListeners();
+  }
+
+  Future<void> deleteProjectMedia(String id) async {
+    await db.deleteProjectMedia(id);
+    notifyListeners();
+  }
+
+  Future<Directory> _projectMediaDirectory(String projectId) async {
+    final supportDir = await getApplicationSupportDirectory();
+    final dir = Directory(p.join(supportDir.path, 'project_media', projectId));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  Future<String> _copyIntoMediaVault(File source, Directory dir) async {
+    final basename = p.basename(source.path);
+    final ext = p.extension(basename);
+    final stem = p.basenameWithoutExtension(basename);
+    var candidate = p.join(dir.path, basename);
+    var index = 1;
+    while (await File(candidate).exists()) {
+      candidate = p.join(dir.path, '${stem}_$index$ext');
+      index++;
+    }
+    final copied = await source.copy(candidate);
+    return copied.path;
+  }
+
+  String? _mergeMediaMetadata(String? rawJson, Map<String, Object?> extra) {
+    final base = <String, Object?>{};
+    if (rawJson != null && rawJson.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawJson);
+        if (decoded is Map<String, dynamic>) {
+          base.addAll(decoded);
+        }
+      } catch (_) {
+        base['raw'] = rawJson;
+      }
+    }
+    base.addAll(extra);
+    return jsonEncode(base);
+  }
+
   // Documents for project
   Stream<List<Document>> watchDocumentsForProject(String projectId) =>
       db.watchDocumentsForProject(projectId);
@@ -915,6 +1146,76 @@ class AppState extends ChangeNotifier {
   Stream<List<EventLogData>> watchRecentEvents() => db.watchRecentEvents();
   Future<List<EventLogData>> getRecentEvents() => db.getRecentEvents();
   Future<void> clearEventLog() => db.clearEventLog();
+
+  Future<String> getAppDataPath() async {
+    final supportDir = await getApplicationSupportDirectory();
+    return supportDir.path;
+  }
+
+  Future<void> openAppDataFolder() async {
+    final supportDir = await getApplicationSupportDirectory();
+    await Process.start('explorer.exe', [supportDir.path]);
+  }
+
+  Future<int> exportOperationalBackupToJson(String path) async {
+    final payload = {
+      'schema': 'project_atlas_operational_backup_v1',
+      'exportedAt': DateTime.now().toIso8601String(),
+      'projects': (await db.select(db.projects).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'tags': (await db.getTags()).map((row) => row.toJson()).toList(),
+      'projectTags': (await db.select(db.projectTags).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'projectMedia': (await db.getAllProjectMedia())
+          .map((row) => row.toJson())
+          .toList(),
+      'stages': (await db.select(db.stages).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'workItems': (await db.select(db.workItems).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'workItemNotes': (await db.select(db.workItemNotes).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'workItemAnalyses': (await db.select(db.workItemAnalyses).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'documents': (await db.select(db.documents).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'documentLinks': (await db.select(db.documentLinks).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'contacts': (await db.getContacts()).map((row) => row.toJson()).toList(),
+      'projectPeople': (await db.select(db.projectPeople).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'projectRisks': (await db.select(db.projectRisks).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'projectDecisions': (await db.select(db.projectDecisions).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'dailyReviews': (await db.select(db.dailyReviews).get())
+          .map((row) => row.toJson())
+          .toList(),
+      'outboxMessages': (await db.select(db.outboxMessages).get())
+          .map((row) => row.toJson())
+          .toList(),
+    };
+    await File(
+      path,
+    ).writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
+    await db.logEvent(
+      area: 'backup',
+      action: 'operational_backup_exported',
+      outputJson: jsonEncode({'path': path}),
+    );
+    return payload.length;
+  }
 
   // ---------------------------------------------------------------------------
   // Telegram

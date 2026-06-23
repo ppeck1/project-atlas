@@ -21,22 +21,91 @@ function Write-Step($msg) {
     Write-Host "═══ $msg" -ForegroundColor Cyan
 }
 
-function Assert-Command($name) {
-    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
-        Write-Host "ERROR: '$name' not found in PATH." -ForegroundColor Red
+function Resolve-ToolCommand {
+    param(
+        [string]$Name,
+        [string]$EnvVar,
+        [string[]]$FallbackPaths
+    )
+
+    $override = [Environment]::GetEnvironmentVariable($EnvVar)
+    if ($override) {
+        if (Test-Path -LiteralPath $override) {
+            return (Resolve-Path -LiteralPath $override).Path
+        }
+
+        Write-Host "ERROR: '$EnvVar' points to a missing path: $override" -ForegroundColor Red
         exit 1
     }
+
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($command) {
+        if ($command.Path) { return $command.Path }
+        if ($command.Source) { return $command.Source }
+        return $Name
+    }
+
+    foreach ($path in $FallbackPaths) {
+        if (Test-Path -LiteralPath $path) {
+            return (Resolve-Path -LiteralPath $path).Path
+        }
+    }
+
+    Write-Host "ERROR: '$Name' not found in PATH and no fallback path exists." -ForegroundColor Red
+    Write-Host "Set $EnvVar to an explicit executable path to override discovery." -ForegroundColor Yellow
+    exit 1
 }
 
-Assert-Command flutter
-Assert-Command dart
+function Resolve-DartCommand {
+    param([string]$FlutterCommand)
+
+    $override = [Environment]::GetEnvironmentVariable("PROJECT_ATLAS_DART")
+    if ($override) {
+        if (Test-Path -LiteralPath $override) {
+            return (Resolve-Path -LiteralPath $override).Path
+        }
+
+        Write-Host "ERROR: 'PROJECT_ATLAS_DART' points to a missing path: $override" -ForegroundColor Red
+        exit 1
+    }
+
+    $command = Get-Command dart -ErrorAction SilentlyContinue
+    if ($command) {
+        if ($command.Path) { return $command.Path }
+        if ($command.Source) { return $command.Source }
+        return "dart"
+    }
+
+    $flutterBin = Split-Path -Parent $FlutterCommand
+    $flutterRoot = Split-Path -Parent $flutterBin
+    $bundledDart = Join-Path $flutterRoot "bin\cache\dart-sdk\bin\dart.exe"
+    if (Test-Path -LiteralPath $bundledDart) {
+        return (Resolve-Path -LiteralPath $bundledDart).Path
+    }
+
+    # Developer-local fallback — only valid on the original dev machine. Update if running on a different machine.
+    $hostFallback = "B:\dev\flutter\bin\cache\dart-sdk\bin\dart.exe"
+    if (Test-Path -LiteralPath $hostFallback) {
+        return (Resolve-Path -LiteralPath $hostFallback).Path
+    }
+
+    Write-Host "ERROR: 'dart' not found in PATH or the resolved Flutter SDK cache." -ForegroundColor Red
+    Write-Host "Set PROJECT_ATLAS_DART to an explicit executable path to override discovery." -ForegroundColor Yellow
+    exit 1
+}
+
+$FlutterCommand = Resolve-ToolCommand `
+    -Name "flutter" `
+    -EnvVar "PROJECT_ATLAS_FLUTTER" `
+    -FallbackPaths @("B:\dev\flutter\bin\flutter.bat")
+$DartCommand = Resolve-DartCommand -FlutterCommand $FlutterCommand
 
 Set-Location $ProjectRoot
 
 # ── Clean ───────────────────────────────────────────────────────────────────
 if ($Clean) {
     Write-Step "Cleaning build artifacts"
-    flutter clean
+    & $FlutterCommand clean
     $Full = $true
 }
 
@@ -60,7 +129,7 @@ $needsPubGet = $Full -or $Clean -or
 
 if ($needsPubGet) {
     Write-Step "Running flutter pub get"
-    flutter pub get
+    & $FlutterCommand pub get
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
@@ -82,7 +151,7 @@ $needsBuild = $Full -or $Clean -or $Build -or
 
 if ($needsBuild) {
     Write-Step "Running build_runner (Drift code generation)"
-    dart run build_runner build
+    & $DartCommand run build_runner build
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
         Write-Host "build_runner failed. Try:" -ForegroundColor Yellow
@@ -96,5 +165,5 @@ if ($needsBuild) {
 # ── Run ──────────────────────────────────────────────────────────────────────
 if (-not $Build) {
     Write-Step "Launching Project Atlas (Windows)"
-    flutter run -d windows
+    & $FlutterCommand run -d windows
 }

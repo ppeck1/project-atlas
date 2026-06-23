@@ -8,12 +8,13 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 
 - Version: `1.2.0+1`
 - Platform target: Flutter desktop, currently Windows-oriented
-- Storage: local SQLite via Drift, schema version `9`
+- Storage: local SQLite via Drift, schema version `10`
 - Primary navigation: Today, Projects, Library, Settings
 - Legacy deep links still available: Dashboard, Work, Review, Export, Governance, Backend Log
 - Optional local AI: Ollama summaries, drafts, and work-item analysis — always human-in-the-loop
 - Optional phone handoff: outbound Telegram task-list sending with outbox logging
 - Contacts / workforce directory with JSON and CSV import/export
+- Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
 - Owner pickers on work items, project owners, and governance stages — all linked to the contact directory
 - Project organization: tag assignment and project filters for context, status, phase, and priority
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
@@ -58,7 +59,7 @@ Manual path:
 
 ```powershell
 flutter pub get
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 flutter run -d windows
 ```
 
@@ -119,7 +120,9 @@ Ollama is optional. AI output is advisory and is shown for review before it is s
 ollama pull mistral
 ```
 
-Configure the host and model in Settings → Integrations. The default host is `http://localhost:11434`. The default model in code is `qwen3.5:9b`; the Settings UI shows `mistral` as a hint. Either works.
+Configure the host and model in **Settings → Integrations**. The default host is `http://localhost:11434`.
+
+When Ollama is reachable, the model field becomes a **dropdown** populated with all locally installed models — click the refresh button to re-fetch the list. If Ollama is offline, the field falls back to a free-text input so you can type the model name manually. The default model in code is `qwen3.5:9b`; the Settings UI shows `mistral` as the hint text.
 
 AI actions available:
 - **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
@@ -142,7 +145,7 @@ All user text is HTML-escaped before sending. Send attempts are tracked in the l
 ## Database
 
 - Engine: SQLite via Drift `NativeDatabase`
-- Schema version: `9`
+- Schema version: `10`
 - Observed Windows support path: `%APPDATA%\com.example\project_atlas\project_atlas.sqlite`
 - Encryption: `sqlcipher_flutter_libs` is included but not yet activated in `lib/db/db_open.dart`
 - Compatibility: startup repair/backfill handles partially migrated local databases
@@ -195,4 +198,4 @@ Generated files and build products are intentionally ignored:
 - Project snapshots and decision-log export
 - Restore/import flow for operational backup JSON
 - SQLCipher encrypted storage path before broader distribution
-- Daily review persistence and review history browsing
+- Review history browser — `watchRecentDailyReviews()` exists in the DB layer; no history screen yet

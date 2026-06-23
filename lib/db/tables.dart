@@ -41,7 +41,7 @@ class AppMeta extends Table {
 
 class Stages extends Table {
   TextColumn get id => text()();
-  TextColumn get projectId => text()();
+  TextColumn get projectId => text().references(Projects, #id)();
   TextColumn get title => text()();
   TextColumn get owner => text().nullable()();
   IntColumn get position => integer()();
@@ -63,7 +63,7 @@ class Stages extends Table {
 
 class WorkItems extends Table {
   TextColumn get id => text()();
-  TextColumn get stageId => text()();
+  TextColumn get stageId => text().references(Stages, #id)();
   TextColumn get title => text()();
   TextColumn get description => text().nullable()();
   TextColumn get owner => text().nullable()();
@@ -83,7 +83,7 @@ class WorkItems extends Table {
 
 class WorkItemNotes extends Table {
   TextColumn get id => text()();
-  TextColumn get workItemId => text()();
+  TextColumn get workItemId => text().references(WorkItems, #id)();
   TextColumn get body => text()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
@@ -95,7 +95,7 @@ class WorkItemNotes extends Table {
 @DataClassName('WorkItemAnalysis')
 class WorkItemAnalyses extends Table {
   TextColumn get id => text()();
-  TextColumn get workItemId => text()();
+  TextColumn get workItemId => text().references(WorkItems, #id)();
   TextColumn get prompt => text()();
   TextColumn get output => text()();
   TextColumn get model => text().nullable()();
@@ -111,8 +111,8 @@ class WorkItemAnalyses extends Table {
 
 class Drafts extends Table {
   TextColumn get id => text()();
-  TextColumn get projectId => text().nullable()();
-  TextColumn get workItemId => text().nullable()();
+  TextColumn get projectId => text().nullable().references(Projects, #id)();
+  TextColumn get workItemId => text().nullable().references(WorkItems, #id)();
   TextColumn get kind => text()();
   TextColumn get title => text()();
   TextColumn get body => text()();
@@ -192,7 +192,7 @@ class Documents extends Table {
   TextColumn get storedPath => text().nullable()();
   TextColumn get mimeType => text().nullable()();
   TextColumn get extension => text().nullable()();
-  TextColumn get projectId => text().nullable()();
+  TextColumn get projectId => text().nullable().references(Projects, #id)();
   TextColumn get source => text().nullable()();
   TextColumn get status => text().withDefault(const Constant('imported'))();
   DateTimeColumn get createdAt => dateTime()();
@@ -208,8 +208,9 @@ class Documents extends Table {
 
 class DocumentLinks extends Table {
   TextColumn get id => text()();
-  TextColumn get documentId => text()();
+  TextColumn get documentId => text().references(Documents, #id)();
   TextColumn get entityType => text()();
+  // Polymorphic FK — not declared as .references() intentionally
   TextColumn get entityId => text()();
   DateTimeColumn get createdAt => dateTime()();
 
@@ -241,7 +242,7 @@ class Contacts extends Table {
 
 class ProjectPeople extends Table {
   TextColumn get id => text()();
-  TextColumn get projectId => text()();
+  TextColumn get projectId => text().references(Projects, #id)();
   TextColumn get name => text()();
   TextColumn get role => text().nullable()();
   TextColumn get authority => text().nullable()();
@@ -253,7 +254,7 @@ class ProjectPeople extends Table {
 
 class ProjectRisks extends Table {
   TextColumn get id => text()();
-  TextColumn get projectId => text()();
+  TextColumn get projectId => text().references(Projects, #id)();
   TextColumn get title => text()();
   TextColumn get desc => text().nullable()();
   TextColumn get severity => text().withDefault(const Constant('medium'))();
@@ -265,11 +266,62 @@ class ProjectRisks extends Table {
 
 class ProjectDecisions extends Table {
   TextColumn get id => text()();
-  TextColumn get projectId => text()();
+  TextColumn get projectId => text().references(Projects, #id)();
   TextColumn get title => text()();
   TextColumn get ctx => text().nullable()();
   TextColumn get decider => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+}
+
+// ---------------------------------------------------------------------------
+// Project tags and media (v9)
+// ---------------------------------------------------------------------------
+
+class Tags extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text()();
+  TextColumn get color => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+
+  @override
+  List<String> get customConstraints => ['UNIQUE(name)'];
+}
+
+@DataClassName('ProjectTagAssignment')
+class ProjectTags extends Table {
+  TextColumn get projectId => text()();
+  TextColumn get tagId => text()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {projectId, tagId}; // ignore: override_on_non_overriding_member
+}
+
+@DataClassName('ProjectMediaItem')
+class ProjectMedia extends Table {
+  TextColumn get id => text()();
+  TextColumn get projectId => text()();
+  TextColumn get title => text()();
+  TextColumn get originalFilename => text()();
+  TextColumn get storedPath => text()();
+  TextColumn get mediaType => text().withDefault(const Constant('file'))();
+  TextColumn get mimeType => text().nullable()();
+  TextColumn get extension => text().nullable()();
+  IntColumn get byteSize => integer().nullable()();
+  DateTimeColumn get fileModifiedAt => dateTime().nullable()();
+  TextColumn get caption => text().nullable()();
+  BoolColumn get isCover => boolean().withDefault(const Constant(false))();
+  TextColumn get source => text().nullable()();
+  TextColumn get metadataJson => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
 
   @override
   Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member

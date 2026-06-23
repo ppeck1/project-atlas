@@ -1,6 +1,6 @@
 # Project Atlas — Handoff Document
 
-> Current as of v1.2.0+1, schema v9. Updated alongside each release.
+> Current as of v1.2.0+1, schema v10. Updated alongside each release.
 
 ---
 
@@ -22,7 +22,7 @@ The core problem it solves: on any given morning, what am I doing, what is block
 
 **Owner fields link to contacts.** Anywhere an owner/person is assigned, the UI uses `ContactOwnerField` (a dropdown-plus-create widget backed by the `contacts` table). The contact name is stored as a plain text string in the owner field — there is no FK. The link is maintained by matching name or email at lookup time (`getContactResponsibilities()`).
 
-**Schema migrations are defensive.** `addColumn` calls are wrapped in `try/catch`. New tables use `CREATE TABLE IF NOT EXISTS` in the startup repair path. This means a partially-applied migration from a crash won't re-crash on the next open.
+**Schema migrations are defensive.** `addColumn` calls are wrapped in typed `on SqliteException` catches that only swallow duplicate-column errors and rethrow anything else. New tables use `CREATE TABLE IF NOT EXISTS` in the startup repair path. This means a partially-applied migration from a crash won't re-crash on the next open.
 
 **App-owned media copies.** When files are added to a project's media gallery or the document library, they are copied into the app data directory. The `stored_path` column points to the copy. The original source path is not tracked. Deleting a record does not delete the copy; manual cleanup via Admin → Open app data folder.
 
@@ -74,7 +74,7 @@ docs/screenshots/                       ← PNG screenshots used in README
 
 **After schema changes:**
 ```powershell
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 ```
 
 This regenerates `lib/db/app_db.g.dart`. Never edit the `.g.dart` file.
@@ -87,7 +87,7 @@ flutter test
 
 ---
 
-## Schema Overview (v9)
+## Schema Overview (v10)
 
 | Table | Purpose |
 |-------|---------|
@@ -110,6 +110,8 @@ flutter test
 | `tags` | Reusable project labels (v9) |
 | `project_tags` | Tag ↔ project assignments (v9) |
 | `project_media` | Project image/file gallery with app-owned copies (v9) |
+
+**v10 addition:** `UNIQUE INDEX idx_daily_reviews_date` on `daily_reviews(review_date)` — enables safe date-keyed upsert via `saveDailyReview()`. Stage CRUD methods (`addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`) added to `AppDb` and `AppState`; no UI hooked up yet.
 
 Full column-level documentation with write/read sites and quirks: `VARIABLE_MAP.md`.
 
@@ -153,7 +155,6 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 | Media file cleanup | Deleting a `project_media` record does not delete the copied file in app data. |
 | `completed` boolean on work items | Legacy. `status='done'` is canonical. Both are kept in sync but only `status` should be used in logic. |
 | `accepted` on drafts | Schema column exists but is never set or checked. |
-| Daily review overwrites | Saving a second review on the same calendar day overwrites the first. |
 
 ---
 
@@ -164,7 +165,7 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 3. **Project snapshots** — exportable decision-log and project state bundles
 4. **Backup restore** — import from the operational backup JSON
 5. **SQLCipher** — activate encryption before any broader distribution
-6. **Review history** — browse past daily reviews
+6. **Review history UI** — `watchRecentDailyReviews()` exists in the DB layer; no browsing screen yet
 7. **Tag management UI** — create/edit/delete tags from Settings
 
 ---

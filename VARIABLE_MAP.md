@@ -66,7 +66,7 @@ Key-value store for all runtime settings and active-state flags.
 | `bottleneck_owner` | TEXT? | null | Added v5. Governance bottleneck assignee. Free text. |
 | `is_bottleneck` | BOOLEAN | `false` | Added v5. Visual flag in GovernanceScreen. |
 
-**Written by:** `_ensureDefaultStages()` (auto on project create), `setBottleneckOwner()`, `setIsBottleneck()`  
+**Written by:** `_ensureDefaultStages()` (auto on project create), `setBottleneckOwner()`, `setIsBottleneck()`; `addStage(projectId, title)`, `updateStageTitle(stageId, title)`, `deleteStage(stageId)`, `reorderStage(stageId, position)` — stage lifecycle management (DB/AppState layer; no UI yet)  
 **Read by:** `watchStagesForProject()`, `WorkScreen`, `GovernanceScreen`, `TodayScreen` (stage → project label lookup)  
 **Quirks:** Default 6 stages are created with every new project. `stages.is_bottleneck` is a table column but bottleneck state is *also* tracked per-stage-id in `app_meta` under `is_bottleneck::{stageId}`. The `app_meta` path is what GovernanceScreen reads. The table column is a secondary/historical field.
 
@@ -161,9 +161,9 @@ Key-value store for all runtime settings and active-state flags.
 | `summary` | TEXT | Markdown text. |
 | `created_at` | DATETIME | |
 
-**Written by:** `saveDailyReview()` — triggered manually from ReviewScreen  
-**Read by:** `getTodayReview()` — checks if today's review already exists (prevents duplicate)  
-**Quirks:** One record per calendar day. `review_date` is normalized to midnight. If called twice on the same day, the second call overwrites the existing record.
+**Written by:** `saveDailyReview(summary)` — auto-triggered in ReviewScreen when a summary is generated; upserts by date  
+**Read by:** `getDailyReviewForDate(date)` — returns the review for any given day; `watchRecentDailyReviews({limit})` — streams the most recent N reviews sorted by date desc  
+**Quirks:** One record per calendar day. `review_date` is normalized to midnight. Upsert by date: a second call on the same day updates the existing record (DELETE then INSERT within the same calendar day). Enforced one-per-day by the v10 UNIQUE index on `review_date`.
 
 ---
 
@@ -312,6 +312,8 @@ Key-value store for all runtime settings and active-state flags.
 **Read by:** `getProjectPeople()` → `ProjectDetailScreen` People section, `getContactResponsibilities()`  
 **Quirks:** Not directly linked to `contacts.id`. The `name` field is matched against `contacts.name` (case-insensitive) in `getContactResponsibilities()`.
 
+**`ContactResponsibilities` (view model, not persisted):** Assembled on-demand in `AppState.getContactResponsibilities(contactId)`. Aggregates: projects where the contact is `owner`, roles from `project_people`, and work items where the contact is `owner`. Used exclusively by `Settings → Workforce` contact detail view. Not stored in any table.
+
 ---
 
 ### `project_risks`
@@ -436,7 +438,9 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `watchContacts()` | `Stream<List<Contact>>` | Ordered by `name` asc. |
 | `watchTags()` | `Stream<List<Tag>>` | Ordered by `name` asc. |
 | `watchTagsForProject(id)` | `Stream<List<Tag>>` | Tags assigned to a project. |
-| `watchProjectMedia(id)` | `Stream<List<ProjectMediaItem>>` | Ordered by `created_at` asc. |
+| `watchAllProjectMedia()` | `Stream<List<ProjectMediaItem>>` | Streams all media across all projects. Used by `LibraryScreen` for the unified media/image filter. |
+| `watchProjectMedia(projectId)` | `Stream<List<ProjectMediaItem>>` | Per-project media stream. Used by `ProjectDetailScreen` media section. |
+| `watchProjectsFull()` | `Stream<List<ProjectFull>>` | Streams all projects with full metadata. Proxy for `db.watchProjectsFull()`. Used by `DashboardScreen`. |
 | `watchSetting(key)` | `Stream<String?>` | Reactive app_meta read. |
 | `watchWorkOwner(id)` | `Stream<String?>` | |
 | `watchBottleneckOwner(id)` | `Stream<String?>` | |
@@ -456,7 +460,9 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 
 | Method | Input | Output | Notes |
 |--------|-------|--------|-------|
-| `isAvailable()` | — | `bool` | GET to `/api/tags`. Timeout: 3 s. |
+| `isAvailable()` | — | `bool` | GET to `/api/tags`. Timeout: 4 s. Checks server reachability only, not model presence. |
+| `isModelAvailable()` | — | `bool` | Parses `/api/tags` model list; prefix-matches `model` (handles `:tag` suffixes). |
+| `getAvailableModels()` | — | `List<String>` | Returns all installed model names sorted alphabetically. Returns `[]` if Ollama unreachable. Used by Settings → Integrations model dropdown. |
 | `summarizeProject(...)` | project title, active/blocked/done work item titles | `OllamaResult` | Includes `desired_outcome` and `success_criteria` in system prompt if set. |
 | `summarizeToday(...)` | doing/overdue/dueToday/blocked item titles | `OllamaResult` | |
 | `draftEmail(...)` | task context + user instruction | `OllamaResult` | |
@@ -600,8 +606,9 @@ Settings → Workforce → select contact → _ContactDetail
 | 7 | `work_item_notes`, `work_item_analyses` added | Startup repair also runs `CREATE TABLE IF NOT EXISTS` for both. |
 | 8 | `contacts` added | Contact CRUD, JSON/CSV import/export, responsibility lookups. |
 | 9 | `tags`, `project_tags`, `project_media` added | Normalized project labels and app-owned media gallery. |
+| 10 | UNIQUE index on `daily_reviews(review_date)`; Stage CRUD methods added (`addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`) | Enables date-keyed upsert; v4 addColumn catches now typed `on SqliteException` (swallows only duplicate-column errors). |
 
-**Migration strategy:** `onCreate` calls `createAll()`. `onUpgrade` applies changes sequentially by version. `addColumn` calls are wrapped in try/catch where partial migration is possible. New tables use `CREATE TABLE IF NOT EXISTS` in the startup repair path.
+**Migration strategy:** `onCreate` calls `createAll()`. `onUpgrade` applies changes sequentially by version. `addColumn` calls are wrapped in typed `on SqliteException` catches (v4+) that only swallow duplicate-column errors and rethrow anything else. New tables use `CREATE TABLE IF NOT EXISTS` in the startup repair path.
 
 ---
 

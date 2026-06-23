@@ -1,7 +1,9 @@
 import 'dart:io';
 
 import 'package:drift/drift.dart';
+import 'package:drift/native.dart' show SqliteException;
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import 'db_open.dart';
 import 'tables.dart';
@@ -50,10 +52,14 @@ typedef ProjectPerson = ProjectPeopleData;
     ProjectPeople,
     ProjectRisks,
     ProjectDecisions,
+    Tags,
+    ProjectTags,
+    ProjectMedia,
   ],
 )
 class AppDb extends _$AppDb {
   AppDb() : super(openEncryptedExecutor());
+  AppDb.withExecutor(QueryExecutor executor) : super(executor);
 
   // ── AppMeta keys ──────────────────────────────────────────────────────────
   static const kActiveProjectId = 'active_project_id';
@@ -65,7 +71,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -87,7 +93,10 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await m.addColumn(workItems, col);
-          } catch (_) {}
+          } on SqliteException catch (e) {
+            if (!e.message.toLowerCase().contains('already exists') &&
+                !e.message.toLowerCase().contains('duplicate column')) rethrow;
+          }
         }
         for (final fn in <Future<void> Function()>[
           () => m.createTable(drafts),
@@ -96,7 +105,10 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } on SqliteException catch (e) {
+            if (!e.message.toLowerCase().contains('already exists') &&
+                !e.message.toLowerCase().contains('duplicate column')) rethrow;
+          }
         }
       }
       if (from < 5) {
@@ -158,6 +170,23 @@ class AppDb extends _$AppDb {
         try {
           await m.createTable(contacts);
         } catch (_) {}
+      }
+      if (from < 9) {
+        for (final fn in <Future<void> Function()>[
+          () => m.createTable(tags),
+          () => m.createTable(projectTags),
+          () => m.createTable(projectMedia),
+        ]) {
+          try {
+            await fn();
+          } catch (_) {}
+        }
+      }
+      if (from < 10) {
+        await customStatement(
+          'CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reviews_date '
+          'ON daily_reviews(review_date)',
+        );
       }
     },
     beforeOpen: (_) async {
@@ -234,6 +263,37 @@ class AppDb extends _$AppDb {
         model TEXT NULL,
         created_at INTEGER NOT NULL
       )''',
+      '''CREATE TABLE IF NOT EXISTS tags (
+        id TEXT NOT NULL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        color TEXT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )''',
+      '''CREATE TABLE IF NOT EXISTS project_tags (
+        project_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (project_id, tag_id)
+      )''',
+      '''CREATE TABLE IF NOT EXISTS project_media (
+        id TEXT NOT NULL PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        original_filename TEXT NOT NULL,
+        stored_path TEXT NOT NULL,
+        media_type TEXT NOT NULL DEFAULT 'file',
+        mime_type TEXT NULL,
+        extension TEXT NULL,
+        byte_size INTEGER NULL,
+        file_modified_at INTEGER NULL,
+        caption TEXT NULL,
+        is_cover INTEGER NOT NULL DEFAULT 0,
+        source TEXT NULL,
+        metadata_json TEXT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )''',
     ];
 
     for (final stmt in createTables) {
@@ -242,10 +302,18 @@ class AppDb extends _$AppDb {
       } catch (_) {}
     }
 
+    try {
+      await customStatement(
+        'ALTER TABLE project_media ADD COLUMN is_cover INTEGER NOT NULL DEFAULT 0',
+      );
+    } catch (_) {}
+
     // If project_people came from an alternate schema branch (role_type / authority_level),
     // rebuild it into the current expected shape so inserts don't fail on NOT NULL legacy cols.
     try {
-      final cols = await customSelect('PRAGMA table_info(project_people)').get();
+      final cols = await customSelect(
+        'PRAGMA table_info(project_people)',
+      ).get();
       final names = cols
           .map((row) => (row.data['name']?.toString() ?? '').toLowerCase())
           .where((name) => name.isNotEmpty)
@@ -254,23 +322,29 @@ class AppDb extends _$AppDb {
           names.contains('role_type') || names.contains('authority_level');
       if (needsRebuild) {
         await transaction(() async {
-          await customStatement('''CREATE TABLE IF NOT EXISTS project_people_new (
+          await customStatement(
+            '''CREATE TABLE IF NOT EXISTS project_people_new (
             id TEXT NOT NULL PRIMARY KEY,
             project_id TEXT NOT NULL,
             name TEXT NOT NULL,
             role TEXT NULL,
             authority TEXT NULL,
             created_at INTEGER NOT NULL
-          )''');
+          )''',
+          );
 
           final roleExpr = names.contains('role')
-              ? (names.contains('role_type') ? 'COALESCE(role, role_type)' : 'role')
+              ? (names.contains('role_type')
+                    ? 'COALESCE(role, role_type)'
+                    : 'role')
               : (names.contains('role_type') ? 'role_type' : 'NULL');
           final authorityExpr = names.contains('authority')
               ? (names.contains('authority_level')
-                  ? 'COALESCE(authority, authority_level)'
-                  : 'authority')
-              : (names.contains('authority_level') ? 'authority_level' : 'NULL');
+                    ? 'COALESCE(authority, authority_level)'
+                    : 'authority')
+              : (names.contains('authority_level')
+                    ? 'authority_level'
+                    : 'NULL');
 
           await customStatement(
             "INSERT INTO project_people_new (id, project_id, name, role, authority, created_at) "
@@ -280,7 +354,9 @@ class AppDb extends _$AppDb {
           );
 
           await customStatement('DROP TABLE project_people');
-          await customStatement('ALTER TABLE project_people_new RENAME TO project_people');
+          await customStatement(
+            'ALTER TABLE project_people_new RENAME TO project_people',
+          );
         });
       }
     } catch (_) {
@@ -548,6 +624,38 @@ class AppDb extends _$AppDb {
   Future<void> setIsBottleneck(String stageId, bool v) async {
     await (update(stages)..where((t) => t.id.equals(stageId))).write(
       StagesCompanion(isBottleneck: Value(v)),
+    );
+  }
+
+  Future<void> addStage(String projectId, String title) async {
+    final existing = await (select(stages)
+      ..where((t) => t.projectId.equals(projectId)))
+      .get();
+    final nextPos = existing.isEmpty
+        ? 0
+        : existing.map((s) => s.position).reduce((a, b) => a > b ? a : b) + 1;
+    await into(stages).insert(StagesCompanion.insert(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      projectId: projectId,
+      title: title,
+      position: nextPos,
+      createdAt: DateTime.now(),
+    ));
+  }
+
+  Future<void> updateStageTitle(String stageId, String title) async {
+    await (update(stages)..where((t) => t.id.equals(stageId))).write(
+      StagesCompanion(title: Value(title)),
+    );
+  }
+
+  Future<void> deleteStage(String stageId) async {
+    await (delete(stages)..where((t) => t.id.equals(stageId))).go();
+  }
+
+  Future<void> reorderStage(String stageId, int newPosition) async {
+    await (update(stages)..where((t) => t.id.equals(stageId))).write(
+      StagesCompanion(position: Value(newPosition)),
     );
   }
 
@@ -931,6 +1039,367 @@ class AppDb extends _$AppDb {
   Future<void> deleteProjectDecision(String decisionId) =>
       (delete(projectDecisions)..where((t) => t.id.equals(decisionId))).go();
 
+  // Project tags
+
+  Stream<List<Tag>> watchTags() =>
+      (select(tags)..orderBy([(t) => OrderingTerm.asc(t.name)])).watch();
+
+  Future<List<Tag>> getTags() =>
+      (select(tags)..orderBy([(t) => OrderingTerm.asc(t.name)])).get();
+
+  Future<Tag?> getTag(String id) =>
+      (select(tags)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<Tag?> findTagByName(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return Future.value(null);
+    return (select(tags)
+          ..where((t) => t.name.lower().equals(trimmed.toLowerCase())))
+        .getSingleOrNull();
+  }
+
+  Future<String> saveTag({
+    String? id,
+    required String name,
+    String? color,
+  }) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Tag name is required.');
+    }
+    final now = DateTime.now();
+    final tagId = id ?? now.microsecondsSinceEpoch.toString();
+    final existing = await getTag(tagId);
+    await into(tags).insertOnConflictUpdate(
+      TagsCompanion(
+        id: Value(tagId),
+        name: Value(trimmed),
+        color: Value(_blankToNull(color)),
+        createdAt: Value(existing?.createdAt ?? now),
+        updatedAt: Value(now),
+      ),
+    );
+    return tagId;
+  }
+
+  Future<void> updateTag(String id, {String? name, String? color}) async {
+    await (update(tags)..where((t) => t.id.equals(id))).write(
+      TagsCompanion(
+        name: name != null ? Value(name.trim()) : const Value.absent(),
+        color: color != null
+            ? Value(_blankToNull(color))
+            : const Value.absent(),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> deleteTag(String id) async {
+    await transaction(() async {
+      await (delete(projectTags)..where((t) => t.tagId.equals(id))).go();
+      await (delete(tags)..where((t) => t.id.equals(id))).go();
+    });
+  }
+
+  Future<void> assignTagToProject(String projectId, String tagId) async {
+    await into(projectTags).insertOnConflictUpdate(
+      ProjectTagsCompanion(
+        projectId: Value(projectId),
+        tagId: Value(tagId),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> unassignTagFromProject(String projectId, String tagId) =>
+      (delete(projectTags)..where(
+            (t) => t.projectId.equals(projectId) & t.tagId.equals(tagId),
+          ))
+          .go();
+
+  Future<void> setProjectTags(String projectId, Iterable<String> tagIds) async {
+    final uniqueIds = tagIds.where((id) => id.trim().isNotEmpty).toSet();
+    await transaction(() async {
+      await (delete(
+        projectTags,
+      )..where((t) => t.projectId.equals(projectId))).go();
+      for (final tagId in uniqueIds) {
+        await assignTagToProject(projectId, tagId);
+      }
+    });
+  }
+
+  Future<List<ProjectTagAssignment>> getProjectTagAssignments(
+    String projectId,
+  ) => (select(projectTags)..where((t) => t.projectId.equals(projectId))).get();
+
+  Stream<List<Tag>> watchTagsForProject(String projectId) {
+    final query =
+        select(
+            tags,
+          ).join([innerJoin(projectTags, projectTags.tagId.equalsExp(tags.id))])
+          ..where(projectTags.projectId.equals(projectId))
+          ..orderBy([OrderingTerm.asc(tags.name)]);
+    return query.watch().map(
+      (rows) => rows.map((row) => row.readTable(tags)).toList(growable: false),
+    );
+  }
+
+  Future<List<Tag>> getTagsForProject(String projectId) {
+    final query =
+        select(
+            tags,
+          ).join([innerJoin(projectTags, projectTags.tagId.equalsExp(tags.id))])
+          ..where(projectTags.projectId.equals(projectId))
+          ..orderBy([OrderingTerm.asc(tags.name)]);
+    return query.get().then(
+      (rows) => rows.map((row) => row.readTable(tags)).toList(growable: false),
+    );
+  }
+
+  Stream<List<Project>> watchProjectsForTag(String tagId) {
+    final query =
+        select(projects).join([
+            innerJoin(
+              projectTags,
+              projectTags.projectId.equalsExp(projects.id),
+            ),
+          ])
+          ..where(projectTags.tagId.equals(tagId) & projects.deletedAt.isNull())
+          ..orderBy([OrderingTerm.desc(projects.createdAt)]);
+    return query.watch().map(
+      (rows) =>
+          rows.map((row) => row.readTable(projects)).toList(growable: false),
+    );
+  }
+
+  Future<List<Project>> getProjectsForTag(String tagId) {
+    final query =
+        select(projects).join([
+            innerJoin(
+              projectTags,
+              projectTags.projectId.equalsExp(projects.id),
+            ),
+          ])
+          ..where(projectTags.tagId.equals(tagId) & projects.deletedAt.isNull())
+          ..orderBy([OrderingTerm.desc(projects.createdAt)]);
+    return query.get().then(
+      (rows) =>
+          rows.map((row) => row.readTable(projects)).toList(growable: false),
+    );
+  }
+
+  Future<List<Project>> getProjectsMatchingTags(
+    Iterable<String> tagIds, {
+    bool matchAll = false,
+  }) async {
+    final ids = tagIds.where((id) => id.trim().isNotEmpty).toSet();
+    if (ids.isEmpty) return getProjectsFull();
+    final assignments = await (select(
+      projectTags,
+    )..where((t) => t.tagId.isIn(ids))).get();
+    final counts = <String, int>{};
+    for (final assignment in assignments) {
+      counts.update(
+        assignment.projectId,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    final projectIds = counts.entries
+        .where((entry) => !matchAll || entry.value == ids.length)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    if (projectIds.isEmpty) return const <Project>[];
+    return (select(projects)
+          ..where((t) => t.id.isIn(projectIds) & t.deletedAt.isNull())
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+        .get();
+  }
+
+  // Project media
+
+  Stream<List<ProjectMediaItem>> watchAllProjectMedia() => (select(
+    projectMedia,
+  )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
+
+  Future<List<ProjectMediaItem>> getAllProjectMedia() => (select(
+    projectMedia,
+  )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).get();
+
+  Stream<List<ProjectMediaItem>> watchProjectMedia(String projectId) =>
+      (select(projectMedia)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
+
+  Future<List<ProjectMediaItem>> getProjectMedia(String projectId) =>
+      (select(projectMedia)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .get();
+
+  Future<ProjectMediaItem?> getProjectMediaItem(String id) =>
+      (select(projectMedia)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<String> saveProjectMedia({
+    String? id,
+    required String projectId,
+    required String title,
+    required String originalFilename,
+    required String storedPath,
+    String mediaType = 'file',
+    String? mimeType,
+    String? extension,
+    int? byteSize,
+    DateTime? fileModifiedAt,
+    String? caption,
+    bool isCover = false,
+    String? source,
+    String? metadataJson,
+  }) async {
+    final trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty) {
+      throw ArgumentError('Media title is required.');
+    }
+    final now = DateTime.now();
+    final mediaId = id ?? now.microsecondsSinceEpoch.toString();
+    final existing = await getProjectMediaItem(mediaId);
+    await into(projectMedia).insertOnConflictUpdate(
+      ProjectMediaCompanion(
+        id: Value(mediaId),
+        projectId: Value(projectId),
+        title: Value(trimmedTitle),
+        originalFilename: Value(originalFilename),
+        storedPath: Value(storedPath),
+        mediaType: Value(mediaType),
+        mimeType: Value(_blankToNull(mimeType)),
+        extension: Value(_blankToNull(extension)),
+        byteSize: Value(byteSize),
+        fileModifiedAt: Value(fileModifiedAt),
+        caption: Value(_blankToNull(caption)),
+        isCover: Value(isCover),
+        source: Value(_blankToNull(source)),
+        metadataJson: Value(_blankToNull(metadataJson)),
+        createdAt: Value(existing?.createdAt ?? now),
+        updatedAt: Value(now),
+      ),
+    );
+    return mediaId;
+  }
+
+  Future<String> importProjectMediaFromPath(
+    String projectId,
+    String path, {
+    String? title,
+    String? caption,
+    bool isCover = false,
+    String? source,
+    String? metadataJson,
+  }) async {
+    final file = File(path);
+    if (!file.existsSync()) {
+      throw FileSystemException('File not found', path);
+    }
+    final stat = file.statSync();
+    final filename = p.basename(path);
+    final ext = p.extension(filename).replaceFirst('.', '').toLowerCase();
+    final cleanExt = ext.isEmpty ? null : ext;
+    return saveProjectMedia(
+      projectId: projectId,
+      title: title?.trim().isNotEmpty == true ? title!.trim() : filename,
+      originalFilename: filename,
+      storedPath: path,
+      mediaType: _mediaTypeForExtension(cleanExt),
+      mimeType: _mimeTypeForExtension(cleanExt),
+      extension: cleanExt,
+      byteSize: stat.size,
+      fileModifiedAt: stat.modified,
+      caption: caption,
+      isCover: isCover,
+      source: source,
+      metadataJson: metadataJson,
+    );
+  }
+
+  Future<void> updateProjectMedia(
+    String id, {
+    String? title,
+    String? caption,
+    bool? isCover,
+    String? source,
+    String? metadataJson,
+  }) async {
+    await (update(projectMedia)..where((t) => t.id.equals(id))).write(
+      ProjectMediaCompanion(
+        title: title != null ? Value(title.trim()) : const Value.absent(),
+        caption: caption != null
+            ? Value(_blankToNull(caption))
+            : const Value.absent(),
+        isCover: isCover != null ? Value(isCover) : const Value.absent(),
+        source: source != null
+            ? Value(_blankToNull(source))
+            : const Value.absent(),
+        metadataJson: metadataJson != null
+            ? Value(_blankToNull(metadataJson))
+            : const Value.absent(),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> deleteProjectMedia(String id) =>
+      (delete(projectMedia)..where((t) => t.id.equals(id))).go();
+
+  Future<void> setProjectCoverMedia(String projectId, String mediaId) async {
+    await transaction(() async {
+      await (update(projectMedia)..where((t) => t.projectId.equals(projectId)))
+          .write(const ProjectMediaCompanion(isCover: Value(false)));
+      await (update(
+            projectMedia,
+          )..where((t) => t.projectId.equals(projectId) & t.id.equals(mediaId)))
+          .write(
+            ProjectMediaCompanion(
+              isCover: const Value(true),
+              updatedAt: Value(DateTime.now()),
+            ),
+          );
+    });
+  }
+
+  String _mediaTypeForExtension(String? extension) {
+    const images = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'};
+    const videos = {'mp4', 'mov', 'avi', 'mkv', 'webm'};
+    const audio = {'mp3', 'wav', 'm4a', 'aac', 'ogg'};
+    if (extension == null) return 'file';
+    if (images.contains(extension)) return 'image';
+    if (videos.contains(extension)) return 'video';
+    if (audio.contains(extension)) return 'audio';
+    return 'file';
+  }
+
+  String? _mimeTypeForExtension(String? extension) {
+    const mimeTypes = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      'bmp': 'image/bmp',
+      'heic': 'image/heic',
+      'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+      'webm': 'video/webm',
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'm4a': 'audio/mp4',
+      'aac': 'audio/aac',
+      'ogg': 'audio/ogg',
+      'pdf': 'application/pdf',
+    };
+    return extension == null ? null : mimeTypes[extension];
+  }
+
   // ── Documents ─────────────────────────────────────────────────────────────
 
   Stream<List<Document>> watchDocuments() => (select(
@@ -1166,6 +1635,41 @@ class AppDb extends _$AppDb {
           .get();
 
   Future<void> clearEventLog() => delete(eventLog).go();
+
+  // ── Daily Reviews ─────────────────────────────────────────────────────────
+
+  Future<void> saveDailyReview(String summary) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    // Delete existing review for today (upsert by date)
+    await (delete(dailyReviews)
+      ..where((t) => t.reviewDate.isBiggerOrEqualValue(today) &
+                     t.reviewDate.isSmallerThanValue(tomorrow)))
+      .go();
+    await into(dailyReviews).insert(DailyReviewsCompanion.insert(
+      id: now.millisecondsSinceEpoch.toString(),
+      reviewDate: today,
+      summary: summary,
+      createdAt: now,
+    ));
+  }
+
+  Future<DailyReview?> getDailyReviewForDate(DateTime date) async {
+    final start = DateTime(date.year, date.month, date.day);
+    final end = start.add(const Duration(days: 1));
+    return (select(dailyReviews)
+      ..where((t) => t.reviewDate.isBiggerOrEqualValue(start) &
+                     t.reviewDate.isSmallerThanValue(end))
+      ..limit(1))
+      .getSingleOrNull();
+  }
+
+  Stream<List<DailyReview>> watchRecentDailyReviews({int limit = 30}) =>
+      (select(dailyReviews)
+        ..orderBy([(t) => OrderingTerm.desc(t.reviewDate)])
+        ..limit(limit))
+      .watch();
 
   // ── Outbox ────────────────────────────────────────────────────────────────
 
