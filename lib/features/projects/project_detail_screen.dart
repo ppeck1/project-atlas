@@ -680,7 +680,13 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _mf(name, 'Name / contact'),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: ContactOwnerField(
+                  controller: name,
+                  label: 'Name / contact',
+                ),
+              ),
               _mf(role, 'Role / responsibility'),
               _mf(auth, 'Decision authority'),
             ],
@@ -748,7 +754,13 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _mf(name, 'Name / contact'),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: ContactOwnerField(
+                  controller: name,
+                  label: 'Name / contact',
+                ),
+              ),
               _mf(role, 'Role / responsibility'),
               _mf(auth, 'Decision authority'),
             ],
