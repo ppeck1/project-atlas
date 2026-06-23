@@ -177,16 +177,22 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
     final svc = OllamaService(host: host, model: '');
     final models = await svc.getAvailableModels();
     if (!mounted) return;
+    String? autoFixed;
     setState(() {
       _loadingModels = false;
       _availableModels = models;
-      // If the saved model name isn't in the list, switch the controller to
-      // the first available model so the dropdown and saved value stay in sync.
       if (models.isNotEmpty &&
           !models.contains(_ollamaModelCtrl.text.trim())) {
         _ollamaModelCtrl.text = models.first;
+        autoFixed = models.first;
       }
     });
+    // Persist the auto-corrected model immediately so AI features pick it up
+    // without requiring the user to click Save settings.
+    if (autoFixed != null) {
+      final state = AppStateScope.of(context);
+      await state.setSetting(AppDb.kOllamaModel, autoFixed);
+    }
   }
 
   Future<void> _save() async {

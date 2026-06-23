@@ -586,8 +586,16 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             ),
             FilledButton(
               onPressed: () async {
-                await state.setProjectTags(widget.projectId, selectedIds);
-                if (ctx.mounted) Navigator.of(ctx).pop();
+                try {
+                  await state.setProjectTags(widget.projectId, selectedIds);
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to save tags: $e')),
+                    );
+                  }
+                }
               },
               child: const Text('Save'),
             ),
@@ -895,7 +903,13 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             children: [
               _mf(title, 'What was decided?'),
               _mf(ctx2, 'Context & rationale', multiline: true),
-              _mf(decider, 'Decided by'),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: ContactOwnerField(
+                  controller: decider,
+                  label: 'Decided by',
+                ),
+              ),
             ],
           ),
         ),
@@ -1979,6 +1993,12 @@ class _TagsSection extends StatelessWidget {
     return StreamBuilder<List<Tag>>(
       stream: state.watchTagsForProject(projectId),
       builder: (context, snap) {
+        if (snap.hasError) {
+          return Text(
+            'Error loading tags: ${snap.error}',
+            style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+          );
+        }
         final tags = snap.data ?? const <Tag>[];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,

@@ -224,8 +224,9 @@ class AppDb extends _$AppDb {
       "ALTER TABLE stages ADD COLUMN is_bottleneck INTEGER NOT NULL DEFAULT 0",
       'ALTER TABLE stages ADD COLUMN bottleneck_owner TEXT NULL',
       // project_risks / project_decisions columns added after initial table creation
-      'ALTER TABLE project_risks ADD COLUMN desc TEXT NULL',
-      'ALTER TABLE project_decisions ADD COLUMN ctx TEXT NULL',
+      // Note: "desc" must be quoted — DESC is a reserved SQL keyword.
+      'ALTER TABLE project_risks ADD COLUMN "desc" TEXT NULL',
+      'ALTER TABLE project_decisions ADD COLUMN "ctx" TEXT NULL',
     ];
 
     for (final stmt in addColumns) {
