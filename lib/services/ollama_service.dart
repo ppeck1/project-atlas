@@ -70,7 +70,8 @@ class OllamaService {
   }
 
   /// Send a chat message and get the response text.
-  /// Returns null on error or timeout.
+  /// Returns an error string prefixed with "⚠ " on failure so callers can
+  /// distinguish a real empty response from a connection/model error.
   Future<String?> _chat(String systemPrompt, String userMessage) async {
     try {
       final res = await http
@@ -93,9 +94,11 @@ class OllamaService {
         return (data['message'] as Map<String, dynamic>?)?['content']
             as String?;
       }
-      return null;
+      // Surface the actual HTTP error so the UI can show something useful
+      final body = res.body.length > 200 ? res.body.substring(0, 200) : res.body;
+      return '⚠ Ollama returned HTTP ${res.statusCode} for model "$model" — $body';
     } catch (e) {
-      return null;
+      return '⚠ Ollama request failed: $e';
     }
   }
 
@@ -308,7 +311,10 @@ class OllamaResult {
     required this.title,
   });
 
-  bool get isSuccess => output != null && output!.trim().isNotEmpty;
+  bool get isSuccess =>
+      output != null &&
+      output!.trim().isNotEmpty &&
+      !output!.startsWith('⚠ ');
 }
 
 class LinkedDocumentContext {

@@ -115,7 +115,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         includeLibrary: _includeLibrary,
       );
       if (!mounted) return;
-      setState(() => _summaryText = r.output ?? 'No output from model.');
+      setState(() => _summaryText = r.output?.trim().isEmpty == true
+          ? 'No output from model.'
+          : (r.output ?? 'No output from model.'));
     } catch (e) {
       if (!mounted) return;
       setState(() => _summaryText = 'Error: $e');
