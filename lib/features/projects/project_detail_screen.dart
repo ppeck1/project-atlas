@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../db/app_db.dart';
+import '../../services/project_summary_models.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/widgets/contact_picker.dart';
 import '../../shared/widgets/create_work_item_dialog.dart';
@@ -67,6 +68,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   bool _includeLibrary = false;
   bool _summaryLoading = false;
   String? _summaryText;
+  ProjectSummaryOutcome? _summaryOutcome;
+  DateTime? _summaryGeneratedAt;
 
   List<WorkItem> _workItems = const [];
   List<ProjectPerson> _people = const [];
@@ -98,6 +101,13 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     try {
       decisions = await state.getProjectDecisions(widget.projectId);
     } catch (_) {}
+
+    // Load cached summary draft so the AI panel shows instantly.
+    Draft? cachedDraft;
+    try {
+      cachedDraft = await state.getLatestProjectSummaryDraft(widget.projectId);
+    } catch (_) {}
+
     if (!mounted) return;
     setState(() {
       _workItems = items;
@@ -105,6 +115,29 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       _risks = risks;
       _decisions = decisions;
     });
+
+    if (cachedDraft != null && _summaryOutcome == null && _summaryText == null) {
+      final docPaths =
+          await state.getDocumentPathsForProject(widget.projectId);
+      final structured =
+          ProjectSummaryResult.tryParse(cachedDraft.inputJson);
+      if (!mounted) return;
+      setState(() {
+        _summaryGeneratedAt = cachedDraft!.createdAt;
+        _aiExpanded = true;
+        if (structured != null) {
+          _summaryOutcome = ProjectSummaryOutcome(
+            rawOutput: cachedDraft.body,
+            structured: structured,
+            documentPaths: docPaths,
+          );
+        } else {
+          _summaryText = cachedDraft.body.trim().isEmpty
+              ? null
+              : cachedDraft.body;
+        }
+      });
+    }
   }
 
   void _toggleSection(String key) =>
@@ -115,16 +148,30 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     setState(() {
       _summaryLoading = true;
       _summaryText = null;
+      _summaryOutcome = null;
+      _summaryGeneratedAt = null;
     });
     try {
-      final r = await state.summarizeProjectFull(
+      final outcome = await state.summarizeProjectFull(
         widget.projectId,
         includeLibrary: _includeLibrary,
       );
       if (!mounted) return;
-      setState(() => _summaryText = r.output?.trim().isEmpty == true
-          ? 'No output from model.'
-          : (r.output ?? 'No output from model.'));
+      final now = DateTime.now();
+      if (outcome.hasStructured) {
+        setState(() {
+          _summaryOutcome = outcome;
+          _summaryGeneratedAt = now;
+        });
+      } else {
+        final text = outcome.rawOutput?.trim().isEmpty == true
+            ? 'No output from model.'
+            : (outcome.rawOutput ?? 'No output from model.');
+        setState(() {
+          _summaryText = text;
+          _summaryGeneratedAt = now;
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _summaryText = 'Error: $e');
@@ -217,6 +264,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 includeLibrary: _includeLibrary,
                 summaryLoading: _summaryLoading,
                 summaryText: _summaryText,
+                summaryOutcome: _summaryOutcome,
+                generatedAt: _summaryGeneratedAt,
                 onToggle: () => setState(() => _aiExpanded = !_aiExpanded),
                 onToggleLibrary: (v) => setState(() => _includeLibrary = v),
                 onGenerate: _generateSummary,
@@ -1166,6 +1215,8 @@ class _AiPanel extends StatelessWidget {
   final bool includeLibrary;
   final bool summaryLoading;
   final String? summaryText;
+  final ProjectSummaryOutcome? summaryOutcome;
+  final DateTime? generatedAt;
   final VoidCallback onToggle;
   final ValueChanged<bool> onToggleLibrary;
   final VoidCallback onGenerate;
@@ -1175,13 +1226,24 @@ class _AiPanel extends StatelessWidget {
     required this.includeLibrary,
     required this.summaryLoading,
     required this.summaryText,
+    required this.summaryOutcome,
+    required this.generatedAt,
     required this.onToggle,
     required this.onToggleLibrary,
     required this.onGenerate,
   });
 
+  String _formatAge(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasContent = summaryOutcome != null || summaryText != null;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1196,14 +1258,28 @@ class _AiPanel extends StatelessWidget {
             children: [
               const Icon(Icons.psychology, size: 18, color: _kPrimary),
               const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'AI Project Assistant',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: _kPrimary,
-                    fontSize: 14,
-                  ),
+              Expanded(
+                child: Row(
+                  children: [
+                    const Text(
+                      'AI Project Assistant',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: _kPrimary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    if (generatedAt != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        _formatAge(generatedAt!),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.white24,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               Row(
@@ -1248,13 +1324,7 @@ class _AiPanel extends StatelessWidget {
           ),
           if (expanded) ...[
             const SizedBox(height: 12),
-            if (!summaryLoading && summaryText == null)
-              FilledButton.icon(
-                onPressed: onGenerate,
-                icon: const Icon(Icons.psychology, size: 16),
-                label: const Text('Generate Summary'),
-              )
-            else if (summaryLoading)
+            if (summaryLoading)
               const Row(
                 children: [
                   SizedBox(
@@ -1269,25 +1339,354 @@ class _AiPanel extends StatelessWidget {
                   ),
                 ],
               )
+            else if (!hasContent)
+              FilledButton.icon(
+                onPressed: onGenerate,
+                icon: const Icon(Icons.psychology, size: 16),
+                label: const Text('Generate Summary'),
+              )
+            else if (summaryOutcome?.hasStructured == true)
+              _StructuredSummaryView(
+                result: summaryOutcome!.structured!,
+                documentPaths: summaryOutcome!.documentPaths,
+                onRegenerate: onGenerate,
+              )
             else
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withAlpha(10),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  summaryText!,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Colors.white70,
-                    fontFamily: 'monospace',
-                    height: 1.6,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(10),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      summaryText ?? summaryOutcome?.rawOutput ?? '',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.white70,
+                        fontFamily: 'monospace',
+                        height: 1.6,
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: onGenerate,
+                    icon: const Icon(Icons.refresh, size: 14),
+                    label: const Text('Regenerate'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _kPrimary,
+                      padding: EdgeInsets.zero,
+                      textStyle: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
               ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Structured summary renderer ─────────────────────────────────────────────
+
+class _StructuredSummaryView extends StatelessWidget {
+  final ProjectSummaryResult result;
+  final Map<String, String?> documentPaths;
+  final VoidCallback onRegenerate;
+
+  const _StructuredSummaryView({
+    required this.result,
+    required this.documentPaths,
+    required this.onRegenerate,
+  });
+
+  static const _head = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w700,
+    color: _kPrimary,
+    letterSpacing: 0.5,
+  );
+  static const _body = TextStyle(
+    fontSize: 13,
+    color: Color(0xDEFFFFFF),
+    height: 1.55,
+  );
+  static const _sub = TextStyle(
+    fontSize: 12,
+    color: Color(0x8AFFFFFF),
+    height: 1.5,
+  );
+
+  Widget _section(String title, Widget child) => Padding(
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title.toUpperCase(), style: _head),
+        const SizedBox(height: 6),
+        child,
+      ],
+    ),
+  );
+
+  Widget _bullets(List<String> items) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: items
+        .map(
+          (t) => Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('• ', style: TextStyle(color: Color(0x8AFFFFFF))),
+                Expanded(child: Text(t, style: _body)),
+              ],
+            ),
+          ),
+        )
+        .toList(),
+  );
+
+  Widget _numbered(List<String> items) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: List.generate(
+      items.length,
+      (i) => Padding(
+        padding: const EdgeInsets.only(bottom: 3),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 20,
+              child: Text(
+                '${i + 1}.',
+                style: const TextStyle(color: Color(0x8AFFFFFF)),
+              ),
+            ),
+            Expanded(child: Text(items[i], style: _body)),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Future<void> _openInExplorer(BuildContext context, String path) async {
+    try {
+      // /select, highlights the file in Explorer on Windows
+      await Process.start('explorer.exe', ['/select,', path]);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not open Explorer: $e')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = result;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(8),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF79A7FF).withAlpha(30)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Goal
+          if (s.goal.isNotEmpty) _section('Goal', _bullets(s.goal)),
+
+          // Current State
+          if (s.currentState.isNotEmpty)
+            _section('Current State', Text(s.currentState, style: _body)),
+
+          // Ownership
+          if (s.ownership.isNotEmpty)
+            _section(
+              'Ownership / Active Work',
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: s.ownership
+                    .map(
+                      (o) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              o.person,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xDEFFFFFF),
+                              ),
+                            ),
+                            ...o.work.map(
+                              (w) => Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 12,
+                                  top: 2,
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      '– ',
+                                      style: TextStyle(
+                                        color: Color(0x8AFFFFFF),
+                                      ),
+                                    ),
+                                    Expanded(child: Text(w, style: _sub)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            if (o.basis != null)
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 12,
+                                  top: 2,
+                                ),
+                                child: Text(
+                                  'Basis: ${o.basis}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Color(0x61FFFFFF),
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+
+          // Relevant Library Docs
+          if (s.relevantDocuments.isNotEmpty)
+            _section(
+              'Relevant Library Docs',
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: s.relevantDocuments.map((doc) {
+                  final storedPath = documentPaths[doc.documentId];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          doc.title,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xDEFFFFFF),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(doc.reason, style: _sub),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () {
+                                context.go(
+                                  '/library?entryType=document&entryId=${doc.documentId}',
+                                );
+                              },
+                              icon: const Icon(Icons.library_books, size: 13),
+                              label: const Text('Open in Library'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: _kPrimary,
+                                side: BorderSide(
+                                  color: _kPrimary.withAlpha(80),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                textStyle: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            if (storedPath != null && storedPath.isNotEmpty)
+                              OutlinedButton.icon(
+                                onPressed: () =>
+                                    _openInExplorer(context, storedPath),
+                                icon: const Icon(Icons.folder_open, size: 13),
+                                label: const Text('Show in Explorer'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0x8AFFFFFF),
+                                  side: BorderSide(
+                                    color: const Color(
+                                      0xFF273044,
+                                    ).withAlpha(200),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  textStyle: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+
+          // Blockers / Risks
+          if (s.blockersAndRisks.isNotEmpty)
+            _section('Blockers / Risks', _bullets(s.blockersAndRisks)),
+
+          // Next Actions
+          if (s.nextActions.isNotEmpty)
+            _section('Next Practical Actions', _numbered(s.nextActions)),
+
+          // Confidence / Gaps
+          if (s.confidence.isNotEmpty)
+            _section(
+              'Confidence / Gaps',
+              Text(
+                s.confidence,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0x61FFFFFF),
+                  fontStyle: FontStyle.italic,
+                  height: 1.5,
+                ),
+              ),
+            ),
+
+          // Regenerate
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: onRegenerate,
+              icon: const Icon(Icons.refresh, size: 14),
+              label: const Text('Regenerate'),
+              style: TextButton.styleFrom(
+                foregroundColor: _kPrimary,
+                padding: EdgeInsets.zero,
+                textStyle: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
         ],
       ),
     );

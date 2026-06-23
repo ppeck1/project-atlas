@@ -146,7 +146,7 @@ Key-value store for all runtime settings and active-state flags.
 | `input_json` | TEXT? | null | Serialized prompt input for traceability. |
 | `accepted` | BOOLEAN | `false` | Reserved — user approval flag; not currently enforced in any workflow. |
 
-**Written by:** `saveDraft()` — only after explicit "Save Draft" action by user  
+**Written by:** `saveDraft()` — called after explicit "Save Draft" action by user, and also called automatically for `kind='project_summary'` entries after background or on-demand structured summary generation  
 **Read by:** `watchDrafts()` — Library screen (AI Drafts filter)  
 **Quirks:** `accepted` field exists in schema but is unused. The Drafts route is not yet a first-class navigation destination; drafts are accessed via Library → type filter.
 
@@ -328,7 +328,8 @@ Key-value store for all runtime settings and active-state flags.
 | `created_at` | DATETIME | | |
 
 **Written by:** `addProjectRisk()`, `updateProjectRisk()`, `deleteProjectRisk()`  
-**Read by:** `getProjectRisks()` → `ProjectDetailScreen` Risks section
+**Read by:** `getProjectRisks()` → `ProjectDetailScreen` Risks section  
+**Quirks:** `updated_at` column may be missing on legacy DBs; `addProjectRisk()` falls back to a raw SQL INSERT with an explicit timestamp when `SqliteException` mentions `updated_at`. `_ensureProjectCompatibilityColumns()` runs at startup and adds `severity TEXT NOT NULL DEFAULT 'medium'` if missing.
 
 ---
 
@@ -344,7 +345,8 @@ Key-value store for all runtime settings and active-state flags.
 | `created_at` | DATETIME | |
 
 **Written by:** `addProjectDecision()`, `updateProjectDecision()`, `deleteProjectDecision()`  
-**Read by:** `getProjectDecisions()` → `ProjectDetailScreen` Decisions section
+**Read by:** `getProjectDecisions()` → `ProjectDetailScreen` Decisions section  
+**Quirks:** `updated_at` column may be missing on legacy DBs; `addProjectDecision()` falls back to a raw SQL INSERT with an explicit timestamp when `SqliteException` mentions `updated_at`.
 
 ---
 
@@ -420,6 +422,18 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `activeProject` | `Project? getter` | Synchronous read from cache. May be stale for one frame after a project switch. |
 | `hasActiveProject` | `ValueNotifier<bool>` | Router uses this for nav gating. Updated on every active-project stream event. |
 
+**Background refresh:** The constructor schedules `Future.delayed(10s, _backgroundSummaryRefresh)`. On startup this quietly pre-generates structured summaries for all active projects (once per day per project, skips if Ollama is unavailable).
+
+**`_backgroundSummaryRefresh()`** — private async method; checks Ollama availability, iterates active projects, skips if today's draft already exists, calls `summarizeProjectFull()`, applies a 3 s delay between projects.
+
+**New AppState methods:**
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `getLatestProjectSummaryDraft(projectId)` | `Future<Draft?>` | Delegate to `db.getLatestProjectSummaryDraft(projectId)`. |
+| `getDocumentPathsForProject(projectId)` | `Future<Map<String, String?>>` | Delegate to `db.getDocumentPathsForProject(projectId)`. |
+| `summarizeProjectFull(projectId)` | `Future<ProjectSummaryOutcome>` | Return type changed from `OllamaResult`. Now also fetches people, risks, decisions, and document excerpts (3000 chars/doc, 16000 total cap); auto-saves to Drafts on success. |
+
 **Key exposed streams:**
 
 | Stream | Returns | Notes |
@@ -449,6 +463,17 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 
 ---
 
+### ProjectDetailScreen state (`lib/features/projects/project_detail_screen.dart`)
+
+| Variable | Type | Notes |
+|----------|------|-------|
+| `_summaryOutcome` | `ProjectSummaryOutcome?` | Holds the current structured summary for the active project. |
+| `_summaryGeneratedAt` | `DateTime?` | When the summary was generated; used to render the age badge in the AI panel. |
+
+**`_loadAll()` behavior:** On startup, loads the cached summary from Drafts (via `getLatestProjectSummaryDraft`), populates `_summaryOutcome` and `_summaryGeneratedAt`, and auto-expands the AI summary panel if a cached summary is found.
+
+---
+
 ## 3. Services
 
 ### OllamaService (`lib/services/ollama_service.dart`)
@@ -468,9 +493,12 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `draftEmail(...)` | task context + user instruction | `OllamaResult` | |
 | `extractTasksFromNote(...)` | raw text, project title | `OllamaResult` | |
 | `analyzeWorkItem(...)` | work item fields + linked document text | `OllamaResult` | Read-only; does not mutate any record. |
+| `summarizeProjectStructured({required ProjectSummaryContext context})` | `ProjectSummaryContext` | `({OllamaResult result, ProjectSummaryResult? parsed})` | Structured JSON summary via `format:"json"`, low temperature. Uses `_chatStructured`. |
 
 **`OllamaResult`:** `{ input: String, output: String?, kind: String, title: String, isSuccess: bool }`  
 `output == null` or `isSuccess == false` means unavailable or empty. Never auto-applied.
+
+**Timeout:** Both `_chat` and `_chatStructured` use a 300 s timeout (previously 90 s).
 
 ---
 
@@ -491,24 +519,64 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 
 ---
 
+### ProjectSummaryModels (`lib/services/project_summary_models.dart`)
+
+Input models (all `const`-constructable):
+
+| Class | Fields | Notes |
+|-------|--------|-------|
+| `ProjectSummaryContextWorkItem` | `id, title, status, priority, owner?, blockedReason?` | Represents a single work item for the summary prompt. |
+| `ProjectSummaryContextPerson` | `name, role?` | Person entry for the summary prompt. |
+| `ProjectSummaryContextRisk` | `title, severity` | Risk entry for the summary prompt. |
+| `ProjectSummaryContextDecision` | `title, decider?` | Decision entry for the summary prompt. |
+| `ProjectSummaryContextDoc` | `id, title, extension?, excerpt?` | Document reference with optional text excerpt. |
+| `ProjectSummaryContext` | `id, title, description?, desiredOutcome?, successCriteria?, status, phase?, priority?, owner?, workItems, people, risks, decisions, documents` | Top-level input aggregate. Has `toPromptText()` method that serializes all fields to a human-readable prompt string. |
+
+Output models:
+
+| Class | Fields | Notes |
+|-------|--------|-------|
+| `ProjectSummaryOwnershipItem` | `person, work: List<String>, basis?` | Ownership breakdown entry within a structured result. |
+| `ProjectSummaryDocumentRef` | `documentId, title, reason` | Document reference with relevance rationale. |
+| `ProjectSummaryResult` | `goal: List<String>, currentState, ownership, relevantDocuments, blockersAndRisks, nextActions, confidence` | Parsed structured output. Has `fromJson(Map)` factory and `tryParse(String?)` static method. `tryParse` strips `<think>…</think>` blocks (Qwen reasoning models), removes markdown fences, extracts the outermost JSON object, and returns null on failure. |
+
+Return type:
+
+| Class | Fields / Getters | Notes |
+|-------|-----------------|-------|
+| `ProjectSummaryOutcome` | `rawOutput?, structured?, documentPaths?`; `hasStructured` getter; `isSuccess` getter | `isSuccess` is true if `structured != null` OR `rawOutput` is non-null and non-error. |
+
+---
+
+### Project Summary DB Methods (`lib/db/app_db.dart`)
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `getLatestProjectSummaryDraft(projectId)` | `Future<Draft?>` | Finds the most recent draft with `kind='project_summary'` for the given project. |
+| `hasTodayProjectSummaryDraft(projectId)` | `Future<bool>` | True if a `project_summary` draft exists with today's date. |
+| `getDocumentPathsForProject(projectId)` | `Future<Map<String, String?>>` | Returns a map of `documentId → storedPath` for all docs linked to the project. |
+| `deleteProjectSummaryDrafts(projectId)` | `Future<void>` | Deletes all `kind='project_summary'` drafts for the project. Called before saving a fresh summary to avoid accumulation. |
+
+---
+
 ## 4. Navigation
 
 Router: `lib/app/router.dart` using `go_router`  
 Shell: `lib/shared/widgets/atlas_shell.dart`
 
-| Route | Screen | Requires active project? |
-|-------|--------|-------------------------|
-| `/today` | `TodayScreen` | Yes |
-| `/projects` | `ProjectsScreen` | No |
-| `/projects/:id` | `ProjectDetailScreen` | No |
-| `/library` | `LibraryScreen` | No |
-| `/settings` | `SettingsScreen` | No |
-| `/` | `DashboardScreen` (legacy) | Yes |
-| `/work` | `WorkScreen` (legacy) | Yes |
-| `/review` | `ReviewScreen` (legacy) | Yes |
-| `/export` | `ExportScreen` (legacy) | Yes |
-| `/governance` | `GovernanceScreen` (legacy) | Yes |
-| `/log` | `LogScreen` (legacy) | Yes |
+| Route | Screen | Requires active project? | Notes |
+|-------|--------|-------------------------|-------|
+| `/today` | `TodayScreen` | Yes | |
+| `/projects` | `ProjectsScreen` | No | |
+| `/projects/:id` | `ProjectDetailScreen` | No | |
+| `/library` | `LibraryScreen` | No | Accepts query params `?entryType=document&entryId=<id>`. `LibraryScreen` constructor accepts `initialEntryId` and `initialEntryType` optional params; `initState` pre-selects the entry when params are provided. |
+| `/settings` | `SettingsScreen` | No | |
+| `/` | `DashboardScreen` (legacy) | Yes | |
+| `/work` | `WorkScreen` (legacy) | Yes | |
+| `/review` | `ReviewScreen` (legacy) | Yes | |
+| `/export` | `ExportScreen` (legacy) | Yes | |
+| `/governance` | `GovernanceScreen` (legacy) | Yes | |
+| `/log` | `LogScreen` (legacy) | Yes | |
 
 **Gate logic:** `AtlasShell` checks `hasActiveProject`. If false and current route is not `/projects`, it redirects to `/projects` via `addPostFrameCallback`.  
 **Quirk:** Initial location is `/today`. If no active project exists, the app immediately redirects to `/projects`.

@@ -226,6 +226,8 @@ class AppDb extends _$AppDb {
       // project_risks / project_decisions columns added after initial table creation
       // Note: "desc" must be quoted — DESC is a reserved SQL keyword.
       'ALTER TABLE project_risks ADD COLUMN "desc" TEXT NULL',
+      // severity was added to the Drift schema after some DBs were created
+      "ALTER TABLE project_risks ADD COLUMN severity TEXT NOT NULL DEFAULT 'medium'",
       'ALTER TABLE project_decisions ADD COLUMN "ctx" TEXT NULL',
     ];
 
@@ -861,6 +863,54 @@ class AppDb extends _$AppDb {
   Future<void> deleteDraft(String id) =>
       (delete(drafts)..where((t) => t.id.equals(id))).go();
 
+  /// Delete all project_summary drafts for [projectId] before saving a fresh one.
+  Future<void> deleteProjectSummaryDrafts(String projectId) =>
+      (delete(drafts)
+            ..where(
+              (t) =>
+                  t.projectId.equals(projectId) &
+                  t.kind.equals('project_summary'),
+            ))
+          .go();
+
+  /// Latest cached AI project summary draft for [projectId], or null.
+  Future<Draft?> getLatestProjectSummaryDraft(String projectId) =>
+      (select(drafts)
+            ..where(
+              (t) =>
+                  t.projectId.equals(projectId) &
+                  t.kind.equals('project_summary'),
+            )
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
+            ..limit(1))
+          .getSingleOrNull();
+
+  /// True if a project_summary draft for [projectId] was saved today.
+  Future<bool> hasTodayProjectSummaryDraft(String projectId) async {
+    final today = DateTime.now();
+    final startOfDay = DateTime(today.year, today.month, today.day);
+    final rows = await (select(drafts)
+          ..where(
+            (t) =>
+                t.projectId.equals(projectId) &
+                t.kind.equals('project_summary') &
+                t.createdAt.isBiggerOrEqualValue(startOfDay),
+          )
+          ..limit(1))
+        .get();
+    return rows.isNotEmpty;
+  }
+
+  /// Returns a map of documentId → storedPath for all documents linked to [projectId].
+  Future<Map<String, String?>> getDocumentPathsForProject(
+    String projectId,
+  ) async {
+    final docs = await (select(documents)
+          ..where((t) => t.projectId.equals(projectId)))
+        .get();
+    return {for (final d in docs) d.id: d.storedPath};
+  }
+
   // ── Project governance ────────────────────────────────────────────────────
 
   Stream<List<Contact>> watchContacts() =>
@@ -1000,16 +1050,29 @@ class AppDb extends _$AppDb {
     String severity,
   ) async {
     final id = DateTime.now().microsecondsSinceEpoch.toString();
-    await into(projectRisks).insert(
-      ProjectRisksCompanion(
-        id: Value(id),
-        projectId: Value(projectId),
-        title: Value(title),
-        desc: Value(desc),
-        severity: Value(severity),
-        createdAt: Value(DateTime.now()),
-      ),
-    );
+    final now = DateTime.now();
+    try {
+      await into(projectRisks).insert(
+        ProjectRisksCompanion(
+          id: Value(id),
+          projectId: Value(projectId),
+          title: Value(title),
+          desc: Value(desc),
+          severity: Value(severity),
+          createdAt: Value(now),
+        ),
+      );
+    } on SqliteException catch (e) {
+      // Some databases were created when ProjectRisks had an updatedAt field.
+      if (!e.message.contains('updated_at')) rethrow;
+      final ms = now.millisecondsSinceEpoch;
+      await customStatement(
+        'INSERT INTO project_risks '
+        '(id, project_id, title, "desc", severity, created_at, updated_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [id, projectId, title, desc, severity, ms, ms],
+      );
+    }
   }
 
   Future<void> deleteProjectRisk(String riskId) =>
@@ -1028,16 +1091,31 @@ class AppDb extends _$AppDb {
     String? decider,
   ) async {
     final id = DateTime.now().microsecondsSinceEpoch.toString();
-    await into(projectDecisions).insert(
-      ProjectDecisionsCompanion(
-        id: Value(id),
-        projectId: Value(projectId),
-        title: Value(title),
-        ctx: Value(ctx),
-        decider: Value(decider),
-        createdAt: Value(DateTime.now()),
-      ),
-    );
+    final now = DateTime.now();
+    try {
+      await into(projectDecisions).insert(
+        ProjectDecisionsCompanion(
+          id: Value(id),
+          projectId: Value(projectId),
+          title: Value(title),
+          ctx: Value(ctx),
+          decider: Value(decider),
+          createdAt: Value(now),
+        ),
+      );
+    } on SqliteException catch (e) {
+      // Some databases were created when ProjectDecisions had an updatedAt field.
+      // That column was later removed from the Drift schema, so generated INSERTs
+      // no longer include it — triggering NOT NULL failures on legacy DBs.
+      if (!e.message.contains('updated_at')) rethrow;
+      final ms = now.millisecondsSinceEpoch;
+      await customStatement(
+        'INSERT INTO project_decisions '
+        '(id, project_id, title, ctx, decider, created_at, updated_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [id, projectId, title, ctx, decider, ms, ms],
+      );
+    }
   }
 
   Future<void> deleteProjectDecision(String decisionId) =>

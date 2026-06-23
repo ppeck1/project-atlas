@@ -89,7 +89,11 @@ class _LibraryEntry {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class LibraryScreen extends StatefulWidget {
-  const LibraryScreen({super.key});
+  /// When provided (e.g. from a deep link), the matching entry is pre-selected.
+  final String? initialEntryId;
+  final String? initialEntryType;
+
+  const LibraryScreen({super.key, this.initialEntryId, this.initialEntryType});
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -102,6 +106,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String _searchQuery = '';
   String? _filterProjectId;
   String _filterType = 'all';
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialEntryId != null) {
+      _selectedId = widget.initialEntryId;
+      _selectedIsDraft = widget.initialEntryType == 'draft';
+    }
+  }
 
   @override
   void dispose() {

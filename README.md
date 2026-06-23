@@ -11,7 +11,8 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Storage: local SQLite via Drift, schema version `10`
 - Primary navigation: Today, Projects, Library, Settings
 - Legacy deep links still available: Dashboard, Work, Review, Export, Governance, Backend Log
-- Optional local AI: Ollama summaries, drafts, and work-item analysis — always human-in-the-loop
+- Optional local AI: Ollama structured project summaries, prose summaries, drafts, and work-item analysis — always human-in-the-loop
+- AI summary caching: structured summaries are stored as drafts and loaded instantly on Project Detail open; background job pre-generates summaries for all active projects 10 seconds after startup (once per day per project)
 - Optional phone handoff: outbound Telegram task-list sending with outbox logging
 - Contacts / workforce directory with JSON and CSV import/export
 - Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
@@ -71,7 +72,7 @@ After changing Drift tables or database code, rerun build runner before launchin
 | --- | --- |
 | Today | Focus list for doing, overdue, due today, phone queue, blocked, and high-priority work |
 | Projects | Project list, active project switching, lifecycle metadata, tag/status/phase/priority filters, detail entry point |
-| Project Detail | Identity, scope, lifecycle fields, people roster, risk register, decision log, AI summary, media gallery, tag assignment |
+| Project Detail | Identity, scope, lifecycle fields, people roster, risk register, decision log, structured AI summary panel (7 sections, instant cached load, age badge), media gallery, tag assignment |
 | Library | Documents, project media, and AI drafts with search, project/type filters, import, copy, preview, and file-open actions |
 | Settings | Integrations, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
 | Work | Legacy stage/task list with editable work items |
@@ -126,7 +127,8 @@ When Ollama is reachable, the model field becomes a **dropdown** populated with 
 
 AI actions available:
 - **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
-- **Project summary** — summarizes active/blocked/done work for a project (Project Detail)
+- **Structured project summary** — produces a 7-section JSON-parsed summary for a project using `format:"json"` Ollama output mode (Project Detail); sections are Goal, Current State, Ownership/Active Work, Relevant Library Docs, Blockers/Risks, Next Practical Actions, and Confidence/Gaps. The summary is cached as a draft (`kind='project_summary'`) and loads instantly on next open. An age badge in the panel header shows when the cached summary was generated. Relevant Library Docs entries include "Open in Library" (navigates to the document) and "Show in Explorer" (opens Windows Explorer with the file selected) actions.
+- **Project summary (prose)** — legacy prose summary; still available via `summarizeProject()` in OllamaService
 - **Email draft** — drafts an email for a specific work item (Work Item Detail)
 - **Task extract** — extracts tasks from free-form note text (Work Item Detail)
 - **Work item analysis** — read-only advisory analysis including linked documents (Work Item Detail)
@@ -158,7 +160,7 @@ Do not commit local database files, secrets, app-data folders, `.dart_tool`, `bu
 lib/
   app/           App widget, router, theme
   db/            Drift tables, AppDb, database open path
-  services/      Ollama, Telegram, app logging
+  services/      Ollama (OllamaService, project_summary_models.dart), Telegram, app logging
   features/      today, projects, library, settings, work, review, export, governance, log
   shared/
     models/      AppState and scope

@@ -26,6 +26,12 @@ The core problem it solves: on any given morning, what am I doing, what is block
 
 **App-owned media copies.** When files are added to a project's media gallery or the document library, they are copied into the app data directory. The `stored_path` column points to the copy. The original source path is not tracked. Deleting a record does not delete the copy; manual cleanup via Admin → Open app data folder.
 
+**Structured AI Summary (two-layer design).** The project summary system separates LLM output from UI rendering. Ollama is called with `format:"json"` (an Ollama API parameter that forces valid JSON output), and the Flutter app renders the parsed result deterministically. This means the UI layout is never at the mercy of LLM prose formatting. All typed input/output models for the summary pipeline live in `lib/services/project_summary_models.dart`. `ProjectSummaryResult.tryParse()` handles three common LLM failure modes: `<think>…</think>` reasoning blocks (Qwen models), markdown code fences, and JSON parsing errors — returning null on any failure so the UI can gracefully fall back to prose. The system prompt instructs the model to use only supplied data and never invent document IDs, paths, people, or work assignments.
+
+**Summary Caching and Background Refresh.** After generating a structured summary, it is auto-saved as a Draft with `kind='project_summary'` (replacing any prior draft for that project). When Project Detail opens, it loads the cached draft instantly and shows an age badge ("2h ago", "just now") in the AI panel header. Ten seconds after app startup, a background job (`_backgroundSummaryRefresh` in `AppState`) checks every active project and generates a fresh structured summary if none exists for today — one per project per day, silently skipped if Ollama is unreachable. A 3-second inter-project delay prevents hammering Ollama when many projects exist.
+
+**Legacy Database Compatibility Repair.** `_ensureProjectCompatibilityColumns()` in `AppDb` runs in `beforeOpen` and issues `ALTER TABLE … ADD COLUMN` statements for columns added to the Drift schema after some databases were already created: `project_risks.severity TEXT NOT NULL DEFAULT 'medium'`, `project_risks.desc TEXT`, and `project_risks.ctx TEXT`. These ALTER TABLE calls are wrapped in try/catch so duplicate-column errors are silently ignored. Additionally, `addProjectRisk()` and `addProjectDecision()` catch `SqliteException` containing `'updated_at'` and fall back to a raw `customStatement` INSERT with an explicit timestamp — handling the case where legacy databases have `updated_at NOT NULL` but the newer Drift schema omits it from the generated INSERT.
+
 ---
 
 ## Project Structure
@@ -34,7 +40,7 @@ The core problem it solves: on any given morning, what am I doing, what is block
 lib/
   app/           app.dart (root widget), router.dart (go_router), theme.dart
   db/            tables.dart (all Drift tables), app_db.dart (AppDb + migrations), db_open.dart
-  services/      ollama_service.dart, telegram_service.dart, app_logger.dart
+  services/      ollama_service.dart, telegram_service.dart, app_logger.dart, project_summary_models.dart
   features/
     today/       today_screen.dart, work_item_detail_sheet.dart
     projects/    projects_screen.dart, project_detail_screen.dart
@@ -113,6 +119,8 @@ flutter test
 
 **v10 addition:** `UNIQUE INDEX idx_daily_reviews_date` on `daily_reviews(review_date)` — enables safe date-keyed upsert via `saveDailyReview()`. Stage CRUD methods (`addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`) added to `AppDb` and `AppState`; no UI hooked up yet.
 
+**Runtime compatibility columns (not a schema version bump):** `project_risks` and `project_decisions` have additional columns added at startup via `_ensureProjectCompatibilityColumns()` rather than through a migration version increment. This handles databases created before those columns existed without forcing a full migration. See the Legacy Database Compatibility Repair design decision above.
+
 Full column-level documentation with write/read sites and quirks: `VARIABLE_MAP.md`.
 
 ---
@@ -123,7 +131,8 @@ Full column-level documentation with write/read sites and quirks: `VARIABLE_MAP.
 - Host: `http://localhost:11434` (configurable in Settings → Integrations)
 - Model: `qwen3.5:9b` default in code; `mistral` shown as hint in Settings UI
 - Human-in-the-loop: every response requires user review before saving
-- Actions: today summary, project summary, email draft, task extract, work item analysis
+- Actions: today summary, email draft, task extract, work item analysis, **structured project summary** (7-section JSON output with ownership, blockers, relevant docs, next actions; results cached as Drafts with background daily refresh)
+- Timeout: 300 seconds (5-minute) for all generation calls
 
 **Telegram (outbound)**
 - Bot token + chat ID stored in `app_meta` as plaintext (personal desktop use)
@@ -155,6 +164,7 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 | Media file cleanup | Deleting a `project_media` record does not delete the copied file in app data. |
 | `completed` boolean on work items | Legacy. `status='done'` is canonical. Both are kept in sync but only `status` should be used in logic. |
 | `accepted` on drafts | Schema column exists but is never set or checked. |
+| `project_risks`/`project_decisions` legacy `updated_at` | Resolved: startup repair adds missing columns; INSERT methods fall back to `customStatement` with explicit timestamp when `updated_at NOT NULL` constraint is present on older databases. |
 
 ---
 

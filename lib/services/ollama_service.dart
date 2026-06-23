@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'project_summary_models.dart';
 
 /// Local LLM assistant via Ollama.
 ///
@@ -36,13 +37,14 @@ class OllamaService {
           .timeout(const Duration(seconds: 4));
       if (res.statusCode != 200) return [];
       final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final models =
-          (data['models'] as List? ?? []).cast<Map<String, dynamic>>();
-      final names = models
-          .map((m) => (m['name'] as String? ?? ''))
-          .where((n) => n.isNotEmpty)
-          .toList()
-        ..sort();
+      final models = (data['models'] as List? ?? [])
+          .cast<Map<String, dynamic>>();
+      final names =
+          models
+              .map((m) => (m['name'] as String? ?? ''))
+              .where((n) => n.isNotEmpty)
+              .toList()
+            ..sort();
       return names;
     } catch (_) {
       return [];
@@ -58,7 +60,8 @@ class OllamaService {
           .timeout(const Duration(seconds: 4));
       if (res.statusCode != 200) return false;
       final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final models = (data['models'] as List? ?? []).cast<Map<String, dynamic>>();
+      final models = (data['models'] as List? ?? [])
+          .cast<Map<String, dynamic>>();
       final base = model.toLowerCase().split(':').first;
       return models.any((m) {
         final name = (m['name'] as String? ?? '').toLowerCase();
@@ -87,7 +90,7 @@ class OllamaService {
               ],
             }),
           )
-          .timeout(const Duration(seconds: 90));
+          .timeout(const Duration(seconds: 300));
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -95,11 +98,107 @@ class OllamaService {
             as String?;
       }
       // Surface the actual HTTP error so the UI can show something useful
-      final body = res.body.length > 200 ? res.body.substring(0, 200) : res.body;
+      final body = res.body.length > 200
+          ? res.body.substring(0, 200)
+          : res.body;
       return '⚠ Ollama returned HTTP ${res.statusCode} for model "$model" — $body';
     } catch (e) {
       return '⚠ Ollama request failed: $e';
     }
+  }
+
+  /// Send a chat message requesting JSON output.
+  /// Uses format:"json" and low temperature for consistency.
+  Future<String?> _chatStructured(
+    String systemPrompt,
+    String userMessage,
+  ) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$host/api/chat'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'model': model,
+              'stream': false,
+              'format': 'json',
+              'options': {'temperature': 0.2},
+              'messages': [
+                {'role': 'system', 'content': systemPrompt},
+                {'role': 'user', 'content': userMessage},
+              ],
+            }),
+          )
+          .timeout(const Duration(seconds: 300));
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        return (data['message'] as Map<String, dynamic>?)?['content']
+            as String?;
+      }
+      final body = res.body.length > 200
+          ? res.body.substring(0, 200)
+          : res.body;
+      return '⚠ Ollama returned HTTP ${res.statusCode} for model "$model" — $body';
+    } catch (e) {
+      return '⚠ Ollama request failed: $e';
+    }
+  }
+
+  /// Generate a structured project summary using the supplied context.
+  /// Returns an [OllamaResult] whose [output] is raw JSON, plus a parsed
+  /// [ProjectSummaryResult] when parsing succeeds.
+  Future<({OllamaResult result, ProjectSummaryResult? parsed})>
+  summarizeProjectStructured({required ProjectSummaryContext context}) async {
+    const system = '''
+You are a project status assistant for a local project management app.
+Summarize the supplied project context and return ONLY valid JSON.
+
+Rules:
+- Use only the data provided. Do not invent people, document IDs, file paths, or work assignments.
+- relevantDocuments must only reference document IDs that appear in the supplied Library Documents section.
+- If ownership is unclear, use "Unassigned" as the person and explain in the basis field.
+- Keep goal to 1-2 concise lines.
+- Keep currentState concise (1-2 short paragraphs).
+- nextActions should be practical and specific (max 5).
+- confidence should describe what was inferred and what data was missing.
+
+Return a JSON object matching this exact schema:
+{
+  "goal": ["string (1-2 lines describing the project purpose)"],
+  "currentState": "string",
+  "ownership": [
+    {
+      "person": "string",
+      "work": ["string"],
+      "basis": "string (optional, how you determined this)"
+    }
+  ],
+  "relevantDocuments": [
+    {
+      "documentId": "string (must match an ID from the supplied context)",
+      "title": "string",
+      "reason": "string (why this document is relevant)"
+    }
+  ],
+  "blockersAndRisks": ["string"],
+  "nextActions": ["string"],
+  "confidence": "string"
+}
+''';
+
+    final user = '${context.toPromptText()}\n\nReturn only valid JSON.';
+
+    final rawOutput = await _chatStructured(system, user);
+    final parsed = ProjectSummaryResult.tryParse(rawOutput);
+
+    final result = OllamaResult(
+      input: user,
+      output: rawOutput,
+      kind: 'project_summary_structured',
+      title: 'Project Summary — ${context.title}',
+    );
+    return (result: result, parsed: parsed);
   }
 
   /// Summarize all active work items for a project into a concise status update.
@@ -312,9 +411,7 @@ class OllamaResult {
   });
 
   bool get isSuccess =>
-      output != null &&
-      output!.trim().isNotEmpty &&
-      !output!.startsWith('⚠ ');
+      output != null && output!.trim().isNotEmpty && !output!.startsWith('⚠ ');
 }
 
 class LinkedDocumentContext {

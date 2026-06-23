@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../db/app_db.dart';
 import '../../services/ollama_service.dart';
+import '../../services/project_summary_models.dart';
 import '../../services/telegram_service.dart';
 
 /// App-wide state wrapper around [AppDb].
@@ -21,6 +22,8 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     });
     db.ensureDefaultStagesForProjects();
+    // Background-refresh project summaries after the UI has settled.
+    Future.delayed(const Duration(seconds: 10), _backgroundSummaryRefresh);
   }
 
   late final StreamSubscription<Project?> _activeProjectSub;
@@ -882,8 +885,35 @@ class AppState extends ChangeNotifier {
   Stream<List<Document>> watchDocumentsForProject(String projectId) =>
       db.watchDocumentsForProject(projectId);
 
+  // ── Project summary cache ───────────────────────────────────────────────
+
+  Future<Draft?> getLatestProjectSummaryDraft(String projectId) =>
+      db.getLatestProjectSummaryDraft(projectId);
+
+  Future<Map<String, String?>> getDocumentPathsForProject(String projectId) =>
+      db.getDocumentPathsForProject(projectId);
+
+  /// Generates summaries for all active projects that are missing one today.
+  /// Runs silently in the background — errors are swallowed per project.
+  Future<void> _backgroundSummaryRefresh() async {
+    try {
+      final host = await getSetting(AppDb.kOllamaHost);
+      final model = await getSetting(AppDb.kOllamaModel);
+      if (!await _buildOllama(host, model).isAvailable()) return;
+      final projects = await db.getProjectsFull();
+      for (final project in projects) {
+        if (await db.hasTodayProjectSummaryDraft(project.id)) continue;
+        try {
+          await summarizeProjectFull(project.id);
+        } catch (_) {}
+        // Yield between projects to avoid locking up Ollama.
+        await Future<void>.delayed(const Duration(seconds: 3));
+      }
+    } catch (_) {}
+  }
+
   // Project AI summary (with optional library context)
-  Future<OllamaResult> summarizeProjectFull(
+  Future<ProjectSummaryOutcome> summarizeProjectFull(
     String projectId, {
     bool includeLibrary = false,
   }) async {
@@ -892,51 +922,212 @@ class AppState extends ChangeNotifier {
     final svc = _buildOllama(host, model);
     final proj = await getProjectFull(projectId);
     final items = await getWorkItemsForProject(projectId);
-    final blocked = items
-        .where((i) => i.blockedReason != null)
-        .map((i) => '${i.title} — ${i.blockedReason}')
-        .toList();
-    final active = items
-        .where((i) => !['done', 'archived'].contains(i.status))
-        .map((i) => i.title)
-        .toList();
-    final done = items
-        .where((i) => i.status == 'done')
-        .map((i) => i.title)
-        .take(5)
-        .toList();
 
-    String? docContext;
+    List<ProjectRisk> risks = [];
+    List<ProjectDecision> decisions = [];
+    List<ProjectPerson> people = [];
+    try {
+      risks = await getProjectRisks(projectId);
+    } catch (_) {}
+    try {
+      decisions = await getProjectDecisions(projectId);
+    } catch (_) {}
+    try {
+      people = await getProjectPeople(projectId);
+    } catch (_) {}
+
+    // Build document list with excerpts
+    const _kMaxCharsPerDoc = 3000;
+    const _kMaxTotalDocChars = 16000;
+    final contextDocs = <ProjectSummaryContextDoc>[];
+    final docPaths = <String, String?>{};
+
     if (includeLibrary) {
       final docs = await (db.select(
         db.documents,
       )..where((t) => t.projectId.equals(projectId))).get();
-      if (docs.isNotEmpty) {
-        docContext = docs
-            .map(
-              (d) =>
-                  '### ${d.title}\n${d.extractedText ?? d.renderedMarkdown ?? ''}',
-            )
-            .join('\n\n');
+
+      var totalChars = 0;
+      for (final doc in docs) {
+        docPaths[doc.id] = doc.storedPath;
+        String? excerpt;
+        if (totalChars < _kMaxTotalDocChars) {
+          excerpt = await _readDocumentExcerpt(doc, maxChars: _kMaxCharsPerDoc);
+          if (excerpt != null) {
+            final remaining = _kMaxTotalDocChars - totalChars;
+            if (excerpt.length > remaining) {
+              excerpt = excerpt.substring(0, remaining);
+            }
+            totalChars += excerpt.length;
+          }
+        }
+        final canOpen =
+            doc.storedPath != null &&
+            doc.storedPath!.isNotEmpty &&
+            const [
+              'md',
+              'txt',
+              'json',
+              'csv',
+              'pdf',
+              'docx',
+              'doc',
+            ].contains(doc.extension?.toLowerCase());
+        contextDocs.add(
+          ProjectSummaryContextDoc(
+            id: doc.id,
+            title: doc.title,
+            extension: doc.extension,
+            excerpt: excerpt,
+            storedPath: doc.storedPath,
+            canOpenInExplorer: canOpen,
+          ),
+        );
       }
     }
 
-    final extraContext = [
-      if (proj?.description != null) 'Purpose: ${proj!.description}',
-      if (proj?.desiredOutcome != null)
-        'Desired outcome: ${proj!.desiredOutcome}',
-      if (proj?.successCriteria != null)
-        'Success criteria: ${proj!.successCriteria}',
-      if (docContext != null) 'Library documents:\n$docContext',
-    ].join('\n');
-    if (extraContext.isNotEmpty) active.insert(0, extraContext);
-
-    return svc.summarizeProject(
-      projectTitle: proj?.title ?? projectId,
-      activeItems: active,
-      blockedItems: blocked,
-      completedRecently: done,
+    final context = ProjectSummaryContext(
+      id: projectId,
+      title: proj?.title ?? projectId,
+      description: proj?.description,
+      desiredOutcome: proj?.desiredOutcome,
+      successCriteria: proj?.successCriteria,
+      status: proj?.status ?? 'active',
+      phase: proj?.phase,
+      priority: proj?.priority,
+      owner: proj?.owner,
+      workItems: items
+          .map(
+            (i) => ProjectSummaryContextWorkItem(
+              id: i.id,
+              title: i.title,
+              status: i.status,
+              priority: i.priority,
+              owner: i.owner,
+              blockedReason: i.blockedReason,
+              dueAt: i.dueAt,
+            ),
+          )
+          .toList(),
+      people: people
+          .map(
+            (p) => ProjectSummaryContextPerson(
+              id: p.id,
+              name: p.name,
+              role: p.role,
+              authority: p.authority,
+            ),
+          )
+          .toList(),
+      risks: risks
+          .map(
+            (r) => ProjectSummaryContextRisk(
+              id: r.id,
+              title: r.title,
+              severity: r.severity,
+              description: r.desc,
+            ),
+          )
+          .toList(),
+      decisions: decisions
+          .map(
+            (d) => ProjectSummaryContextDecision(
+              id: d.id,
+              title: d.title,
+              context: d.ctx,
+              decider: d.decider,
+            ),
+          )
+          .toList(),
+      documents: contextDocs,
     );
+
+    ProjectSummaryOutcome outcome;
+    try {
+      final (:result, :parsed) = await svc.summarizeProjectStructured(
+        context: context,
+      );
+      outcome = ProjectSummaryOutcome(
+        rawOutput: result.output,
+        structured: parsed,
+        documentPaths: docPaths,
+      );
+    } catch (e) {
+      // Fall back to old prose summary on unexpected error
+      final blocked = items
+          .where((i) => i.blockedReason != null)
+          .map((i) => '${i.title} — ${i.blockedReason}')
+          .toList();
+      final active = items
+          .where((i) => !['done', 'archived'].contains(i.status))
+          .map((i) => i.title)
+          .toList();
+      final done = items
+          .where((i) => i.status == 'done')
+          .map((i) => i.title)
+          .take(5)
+          .toList();
+      final oldResult = await svc.summarizeProject(
+        projectTitle: proj?.title ?? projectId,
+        activeItems: active,
+        blockedItems: blocked,
+        completedRecently: done,
+      );
+      outcome = ProjectSummaryOutcome(
+        rawOutput: oldResult.output,
+        documentPaths: docPaths,
+      );
+    }
+
+    // Persist as a draft so the project detail screen can load instantly next time.
+    if (outcome.isSuccess) {
+      try {
+        // Replace any existing summary drafts for this project.
+        await db.deleteProjectSummaryDrafts(projectId);
+        await db.saveDraft(
+          kind: 'project_summary',
+          title: 'Project Summary — ${proj?.title ?? projectId}',
+          body: outcome.rawOutput ?? '',
+          inputJson: outcome.rawOutput,
+          projectId: projectId,
+        );
+      } catch (_) {}
+    }
+
+    return outcome;
+  }
+
+  /// Read a bounded text excerpt from a document, trying in order:
+  /// 1. extractedText, 2. renderedMarkdown, 3. disk read for text-like files.
+  Future<String?> _readDocumentExcerpt(
+    Document doc, {
+    int maxChars = 3000,
+  }) async {
+    String? cap(String? s) {
+      if (s == null || s.trim().isEmpty) return null;
+      return s.length > maxChars ? s.substring(0, maxChars) : s;
+    }
+
+    final fromExtracted = cap(doc.extractedText);
+    if (fromExtracted != null) return fromExtracted;
+
+    final fromMarkdown = cap(doc.renderedMarkdown);
+    if (fromMarkdown != null) return fromMarkdown;
+
+    final path = doc.storedPath;
+    final ext = doc.extension?.toLowerCase();
+    if (path != null &&
+        path.isNotEmpty &&
+        const ['md', 'txt', 'json', 'csv'].contains(ext)) {
+      try {
+        final file = File(path);
+        if (await file.exists()) {
+          final text = await file.readAsString();
+          return cap(text);
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------------

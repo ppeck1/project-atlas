@@ -21,21 +21,37 @@ GoRouter buildRouter() {
       ShellRoute(
         builder: (context, state, child) => AtlasShell(child: child),
         routes: [
-          GoRoute(path: '/today',    builder: (_, __) => const TodayScreen()),
-          GoRoute(path: '/projects', builder: (_, __) => const ProjectsScreen()),
+          GoRoute(path: '/today', builder: (_, __) => const TodayScreen()),
+          GoRoute(
+            path: '/projects',
+            builder: (_, __) => const ProjectsScreen(),
+          ),
           GoRoute(
             path: '/projects/:id',
-            builder: (_, state) => ProjectDetailScreen(projectId: state.pathParameters['id']!),
+            builder: (_, state) =>
+                ProjectDetailScreen(projectId: state.pathParameters['id']!),
           ),
-          GoRoute(path: '/library',  builder: (_, __) => const LibraryScreen()),
-          GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
+          GoRoute(
+            path: '/library',
+            builder: (_, state) => LibraryScreen(
+              initialEntryId: state.uri.queryParameters['entryId'],
+              initialEntryType: state.uri.queryParameters['entryType'],
+            ),
+          ),
+          GoRoute(
+            path: '/settings',
+            builder: (_, __) => const SettingsScreen(),
+          ),
           // Legacy routes — still navigable (e.g. from Settings tabs)
-          GoRoute(path: '/',         builder: (_, __) => const DashboardScreen()),
-          GoRoute(path: '/work',     builder: (_, __) => const WorkScreen()),
-          GoRoute(path: '/review',   builder: (_, __) => const ReviewScreen()),
-          GoRoute(path: '/export',   builder: (_, __) => const ExportScreen()),
-          GoRoute(path: '/governance', builder: (_, __) => const GovernanceScreen()),
-          GoRoute(path: '/log',      builder: (_, __) => const LogScreen()),
+          GoRoute(path: '/', builder: (_, __) => const DashboardScreen()),
+          GoRoute(path: '/work', builder: (_, __) => const WorkScreen()),
+          GoRoute(path: '/review', builder: (_, __) => const ReviewScreen()),
+          GoRoute(path: '/export', builder: (_, __) => const ExportScreen()),
+          GoRoute(
+            path: '/governance',
+            builder: (_, __) => const GovernanceScreen(),
+          ),
+          GoRoute(path: '/log', builder: (_, __) => const LogScreen()),
         ],
       ),
     ],
