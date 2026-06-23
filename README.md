@@ -8,12 +8,18 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 
 - Version: `1.2.0+1`
 - Platform target: Flutter desktop, currently Windows-oriented
-- Storage: local SQLite via Drift, schema version `8`
+- Storage: local SQLite via Drift, schema version `9`
 - Primary navigation: Today, Projects, Library, Settings
 - Legacy deep links still available: Dashboard, Work, Review, Export, Governance, Backend Log
-- Optional local AI: Ollama summaries and drafts, always human-in-the-loop
+- Optional local AI: Ollama summaries, drafts, and work-item analysis — always human-in-the-loop
 - Optional phone handoff: outbound Telegram task-list sending with outbox logging
-- Current source tree includes contacts/workforce management, document library, activity logging, project detail metadata, risks, decisions, work-item notes, and read-only AI analyses
+- Contacts / workforce directory with JSON and CSV import/export
+- Owner pickers on work items, project owners, and governance stages — all linked to the contact directory
+- Project organization: tag assignment and project filters for context, status, phase, and priority
+- Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
+- Project governance: people roster, risk register, decision log
+- Project media: app-owned image/file gallery with cover-image selection
+- Document library: import local files, link them to work items, and include them in AI analysis
 
 ## Screenshots
 
@@ -43,6 +49,11 @@ python tools\generate_readme_screenshots.py
 .\launch.ps1
 ```
 
+`launch.ps1` uses `flutter` and `dart` from `PATH` when available. If they are
+not on `PATH`, it falls back to `B:\dev\flutter\bin\flutter.bat` and that SDK's
+bundled Dart. Set `PROJECT_ATLAS_FLUTTER` or `PROJECT_ATLAS_DART` to an explicit
+executable path to override discovery.
+
 Manual path:
 
 ```powershell
@@ -58,14 +69,47 @@ After changing Drift tables or database code, rerun build runner before launchin
 | Screen | Current role |
 | --- | --- |
 | Today | Focus list for doing, overdue, due today, phone queue, blocked, and high-priority work |
-| Projects | Project list, active project switching, lifecycle metadata, detail entry point |
-| Library | Documents and AI drafts with search, project/type filters, import, copy, and file-open actions |
-| Settings | Integrations, activity log, export tools, workforce contacts, and admin controls |
+| Projects | Project list, active project switching, lifecycle metadata, tag/status/phase/priority filters, detail entry point |
+| Project Detail | Identity, scope, lifecycle fields, people roster, risk register, decision log, AI summary, media gallery, tag assignment |
+| Library | Documents, project media, and AI drafts with search, project/type filters, import, copy, preview, and file-open actions |
+| Settings | Integrations, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
 | Work | Legacy stage/task list with editable work items |
 | Review | Blocked/overdue/in-progress review and optional Ollama briefing |
 | Export | Markdown task list, Telegram send, AI summary, and outbox visibility |
 | Governance | Stage ownership and bottleneck flags |
 | Backend Log | Recent event log filtering and JSON/Markdown copy |
+
+## Contacts / Workforce
+
+The Settings → Workforce tab manages a contact directory. Contacts are linked everywhere an owner can be assigned:
+
+- New task dialog (Owner field)
+- Work item detail sheet (Owner field)
+- Project detail (Project owner)
+- Governance screen (Stage owner)
+
+Owner fields use the `ContactOwnerField` widget, which shows a dropdown of existing contacts and a "Create contact..." option for inline creation.
+
+**Import format** (Settings → Workforce → Import JSON):
+
+```json
+{
+  "schema": "project_atlas_contacts_v1",
+  "contacts": [
+    {
+      "name": "Alice Smith",
+      "title": "Engineer",
+      "phone": "555-0100",
+      "email": "alice@example.com",
+      "businessName": "Acme"
+    }
+  ]
+}
+```
+
+Import deduplicates by `id`, then `email`, then `name`. Raw JSON arrays (without the wrapper object) are also accepted.
+
+Export options: JSON (re-importable) and CSV (for spreadsheets).
 
 ## Local AI
 
@@ -75,7 +119,14 @@ Ollama is optional. AI output is advisory and is shown for review before it is s
 ollama pull mistral
 ```
 
-Configure the host and model in Settings -> Integrations. The default host is `http://localhost:11434`. The UI currently shows `mistral` as the default model in Settings; older docs and some service paths may mention `qwen3.5:9b`.
+Configure the host and model in Settings → Integrations. The default host is `http://localhost:11434`. The default model in code is `qwen3.5:9b`; the Settings UI shows `mistral` as a hint. Either works.
+
+AI actions available:
+- **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
+- **Project summary** — summarizes active/blocked/done work for a project (Project Detail)
+- **Email draft** — drafts an email for a specific work item (Work Item Detail)
+- **Task extract** — extracts tasks from free-form note text (Work Item Detail)
+- **Work item analysis** — read-only advisory analysis including linked documents (Work Item Detail)
 
 ## Telegram
 
@@ -83,18 +134,18 @@ Telegram is outbound only.
 
 1. Create a bot with [@BotFather](https://t.me/botfather).
 2. Get the destination chat ID.
-3. Enter the bot token and chat ID in Settings -> Integrations.
-4. Use Export to send the current task list.
+3. Enter the bot token and chat ID in Settings → Integrations.
+4. Use Settings → Export → "Send to Telegram" to send the current task list.
 
 All user text is HTML-escaped before sending. Send attempts are tracked in the local outbox.
 
 ## Database
 
 - Engine: SQLite via Drift `NativeDatabase`
-- Schema version: `8`
+- Schema version: `9`
 - Observed Windows support path: `%APPDATA%\com.example\project_atlas\project_atlas.sqlite`
-- Encryption: not currently enabled in `lib/db/db_open.dart`
-- Compatibility: startup repair/backfill handles partially migrated local databases and older project/work-item/stage columns
+- Encryption: `sqlcipher_flutter_libs` is included but not yet activated in `lib/db/db_open.dart`
+- Compatibility: startup repair/backfill handles partially migrated local databases
 
 Do not commit local database files, secrets, app-data folders, `.dart_tool`, `build`, or generated Drift output.
 
@@ -111,7 +162,8 @@ lib/
     widgets/     shell, dialogs, pickers, previews
 ```
 
-See `VARIABLE_MAP.md` for table columns, service fields, data flows, and migration notes.
+See `VARIABLE_MAP.md` for complete table columns, service fields, data flows, and migration notes.
+See `HANDOFF.md` for project context, design decisions, and known issues.
 
 ## Development Notes
 
@@ -141,5 +193,6 @@ Generated files and build products are intentionally ignored:
 - Drafts screen as a first-class route
 - Inbound Telegram commands such as `/done`, `/snooze`, and `/add`
 - Project snapshots and decision-log export
-- SQLCipher or another encrypted storage path before broader distribution
+- Restore/import flow for operational backup JSON
+- SQLCipher encrypted storage path before broader distribution
 - Daily review persistence and review history browsing

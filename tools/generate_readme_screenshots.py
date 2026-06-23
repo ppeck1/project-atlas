@@ -20,6 +20,7 @@ RED = "#F44336"
 ORANGE = "#FF9800"
 PURPLE = "#9C27B0"
 BLUE = "#2196F3"
+TEAL = "#00BCD4"
 
 
 def load_font(path: str, size: int):
@@ -48,7 +49,9 @@ def text(d, xy, value, fill=TEXT, font=FONT):
 def nav(d, selected):
     d.rectangle([0, 0, 72, H], fill=PANEL)
     d.line([72, 0, 72, H], fill=LINE)
-    rr(d, [18, 14, 54, 50], 10, BG, LINE)
+    # Logo placeholder
+    rr(d, [18, 14, 54, 50], 10, BG, PRIMARY)
+    text(d, (22, 20), "PA", PRIMARY, FONT_XS)
     text(d, (19, 56), "ATLAS", PRIMARY, FONT_XS)
     items = [("Today", "T"), ("Projects", "P"), ("Library", "L")]
     y = 104
@@ -60,6 +63,8 @@ def nav(d, selected):
         text(d, (12, y + 28), name, PRIMARY if is_selected else MUTED, FONT_XS)
         y += 78
     settings_selected = selected == "Settings"
+    if settings_selected:
+        rr(d, [10, H - 92, 62, H - 36], 18, "#1B2B4A")
     text(d, (18, H - 76), "S", PRIMARY if settings_selected else MUTED, FONT_B)
     text(d, (10, H - 48), "Settings", PRIMARY if settings_selected else MUTED, FONT_XS)
 
@@ -90,34 +95,38 @@ def make_today():
     im = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(im)
     nav(d, "Today")
-    appbar(d, "Today", "Thu Jun 11")
+    appbar(d, "Today", "Mon Jun 23")
     metric(d, 96, "Doing", 2, AMBER)
     metric(d, 376, "Overdue", 1, RED)
     metric(d, 656, "Blocked", 1, PURPLE)
-    metric(d, 936, "Total", 6, TEXT)
+    metric(d, 936, "Total", 7, TEXT)
     sections = [
         (
             "Doing Now",
             AMBER,
             [
-                ("Finalize README screenshots", "Use clean demo state; keep private data out", "HIGH", "6/11", False),
-                ("Push current source to GitHub", "Remote: ppeck1/project-atlas", "URGENT", "6/11", True),
+                ("Update README and variable map", "Docs: reflect schema v9, tags, contacts, media", "HIGH", "6/23", False),
+                ("Regenerate app icon from new PNG", "windows/runner/resources/app_icon.ico updated", "URGENT", "6/23", True),
             ],
         ),
         (
             "Overdue",
             RED,
-            [("Review migration notes", "Confirm schema v8 and repair-on-open behavior", "HIGH", "6/10", False)],
+            [("Review encryption plan", "SQLCipher passphrase before broader distribution", "HIGH", "6/20", False)],
         ),
         (
             "Phone / Follow-up",
             BLUE,
-            [("Send today list to phone", "Telegram outbound queue demo", "NORMAL", "", True)],
+            [("Send today list to phone", "Telegram outbound queue — tap to toggle phone queue", "NORMAL", "", True)],
         ),
         (
             "High Priority",
             ORANGE,
-            [("Document local AI review flow", "Ollama drafts are saved only after review", "HIGH", "", False)],
+            [
+                ("Contacts linked across all owner fields", "ContactOwnerField in work items, projects, governance", "HIGH", "", False),
+                ("Draft email for blocked task", "Ollama email draft — human review before save", "HIGH", "", False),
+                ("Link document to work item", "Library → link to task for AI analysis context", "HIGH", "", False),
+            ],
         ),
     ]
     y = 220
@@ -129,10 +138,10 @@ def make_today():
             d.rectangle([116, y + 21, 142, y + 47], outline=MUTED, width=2)
             text(d, (160, y + 12), name, TEXT, FONT_B)
             text(d, (160, y + 40), desc, MUTED, FONT_S)
-            if prio != "NORMAL":
+            if prio not in ("NORMAL",):
                 pill(d, 1040, y + 14, prio, ORANGE if prio == "HIGH" else RED)
             if due:
-                text(d, (1105, y + 42), due, ORANGE if due == "6/11" else RED, FONT_S)
+                text(d, (1105, y + 42), due, ORANGE if due == "6/23" else RED, FONT_S)
             if phone:
                 text(d, (1146, y + 14), "phone", BLUE, FONT_XS)
             y += 82
@@ -145,27 +154,38 @@ def make_projects():
     d = ImageDraw.Draw(im)
     nav(d, "Projects")
     appbar(d, "Projects")
-    rr(d, [1040, 17, 1178, 50], 8, PRIMARY)
+    # Filter bar
+    rr(d, [96, 72, 300, 106], 8, BG, LINE)
+    text(d, (116, 82), "All statuses", MUTED, FONT_S)
+    rr(d, [316, 72, 500, 106], 8, BG, LINE)
+    text(d, (336, 82), "All phases", MUTED, FONT_S)
+    rr(d, [516, 72, 700, 106], 8, BG, LINE)
+    text(d, (536, 82), "All priorities", MUTED, FONT_S)
+    rr(d, [716, 72, 870, 106], 8, BG, LINE)
+    text(d, (736, 82), "All tags", MUTED, FONT_S)
+    rr(d, [1040, 17, 1184, 50], 8, PRIMARY)
     text(d, (1060, 24), "New project", BG, FONT_S)
     rows = [
-        ("Project Atlas README Refresh", "Bring docs and GitHub up to current state", "active", "ship", True),
-        ("Local AI Review Loop", "Human-in-the-loop summaries and drafts", "active", "test", False),
-        ("Document Library", "Import local files and link them to work items", "active", "build", False),
-        ("Telegram Outbox", "Outbound task list with HTML escaping", "paused", "stabilize", False),
+        ("Project Atlas", "Local-first personal project command center", "active", "ship", True, ["#work", "#dev"]),
+        ("Document Library Integration", "Import local files and link to work items for AI context", "active", "build", False, ["#dev"]),
+        ("Contact Directory", "Reusable people records linked across all owner fields", "active", "stabilize", False, ["#work"]),
+        ("Telegram Outbox", "Outbound task list with HTML escaping and outbox logging", "paused", "stabilize", False, ["#work"]),
     ]
-    y = 96
-    for title, desc, status, phase, active in rows:
-        rr(d, [96, y, 1184, y + 92], 14, PANEL, PRIMARY if active else LINE, 2 if active else 1)
+    y = 122
+    for title, desc, status, phase, active, tags in rows:
+        rr(d, [96, y, 1184, y + 98], 14, PANEL, PRIMARY if active else LINE, 2 if active else 1)
         rr(d, [116, y + 18, 154, y + 56], 10, "#1B2B4A" if active else "#243040")
         text(d, (128, y + 26), "P", PRIMARY if active else MUTED, FONT_B)
         text(d, (174, y + 14), title, TEXT, FONT_B)
         text(d, (174, y + 43), desc, MUTED, FONT_S)
-        x = pill(d, 174, y + 66, status, GREEN if status == "active" else ORANGE)
-        pill(d, x, y + 66, phase, BLUE if phase in ("test", "build") else GREEN)
+        x = pill(d, 174, y + 70, status, GREEN if status == "active" else ORANGE)
+        x = pill(d, x, y + 70, phase, BLUE if phase in ("test", "build") else (GREEN if phase == "ship" else MUTED))
+        for tag in tags:
+            x = pill(d, x, y + 70, tag, TEAL)
         if active:
-            pill(d, 1090, y + 18, "ACTIVE", PRIMARY)
-        text(d, (1156, y + 34), ">", DIM, FONT_B)
-        y += 106
+            pill(d, 1060, y + 18, "ACTIVE", PRIMARY)
+        text(d, (1156, y + 36), ">", DIM, FONT_B)
+        y += 112
     im.save(OUT / "projects.png")
 
 
@@ -181,17 +201,18 @@ def make_library():
     text(d, (690, 22), "All projects", MUTED, FONT_S)
     rr(d, [846, 14, 976, 48], 8, BG, LINE)
     text(d, (866, 22), "All types", MUTED, FONT_S)
-    text(d, (1000, 23), "5 items", DIM, FONT_S)
+    text(d, (1000, 23), "6 items", DIM, FONT_S)
     rr(d, [1084, 14, 1178, 48], 8, PRIMARY)
     text(d, (1106, 22), "Import", BG, FONT_S)
     d.line([73, 62, W, 62], fill=LINE)
     d.rectangle([73, 63, 393, H], fill=BG)
     d.line([393, 63, 393, H], fill=LINE)
     entries = [
-        ("README current-state notes", "AI Draft", GREEN),
-        ("BOH visualization spec", "TXT", MUTED),
+        ("Project Atlas — Today Summary", "AI Draft", GREEN),
+        ("Contact import format spec", "MD", MUTED),
+        ("Schema v9 migration notes", "TXT", MUTED),
         ("Launch checklist", "MD", MUTED),
-        ("Review summary", "AI Draft", GREEN),
+        ("Governance bottleneck review", "AI Draft", GREEN),
     ]
     y = 82
     for i, (title, kind, color) in enumerate(entries):
@@ -200,24 +221,26 @@ def make_library():
             d.rectangle([73, y - 6, 76, y + 62], fill=PRIMARY)
         text(d, (96, y), title, PRIMARY if i == 0 else TEXT, FONT_S)
         text(d, (96, y + 26), "Project Atlas", DIM, FONT_XS)
-        pill(d, 294, y + 4, kind, color)
+        pill(d, 288, y + 4, kind, color)
         y += 72
-    text(d, (430, 104), "README current-state notes", TEXT, FONT_H)
-    pill(d, 430, 150, "AI Draft - today_summary", GREEN)
-    text(d, (430, 188), "Jun 11, 2026", MUTED, FONT_S)
-    rr(d, [430, 232, 1178, 690], 8, PANEL, LINE)
+    text(d, (430, 104), "Project Atlas — Today Summary", TEXT, FONT_H)
+    pill(d, 430, 152, "AI Draft - today_summary", GREEN)
+    text(d, (430, 190), "Jun 23, 2026  ·  Project Atlas", MUTED, FONT_S)
+    rr(d, [430, 234, 1178, 700], 8, PANEL, LINE)
     body = [
-        "Current project state:",
-        "- Local-first Flutter desktop app with SQLite/Drift schema v8.",
-        "- Primary nav: Today, Projects, Library, Settings.",
-        "- Legacy deep links remain for Work, Review, Export, Governance, and Log.",
-        "- Ollama output is advisory and saved only after human review.",
-        "- Telegram is outbound only and records outbox attempts.",
+        "Today summary (schema v9):",
+        "- 2 items doing: app icon updated, README refresh in progress.",
+        "- 1 overdue: encryption plan review (SQLCipher passphrase).",
+        "- 1 blocked: Telegram inbound — awaiting webhook endpoint.",
+        "- Contacts linked across work items, projects, and governance.",
+        "- Project tags (home/work/dev) active on 4 projects.",
+        "- Media gallery: 3 images attached to Project Atlas.",
+        "Ollama output is advisory — saved only after human review.",
     ]
-    yy = 260
+    yy = 262
     for line in body:
-        text(d, (460, yy), line, TEXT if yy == 260 else MUTED, FONT_B if yy == 260 else FONT_S)
-        yy += 38
+        text(d, (460, yy), line, TEXT if yy == 262 else MUTED, FONT_B if yy == 262 else FONT_S)
+        yy += 40
     im.save(OUT / "library.png")
 
 
@@ -230,32 +253,67 @@ def make_settings():
     tabs = ["Integrations", "Activity Log", "Export", "Workforce", "Admin"]
     x = 96
     for i, tab in enumerate(tabs):
-        text(d, (x, 66), tab, PRIMARY if i == 0 else MUTED, FONT_S)
-        if i == 0:
-            d.line([x, 91, x + 88, 91], fill=PRIMARY, width=3)
+        text(d, (x, 66), tab, PRIMARY if i == 3 else MUTED, FONT_S)
+        if i == 3:
+            d.line([x, 91, x + len(tab) * 9, 91], fill=PRIMARY, width=3)
         x += len(tab) * 11 + 44
-    text(d, (104, 134), "Telegram", TEXT, FONT_B)
-    text(d, (104, 164), "Outbound only - sends task list to your phone.", MUTED, FONT_S)
-    rr(d, [104, 206, 1160, 252], 6, BG, LINE)
-    text(d, (126, 219), "Enable Telegram sending", TEXT, FONT_S)
-    text(d, (1090, 219), "off", DIM, FONT_S)
-    rr(d, [104, 276, 1160, 330], 6, BG, LINE)
-    text(d, (126, 288), "Bot Token", MUTED, FONT_XS)
-    text(d, (126, 306), "1234567890:ABCdef...", DIM, FONT_S)
-    rr(d, [104, 350, 1160, 404], 6, BG, LINE)
-    text(d, (126, 362), "Chat ID", MUTED, FONT_XS)
-    text(d, (126, 380), "-100123456789", DIM, FONT_S)
-    rr(d, [104, 430, 250, 466], 8, BG, LINE)
-    text(d, (126, 439), "Test connection", MUTED, FONT_S)
-    d.line([104, 496, 1160, 496], fill=LINE)
-    text(d, (104, 532), "Ollama (local AI)", TEXT, FONT_B)
-    text(d, (104, 562), "Used for summarization and drafts. Output always shown for review.", MUTED, FONT_S)
-    rr(d, [104, 604, 1160, 658], 6, BG, LINE)
-    text(d, (126, 616), "Ollama host", MUTED, FONT_XS)
-    text(d, (126, 634), "http://localhost:11434", DIM, FONT_S)
-    rr(d, [104, 678, 1160, 732], 6, BG, LINE)
-    text(d, (126, 690), "Model name", MUTED, FONT_XS)
-    text(d, (126, 708), "mistral", DIM, FONT_S)
+    # Workforce tab content
+    d.rectangle([73, 96, 413, H], fill=BG)
+    d.line([413, 96, 413, H], fill=LINE)
+    # Left panel header buttons
+    rr(d, [88, 110, 230, 144], 8, PRIMARY)
+    text(d, (104, 118), "+ New contact", BG, FONT_S)
+    rr(d, [244, 110, 360, 144], 8, BG, LINE)
+    text(d, (258, 118), "Import JSON", MUTED, FONT_S)
+    rr(d, [88, 152, 190, 182], 8, BG, LINE)
+    text(d, (100, 158), "Export JSON", MUTED, FONT_XS)
+    rr(d, [198, 152, 290, 182], 8, BG, LINE)
+    text(d, (208, 158), "Export CSV", MUTED, FONT_XS)
+    d.line([73, 192, 413, 192], fill=LINE)
+    contacts = [
+        ("Alice Smith", "Lead Engineer — Acme"),
+        ("Bob Jones", "PM — Internal"),
+        ("Carol Wu", "Vendor — Supplies"),
+        ("David Park", "Advisor"),
+    ]
+    cy = 204
+    for i, (name, sub) in enumerate(contacts):
+        if i == 0:
+            d.rectangle([73, cy - 4, 413, cy + 56], fill="#17233A")
+            d.rectangle([73, cy - 4, 76, cy + 56], fill=PRIMARY)
+        initial = name[0]
+        rr(d, [92, cy + 4, 128, cy + 44], 20, PRIMARY + "23")
+        text(d, (101, cy + 12), initial, PRIMARY, FONT_B)
+        text(d, (140, cy + 4), name, PRIMARY if i == 0 else TEXT, FONT_S)
+        text(d, (140, cy + 28), sub, DIM, FONT_XS)
+        cy += 64
+    # Right panel — contact detail
+    text(d, (444, 112), "Alice Smith", TEXT, FONT_H)
+    text(d, (444, 156), "Lead Engineer  ·  Acme", MUTED, FONT_S)
+    d.line([430, 190, 1178, 190], fill=LINE)
+    fields = [
+        ("Phone", "555-0100"),
+        ("Alternate", "555-0101"),
+        ("Email", "alice@acme.example"),
+        ("Website", "acme.example"),
+        ("Notes", "Primary technical contact for integration work."),
+    ]
+    fy = 204
+    for label, value in fields:
+        text(d, (444, fy), label, DIM, FONT_XS)
+        text(d, (590, fy), value, TEXT, FONT_S)
+        fy += 32
+    d.line([430, fy + 8, 1178, fy + 8], fill=LINE)
+    text(d, (444, fy + 20), "Responsibilities", TEXT, FONT_B)
+    rr(d, [430, fy + 50, 1178, fy + 90], 8, PANEL, LINE)
+    text(d, (450, fy + 62), "Projects owned (1)", MUTED, FONT_S)
+    text(d, (1150, fy + 62), "›", DIM, FONT_B)
+    rr(d, [430, fy + 100, 1178, fy + 140], 8, PANEL, LINE)
+    text(d, (450, fy + 112), "Project roles (2)", MUTED, FONT_S)
+    text(d, (1150, fy + 112), "›", DIM, FONT_B)
+    rr(d, [430, fy + 150, 1178, fy + 190], 8, PANEL, LINE)
+    text(d, (450, fy + 162), "Work items owned (3)", MUTED, FONT_S)
+    text(d, (1150, fy + 162), "›", DIM, FONT_B)
     im.save(OUT / "settings.png")
 
 
@@ -264,4 +322,4 @@ if __name__ == "__main__":
     make_projects()
     make_library()
     make_settings()
-    print("Generated README screenshots in docs/screenshots")
+    print("Generated README screenshots in docs/screenshots/")

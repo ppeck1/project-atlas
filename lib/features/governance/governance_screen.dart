@@ -2,6 +2,7 @@
 
 import '../../db/app_db.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/widgets/contact_picker.dart';
 import '../today/work_item_detail_sheet.dart';
 
 class GovernanceScreen extends StatelessWidget {
@@ -175,31 +176,29 @@ class _WorkRow extends StatelessWidget {
 
   Future<String?> _promptOwner(BuildContext context, String? current) async {
     final c = TextEditingController(text: current ?? '');
-    return showDialog<String?>(
+    final result = await showDialog<String?>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, _) => AlertDialog(
           title: const Text('Set owner'),
-          content: TextField(
-            controller: c,
-            decoration: const InputDecoration(
-              hintText: 'e.g., Paul / Kristie / Vendor / Team',
-            ),
-            autofocus: true,
-            onSubmitted: (_) => Navigator.of(context).pop(c.text.trim()),
+          content: SizedBox(
+            width: 360,
+            child: ContactOwnerField(controller: c, label: 'Owner'),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
+              onPressed: () => Navigator.of(ctx).pop(null),
               child: const Text('Cancel'),
             ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(c.text.trim()),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(c.text.trim()),
               child: const Text('Save'),
             ),
           ],
-        );
-      },
+        ),
+      ),
     );
+    c.dispose();
+    return result;
   }
 }
