@@ -85,18 +85,25 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   Future<void> _loadAll() async {
     final state = AppStateScope.of(context);
-    final results = await Future.wait([
-      state.getWorkItemsForProject(widget.projectId),
-      state.getProjectPeople(widget.projectId),
-      state.getProjectRisks(widget.projectId),
-      state.getProjectDecisions(widget.projectId),
-    ]);
+    // Each query is independent — a schema mismatch on one table (e.g. a
+    // missing column that _ensureProjectCompatibilityColumns hasn't patched
+    // yet on this run) must not prevent the others from loading.
+    final items = await state.getWorkItemsForProject(widget.projectId);
+    final people = await state.getProjectPeople(widget.projectId);
+    List<ProjectRisk> risks = _risks;
+    try {
+      risks = await state.getProjectRisks(widget.projectId);
+    } catch (_) {}
+    List<ProjectDecision> decisions = _decisions;
+    try {
+      decisions = await state.getProjectDecisions(widget.projectId);
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
-      _workItems = results[0] as List<WorkItem>;
-      _people = results[1] as List<ProjectPerson>;
-      _risks = results[2] as List<ProjectRisk>;
-      _decisions = results[3] as List<ProjectDecision>;
+      _workItems = items;
+      _people = people;
+      _risks = risks;
+      _decisions = decisions;
     });
   }
 

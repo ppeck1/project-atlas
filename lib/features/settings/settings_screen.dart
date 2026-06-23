@@ -180,6 +180,12 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
     setState(() {
       _loadingModels = false;
       _availableModels = models;
+      // If the saved model name isn't in the list, switch the controller to
+      // the first available model so the dropdown and saved value stay in sync.
+      if (models.isNotEmpty &&
+          !models.contains(_ollamaModelCtrl.text.trim())) {
+        _ollamaModelCtrl.text = models.first;
+      }
     });
   }
 
