@@ -85,21 +85,19 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   Future<void> _loadAll() async {
     final state = AppStateScope.of(context);
-    try {
-      final results = await Future.wait([
-        state.getWorkItemsForProject(widget.projectId),
-        state.getProjectPeople(widget.projectId),
-        state.getProjectRisks(widget.projectId),
-        state.getProjectDecisions(widget.projectId),
-      ]);
-      if (!mounted) return;
-      setState(() {
-        _workItems = results[0] as List<WorkItem>;
-        _people = results[1] as List<ProjectPerson>;
-        _risks = results[2] as List<ProjectRisk>;
-        _decisions = results[3] as List<ProjectDecision>;
-      });
-    } catch (_) {}
+    final results = await Future.wait([
+      state.getWorkItemsForProject(widget.projectId),
+      state.getProjectPeople(widget.projectId),
+      state.getProjectRisks(widget.projectId),
+      state.getProjectDecisions(widget.projectId),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _workItems = results[0] as List<WorkItem>;
+      _people = results[1] as List<ProjectPerson>;
+      _risks = results[2] as List<ProjectRisk>;
+      _decisions = results[3] as List<ProjectDecision>;
+    });
   }
 
   void _toggleSection(String key) =>
