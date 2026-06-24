@@ -4,6 +4,9 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart' show SqliteException;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+
+import 'document_extractor.dart';
 
 import 'db_open.dart';
 import 'tables.dart';
@@ -1460,28 +1463,6 @@ class AppDb extends _$AppDb {
     return 'file';
   }
 
-  String? _mimeTypeForExtension(String? extension) {
-    const mimeTypes = {
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'gif': 'image/gif',
-      'webp': 'image/webp',
-      'bmp': 'image/bmp',
-      'heic': 'image/heic',
-      'mp4': 'video/mp4',
-      'mov': 'video/quicktime',
-      'webm': 'video/webm',
-      'mp3': 'audio/mpeg',
-      'wav': 'audio/wav',
-      'm4a': 'audio/mp4',
-      'aac': 'audio/aac',
-      'ogg': 'audio/ogg',
-      'pdf': 'application/pdf',
-    };
-    return extension == null ? null : mimeTypes[extension];
-  }
-
   // ── Documents ─────────────────────────────────────────────────────────────
 
   Stream<List<Document>> watchDocuments() => (select(
@@ -1499,19 +1480,50 @@ class AppDb extends _$AppDb {
     if (!file.existsSync()) {
       throw FileSystemException('File not found', path);
     }
-    final name = file.uri.pathSegments.last;
-    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : null;
+    final name = p.basename(path);
+    final rawExt = p.extension(name).replaceFirst('.', '').toLowerCase();
+    final ext = rawExt.isEmpty ? null : rawExt;
     final id = DateTime.now().microsecondsSinceEpoch.toString();
     final now = DateTime.now();
+
+    final appDocDir = await getApplicationDocumentsDirectory();
+    final atlasDir = Directory(p.join(appDocDir.path, 'atlas_documents'));
+    if (!atlasDir.existsSync()) {
+      atlasDir.createSync(recursive: true);
+    }
+    final destFilename = ext != null ? '$id.$ext' : id;
+    final destPath = p.join(atlasDir.path, destFilename);
+    try {
+      await file.copy(destPath);
+    } catch (e) {
+      throw FileSystemException('Failed to copy file to app storage: $e', path);
+    }
+
+    String? extractedTextValue;
+    String? renderedMarkdownValue;
+    const _textTypes = {'txt', 'csv', 'json'};
+    if (ext != null) {
+      if (_textTypes.contains(ext)) {
+        extractedTextValue = await File(destPath).readAsString();
+      } else if (ext == 'md') {
+        renderedMarkdownValue = await File(destPath).readAsString();
+      } else if (ext == 'docx') {
+        extractedTextValue = extractDocxText(destPath);
+      }
+    }
+
     await into(documents).insert(
       DocumentsCompanion(
         id: Value(id),
         title: Value(name),
         originalFilename: Value(name),
-        storedPath: Value(path),
+        storedPath: Value(destPath),
         extension: Value(ext),
+        mimeType: Value(mimeTypeForExtension(ext)),
         projectId: Value(projectId),
         status: const Value('imported'),
+        extractedText: Value(extractedTextValue),
+        renderedMarkdown: Value(renderedMarkdownValue),
         createdAt: Value(now),
         updatedAt: Value(now),
       ),

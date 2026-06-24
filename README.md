@@ -6,7 +6,7 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 
 ## Current State
 
-- Version: `1.2.0+1`
+- Version: `1.3.0+1`
 - Platform target: Flutter desktop, currently Windows-oriented
 - Storage: local SQLite via Drift, schema version `10`
 - Primary navigation: Today, Projects, Library, Settings

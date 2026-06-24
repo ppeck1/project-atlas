@@ -1,10 +1,12 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../db/app_db.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/widgets/document_preview.dart';
 
 const _bg = Color(0xFF0F1115);
 const _panel = Color(0xFF151A22);
@@ -32,6 +34,7 @@ class _LibraryEntry {
   final String? storedPath;
   final String? mediaType;
   final String? caption;
+  final Document? document;
 
   const _LibraryEntry({
     required this.id,
@@ -46,6 +49,7 @@ class _LibraryEntry {
     this.storedPath,
     this.mediaType,
     this.caption,
+    this.document,
   });
 
   static _LibraryEntry fromDocument(Document d) => _LibraryEntry(
@@ -57,6 +61,7 @@ class _LibraryEntry {
     content: d.renderedMarkdown ?? d.extractedText,
     createdAt: d.createdAt,
     storedPath: d.storedPath,
+    document: d,
   );
 
   static _LibraryEntry fromMedia(ProjectMediaItem m) => _LibraryEntry(
@@ -149,41 +154,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _importByPath() async {
     final state = AppStateScope.of(context);
-    final c = TextEditingController();
-    final path = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: _panel,
-        title: const Text('Import document'),
-        content: TextField(
-          controller: c,
-          style: const TextStyle(color: _text87),
-          decoration: InputDecoration(
-            labelText: 'Local file path',
-            hintText: r'C:\Users\you\Documents\spec.md',
-            labelStyle: const TextStyle(color: _text54),
-            enabledBorder: const OutlineInputBorder(
-              borderSide: BorderSide(color: _line),
-            ),
-            focusedBorder: const OutlineInputBorder(
-              borderSide: BorderSide(color: _primary),
-            ),
-          ),
-          autofocus: true,
-          onSubmitted: (_) => Navigator.of(ctx).pop(c.text.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(c.text.trim()),
-            child: const Text('Import'),
-          ),
-        ],
-      ),
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      type: FileType.custom,
+      allowedExtensions: [
+        'txt', 'md', 'json', 'csv',
+        'pdf', 'docx', 'doc',
+        'html', 'htm', 'eml',
+        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+      ],
     );
+    final path = result?.files.single.path;
     if (path == null || path.trim().isEmpty) return;
     try {
       await state.importDocumentFromPath(path);
@@ -938,6 +919,8 @@ class _EntryViewer extends StatelessWidget {
                             ),
                           ),
                   )
+                : entry.document != null && (content == null || content.isEmpty)
+                ? DocumentPreview(document: entry.document!)
                 : content == null || content.isEmpty
                 ? const Center(
                     child: Text(

@@ -2,9 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../db/app_db.dart';
+import '../../db/document_extractor.dart';
 
 class DocumentPreview extends StatelessWidget {
   final Document document;
@@ -56,14 +59,32 @@ class DocumentPreview extends StatelessWidget {
       );
     }
 
+    if (ext == 'html' || ext == 'htm') {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Html(data: body.isEmpty ? '<p>No HTML content available.</p>' : body),
+      );
+    }
+
+    if (ext == 'eml') {
+      final text = stripEmlBody(body);
+      return _CodeBlock(text: text, empty: 'No email content available.');
+    }
+
     if (ext == 'txt' ||
         ext == 'csv' ||
         document.mimeType?.startsWith('text/') == true) {
       return _CodeBlock(text: body, empty: 'No text content available.');
     }
 
-    if (ext == 'pdf' || ext == 'docx' || ext == 'doc') {
-      return _UnsupportedDocumentStatus(document: document);
+    if (ext == 'pdf') {
+      return _ExternalViewerPrompt(document: document);
+    }
+
+    if (ext == 'docx' || ext == 'doc') {
+      return body.isNotEmpty
+          ? _CodeBlock(text: body, empty: 'No text content available.')
+          : _ExternalViewerPrompt(document: document);
     }
 
     return _CodeBlock(
@@ -71,6 +92,7 @@ class DocumentPreview extends StatelessWidget {
       empty: 'No preview is available for this document type yet.',
     );
   }
+
 
   String? _prettyJson(String raw) {
     if (raw.trim().isEmpty) return null;
@@ -101,15 +123,14 @@ class _CodeBlock extends StatelessWidget {
   }
 }
 
-class _UnsupportedDocumentStatus extends StatelessWidget {
+class _ExternalViewerPrompt extends StatelessWidget {
   final Document document;
 
-  const _UnsupportedDocumentStatus({required this.document});
+  const _ExternalViewerPrompt({required this.document});
 
   @override
   Widget build(BuildContext context) {
     final stored = document.storedPath;
-    final error = document.parseError;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -125,12 +146,16 @@ class _UnsupportedDocumentStatus extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                'Original file: ${stored == null || stored.isEmpty ? 'not stored' : stored}',
+                'In-app preview is not available for this format.',
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Parsing status: ${error == null || error.isEmpty ? 'parser not implemented yet' : error}',
-              ),
+              if (stored != null && stored.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => launchUrl(Uri.file(stored)),
+                  child: const Text('Open in system viewer'),
+                ),
+              ],
             ],
           ),
         ),

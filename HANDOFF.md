@@ -1,6 +1,6 @@
 # Project Atlas — Handoff Document
 
-> Current as of v1.2.0+1, schema v10. Updated alongside each release.
+> Current as of v1.3.0+1, schema v10. Updated alongside each release.
 
 ---
 
