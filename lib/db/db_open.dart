@@ -5,8 +5,7 @@ import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-/// V1 (Option A): plaintext SQLite on Windows while we build product value.
-/// We'll enforce SQLCipher later during commercialization hardening.
+/// Opens a plaintext SQLite database. Encryption is planned for a future release.
 QueryExecutor openEncryptedExecutor() {
   return LazyDatabase(() async {
     final dir = await getApplicationSupportDirectory();

@@ -764,7 +764,7 @@ LibraryScreen → _importByPath()
 
 | Area | Current state | Detail |
 |------|---------------|--------|
-| Database encryption | Plaintext SQLite | `sqlcipher_flutter_libs` is in pubspec but `db_open.dart` does not yet pass a passphrase. |
+| Database encryption | Plaintext SQLite | No encryption library included. SQLCipher was removed (package was EOL). Encryption planned for a future release. |
 | `accepted` field on drafts | Schema exists, unused | Reserved for an approval workflow. |
 | Drafts first-class route | Table + Library filter exist; no dedicated route | Planned as next phase. |
 | Inbound Telegram | Not implemented | `/done`, `/snooze`, `/add` commands planned. |

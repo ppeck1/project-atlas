@@ -182,8 +182,8 @@ All user text is HTML-escaped before sending. Send attempts are tracked in the l
 
 - Engine: SQLite via Drift `NativeDatabase`
 - Schema version: `10`
-- Observed Windows support path: `%APPDATA%\com.example\project_atlas\project_atlas.sqlite`
-- Encryption: `sqlcipher_flutter_libs` is included but not yet activated in `lib/db/db_open.dart`
+- Windows data path: `%APPDATA%\<company>\project_atlas\project_atlas.sqlite` — exact path depends on build; use **Settings → Admin → Open app data folder** to locate it
+- Encryption: plaintext SQLite (no encryption library included; SQLCipher integration is planned for a future release)
 - Compatibility: startup repair/backfill handles partially migrated local databases
 
 Do not commit local database files, secrets, app-data folders, `.dart_tool`, `build`, or generated Drift output.

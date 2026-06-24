@@ -177,7 +177,7 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 
 | Issue | Detail |
 |-------|--------|
-| Encryption not active | `sqlcipher_flutter_libs` is in pubspec but `db_open.dart` opens without a passphrase. Planned before distribution. |
+| Encryption not active | Database is plaintext SQLite. No encryption library is currently included. Encryption is planned for a future release. |
 | `telegram_enabled` not enforced | The toggle is UI-only; the send path ignores it. |
 | `stages.is_bottleneck` vs `app_meta` | Duplicate bottleneck state. GovernanceScreen reads `app_meta`. Table column is legacy. |
 | Drafts no first-class route | Drafts exist in Library under type filter. No dedicated `/drafts` route yet. |
@@ -196,8 +196,8 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 2. **Drafts screen** — first-class `/drafts` route in primary nav
 3. **Inbound Telegram** — `/done`, `/snooze`, `/add` commands via webhook
 4. **Project snapshots** — exportable decision-log and project state bundles
-5. **Backup restore** — import from the operational backup JSON
-6. **SQLCipher** — activate encryption before any broader distribution
+5. **Backup restore** — import from the operational backup (ZIP)
+6. **Encryption** — integrate an encryption library before broader distribution
 7. **Review history UI** — `watchRecentDailyReviews()` exists in the DB layer; no browsing screen yet
 8. **Tag management UI** — create/edit/delete tags from Settings
 
@@ -205,7 +205,9 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 
 ## Data Location
 
-Windows: `%APPDATA%\com.example\project_atlas\project_atlas.sqlite`
+Windows: `%APPDATA%\<company>\project_atlas\project_atlas.sqlite`
+
+The exact company segment depends on the `CompanyName` field in `windows/runner/Runner.rc` at build time. This was changed from `com.example` to `Paul Peck` in v1.3.0. **If you have an existing database at the `com.example` path, copy it to the new path before launching a rebuilt binary to avoid starting fresh.**
 
 Access directly: Settings → Admin → Open app data folder.
 
