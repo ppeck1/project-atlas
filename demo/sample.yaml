@@ -7,7 +7,7 @@ project:
 database:
   engine: sqlite
   schema_version: 10
-  path: "%APPDATA%/com.example/project_atlas/project_atlas.sqlite"
+  path: "%APPDATA%/<YourCompany>/project_atlas/project_atlas.sqlite"
 
 integrations:
   ollama:
