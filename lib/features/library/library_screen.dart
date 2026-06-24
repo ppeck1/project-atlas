@@ -168,9 +168,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       type: FileType.custom,
       allowedExtensions: [
         'txt', 'md', 'json', 'csv',
+        'log', 'xml', 'yaml', 'yml', 'ini', 'toml', 'rst',
         'pdf', 'docx', 'doc',
         'html', 'htm', 'eml',
         'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+        'svg',
       ],
     );
     final path = result?.files.single.path;
@@ -376,7 +378,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                                   }
                                                 }
                                               : null,
-                                          onDeleteDoc: selected.document != null && !selected.isDraft && !selected.isMedia
+                                          onDeleteDoc: selected.document != null && !selected.isDraft
                                               ? () async {
                                                   final ok = await showDialog<bool>(
                                                     context: context,

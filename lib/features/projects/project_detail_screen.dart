@@ -658,15 +658,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   Future<void> _showImportMediaDialog(BuildContext context) async {
     final state = AppStateScope.of(context);
-    // Step 1: native picker
     final result = await FilePicker.platform.pickFiles(type: FileType.any);
     if (result == null || result.files.isEmpty) return;
     final path = result.files.single.path;
     if (path == null) return;
     final defaultTitle = result.files.single.name;
 
-    // Step 2: title + cover option dialog
+    if (!context.mounted) return; // Fix 1: mounted check after async gap
     final titleCtrl = TextEditingController(text: defaultTitle);
+    final captionCtrl = TextEditingController(); // Fix 2: restored caption field
     bool makeCover = false;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -683,6 +683,12 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 TextField(
                   controller: titleCtrl,
                   decoration: const InputDecoration(labelText: 'Title (optional)', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: captionCtrl,
+                  decoration: const InputDecoration(labelText: 'Caption / note (optional)', border: OutlineInputBorder()),
+                  maxLines: 3,
                 ),
                 const SizedBox(height: 12),
                 CheckboxListTile(
@@ -702,7 +708,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       ),
     );
     final titleText = titleCtrl.text.trim();
+    final captionText = captionCtrl.text.trim(); // capture before dispose
     titleCtrl.dispose();
+    captionCtrl.dispose();
     if (confirmed != true) return;
 
     try {
@@ -710,6 +718,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         widget.projectId,
         path,
         title: titleText.isEmpty ? null : titleText,
+        caption: captionText.isEmpty ? null : captionText, // Fix 2: restored caption param
         isCover: makeCover,
       );
       if (makeCover) {

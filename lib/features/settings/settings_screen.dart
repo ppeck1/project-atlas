@@ -1490,8 +1490,8 @@ class _AdminTabState extends State<_AdminTab> {
             OutlinedButton.icon(
               onPressed: () async {
                 final path = await _askPath(
-                  'Export operational backup',
-                  r'C:\Users\you\Documents\project_atlas_backup.json',
+                  'Export backup',
+                  r'C:\Users\you\Documents\project_atlas_backup.zip',
                 );
                 if (path == null) return;
                 try {
@@ -1504,7 +1504,7 @@ class _AdminTabState extends State<_AdminTab> {
                 }
               },
               icon: const Icon(Icons.save_alt, size: 16),
-              label: const Text('Export backup JSON'),
+              label: const Text('Export backup'),
             ),
             OutlinedButton.icon(
               onPressed: () async {

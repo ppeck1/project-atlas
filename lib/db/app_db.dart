@@ -1528,6 +1528,8 @@ class AppDb extends _$AppDb {
           } else if (ext == 'docx') {
             extractedTextValue = extractDocxText(destPath);
           } else if (ext == 'html' || ext == 'htm') {
+            final raw = await readText();
+            renderedMarkdownValue = raw;
             extractedTextValue = extractHtmlText(destPath);
           } else if (ext == 'eml') {
             final raw = await readText();

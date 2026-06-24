@@ -19,7 +19,19 @@ class DocumentPreview extends StatelessWidget {
     if (stored == null || stored.isEmpty) return null;
     final file = File(stored);
     if (!await file.exists()) return null;
-    return file.readAsString();
+    const maxBytes = 10 * 1024 * 1024;
+    if (await file.length() > maxBytes) return null;
+    try {
+      return await file.readAsString();
+    } on FormatException {
+      final bytes = await file.readAsBytes();
+      return latin1.decode(bytes);
+    }
+  }
+
+  bool get _shouldLoadText {
+    final ext = _extension;
+    return ext != 'pdf' && ext != 'doc' && ext != 'rtf';
   }
 
   String get _extension =>
@@ -30,7 +42,7 @@ class DocumentPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final parsed = document.renderedMarkdown ?? document.extractedText;
     return FutureBuilder<String?>(
-      future: parsed == null || parsed.isEmpty ? _loadText() : null,
+      future: (parsed == null || parsed.isEmpty) && _shouldLoadText ? _loadText() : null,
       builder: (context, snapshot) {
         final body = parsed ?? snapshot.data ?? '';
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -67,8 +79,7 @@ class DocumentPreview extends StatelessWidget {
     }
 
     if (ext == 'eml') {
-      final text = stripEmlBody(body);
-      return _CodeBlock(text: text, empty: 'No email content available.');
+      return _CodeBlock(text: body, empty: 'No email content available.');
     }
 
     if (ext == 'txt' ||
@@ -85,6 +96,14 @@ class DocumentPreview extends StatelessWidget {
       return body.isNotEmpty
           ? _CodeBlock(text: body, empty: 'No text content available.')
           : _ExternalViewerPrompt(document: document);
+    }
+
+    if (ext == 'rtf') {
+      return _ExternalViewerPrompt(document: document);
+    }
+
+    if (ext == 'svg') {
+      return _ExternalViewerPrompt(document: document);
     }
 
     return _CodeBlock(
