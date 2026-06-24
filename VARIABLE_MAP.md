@@ -213,25 +213,35 @@ Key-value store for all runtime settings and active-state flags.
 
 | Column | Type | Default | Notes / Quirks |
 |--------|------|---------|----------------|
-| `id` | TEXT PK | | |
-| `title` | TEXT | | Display name. |
-| `original_filename` | TEXT | | File name at import time. |
-| `stored_path` | TEXT? | null | App-owned copy path under app data directory. |
-| `mime_type` | TEXT? | null | Set on import if detectable. |
-| `extension` | TEXT? | null | Lowercase file extension without dot. |
+| `id` | TEXT PK | | `microsecondsSinceEpoch.toString()`. |
+| `title` | TEXT | | Display name — set to the original filename at import. |
+| `original_filename` | TEXT | | Filename (basename only) at import time. |
+| `stored_path` | TEXT? | null | App-owned copy path: `<appDocDir>/atlas_documents/<id>.<ext>`. Never the original source path. |
+| `mime_type` | TEXT? | null | Detected at import via `mimeTypeForExtension(ext)` (mime package). Always set for known extensions; null for unknown. |
+| `extension` | TEXT? | null | Lowercase file extension without dot (e.g., `pdf`, `md`). |
 | `project_id` | TEXT? | null | Optional project link. |
 | `source` | TEXT? | null | Import origin note. |
 | `status` | TEXT | `'imported'` | `imported\|draft\|archived` |
 | `created_at` | DATETIME | | |
 | `updated_at` | DATETIME | | |
 | `metadata_json` | TEXT? | null | Arbitrary metadata blob. |
-| `extracted_text` | TEXT? | null | Plain text content for search. |
-| `rendered_markdown` | TEXT? | null | Cached markdown rendering. |
-| `parse_error` | TEXT? | null | Non-null if parsing failed. |
+| `extracted_text` | TEXT? | null | Populated at import for `.txt`, `.csv`, `.json`, `.docx`. Null for binary types. |
+| `rendered_markdown` | TEXT? | null | Populated at import for `.md`. Null for all other types. |
+| `parse_error` | TEXT? | null | Non-null if a content extraction step failed. |
 
-**Written by:** `importDocument()`, document update methods  
-**Read by:** `watchDocuments()` → `LibraryScreen`, `watchDocumentsForWorkItem()` → `WorkItemDetailSheet`, Ollama AI analysis  
-**Quirks:** `stored_path` points to an app-owned copy. Original source file is not tracked after import.
+**Written by:** `AppDb.importDocumentFromPath(path, {projectId})`  
+**Read by:** `watchDocuments()` → `LibraryScreen`, `watchDocumentsForWorkItem()` → `WorkItemDetailSheet`, `getDocumentPathsForProject()` → Ollama structured summary  
+**Import pipeline:**
+1. Copies the source file to `atlas_documents/<id>.<ext>` via `File.copy()`.
+2. Saves `mimeType` via `mimeTypeForExtension(ext)`.
+3. For `.txt`/`.csv`/`.json`: reads the file as a string into `extractedText`.
+4. For `.md`: reads into `renderedMarkdown`.
+5. For `.docx`: calls `extractDocxText(destPath)` from `document_extractor.dart`; stores result in `extractedText`.
+6. Binary types (`.pdf`, `.doc`, `.jpg`, etc.): no extraction; both text columns remain null.
+
+**Library entry model behavior:** `_LibraryEntry.fromDocument` in `library_screen.dart` sets `content = renderedMarkdown ?? extractedText`. If `content` is null and the entry has a `document` reference, `_EntryViewer` delegates rendering to `DocumentPreview`. Image extensions (`jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`) additionally receive `isMedia: true` + `mediaType: 'image'`, routing them to the `InteractiveViewer` image path.
+
+**Quirks:** Moving or deleting the original source file does not affect the stored copy. Deleting a `documents` record does not delete the app-owned copy — clean up manually via Admin → Open app data folder.
 
 ---
 
@@ -474,7 +484,22 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 
 ---
 
-## 3. Services
+## 3. Document Extractor (`lib/db/document_extractor.dart`)
+
+Standalone pure-Dart utility module. No Flutter dependency; fully unit-testable. Used by both `AppDb` (at import time) and `DocumentPreview` (at render time).
+
+| Function | Signature | Notes |
+|----------|-----------|-------|
+| `extractDocxText(path)` | `String? Function(String path)` | Reads `.docx` bytes from disk, delegates to `extractDocxTextFromBytes`. Returns null on any I/O or parse failure. |
+| `extractDocxTextFromBytes(bytes)` | `String? Function(List<int> bytes)` | Unzips the DOCX (ZIP format) via the `archive` package, finds `word/document.xml`, UTF-8 decodes it, parses XML via the `xml` package, extracts all `<w:t>` inner text nodes with `<w:p>` paragraph separators. Returns null on failure. |
+| `mimeTypeForExtension(ext)` | `String? Function(String? ext)` | Calls `lookupMimeType('file.$ext')` from the `mime` package. Returns null for null input or unknown extensions. Used by `AppDb.importDocumentFromPath` and `AppDb.addProjectMedia`. |
+| `stripEmlBody(raw)` | `String Function(String raw)` | Splits the EML string on newlines, discards all lines up to and including the first blank line (RFC-2822 header/body separator), returns trimmed body. Used by `DocumentPreview` for `.eml` files. |
+
+**Tests:** `test/document_extractor_test.dart` — covers DOCX extraction (valid, invalid, empty, multi-paragraph, UTF-8), MIME lookup (common types, null, unknown), and EML body stripping (headers present, no body, body-only input).
+
+---
+
+## 5. Services
 
 ### OllamaService (`lib/services/ollama_service.dart`)
 
@@ -559,7 +584,7 @@ Return type:
 
 ---
 
-## 4. Navigation
+## 6. Navigation
 
 Router: `lib/app/router.dart` using `go_router`  
 Shell: `lib/shared/widgets/atlas_shell.dart`
@@ -583,7 +608,7 @@ Shell: `lib/shared/widgets/atlas_shell.dart`
 
 ---
 
-## 5. Data Flows
+## 7. Data Flows
 
 ### Project Creation
 ```
@@ -659,9 +684,43 @@ Settings → Workforce → select contact → _ContactDetail
   → renders ownedProjects / contributingProjects / workItems sections
 ```
 
+### Document Library Import
+```
+LibraryScreen → _importByPath()
+  → FilePicker.platform.pickFiles(allowedExtensions: [txt,md,json,csv,pdf,docx,doc,html,htm,eml,jpg,jpeg,png,gif,webp,bmp])
+  → AppState.importDocumentFromPath(path)
+    → AppDb.importDocumentFromPath(path, {projectId})
+      → File(path).existsSync()  ← throws FileSystemException if missing
+      → File.copy(destPath)      ← destPath = atlas_documents/<id>.<ext>
+      → mimeTypeForExtension(ext) ← document_extractor.dart
+      → if txt/csv/json: File(destPath).readAsString() → extractedText
+      → if md: File(destPath).readAsString() → renderedMarkdown
+      → if docx: extractDocxText(destPath) → extractedText
+        → ZipDecoder().decodeBytes(bytes)
+        → archive.findFile('word/document.xml')
+        → XmlDocument.parse(utf8.decode(content))
+        → collect <w:t> nodes, separate <w:p> with newlines
+      → INSERT INTO documents (storedPath=destPath, mimeType, extractedText, renderedMarkdown, ...)
+  → watchDocuments() stream fires → LibraryScreen rebuilds
+  → _LibraryEntry.fromDocument(d)
+      → if ext in {jpg,jpeg,png,gif,webp,bmp}: isMedia=true, mediaType='image'
+      → content = d.renderedMarkdown ?? d.extractedText
+  → _EntryViewer renders:
+      → mediaType='image' → InteractiveViewer(Image.file)
+      → content != null  → SelectableText(content)
+      → document != null → DocumentPreview(document)
+          → ext='md'          → Markdown widget
+          → ext='json'        → _CodeBlock (pretty-printed)
+          → ext='html'/'htm'  → Html widget (flutter_html)
+          → ext='eml'         → _CodeBlock(stripEmlBody(body))
+          → ext='txt'/'csv'   → _CodeBlock(body)
+          → ext='pdf'         → _ExternalViewerPrompt (url_launcher)
+          → ext='docx'/'doc'  → _CodeBlock(body) if content, else _ExternalViewerPrompt
+```
+
 ---
 
-## 6. Schema Migration History
+## 8. Schema Migration History
 
 | Version | Change | Notes |
 |---------|--------|-------|
@@ -680,7 +739,7 @@ Settings → Workforce → select contact → _ContactDetail
 
 ---
 
-## 7. Known Limitations / Future Work
+## 9. Known Limitations / Future Work
 
 | Area | Current state | Detail |
 |------|---------------|--------|
@@ -691,5 +750,7 @@ Settings → Workforce → select contact → _ContactDetail
 | Project snapshots / export | Not implemented | Decision-log export planned. |
 | `correlation_id` on event_log | Defined, never set | Reserved for multi-step tracing. |
 | `stages.is_bottleneck` vs `app_meta` | Dual storage | GovernanceScreen reads `app_meta`; table column is historical. |
-| Project media file cleanup | Stored files not deleted on record delete | Manual via Open app data folder. |
+| Document/media file cleanup | Stored files not deleted on record delete | Manual via Open app data folder. Affects both `documents` and `project_media`. |
 | `telegram_enabled` flag | Set but not enforced | `sendTodayToTelegram()` does not check this flag before sending. |
+| PDF in-app rendering | External viewer only | `DocumentPreview` shows an "Open in system viewer" button for `.pdf`. `pdfx`/PDFium integration is a planned future milestone. |
+| `.doc` (legacy Word) | External viewer only | No text extraction for binary `.doc` format. Only `.docx` (OOXML) supports paragraph text extraction. |

@@ -1,0 +1,17 @@
+Project Atlas — Plain Text Sample
+==================================
+
+This file demonstrates plain-text (.txt) import in the Library.
+
+When imported, the full contents of this file are extracted at import time
+and stored in the database. The Library displays them as selectable text
+in the preview pane — no need to open an external program.
+
+You can search for any word in this file from the Library search bar,
+because the extracted content is indexed in the documents table.
+
+Sample content:
+- Task: Review Q3 scope with Alice
+- Blocker: Waiting on legal sign-off for vendor contract
+- Note: Migration window is 2026-07-15 00:00–04:00 UTC
+- Status: On track

@@ -1,0 +1,25 @@
+{
+  "schema": "project_atlas_demo_v1",
+  "description": "Project Atlas — JSON sample file for Library import demo.",
+  "project": {
+    "name": "Atlas Demo Project",
+    "status": "active",
+    "phase": "build",
+    "priority": "high",
+    "owner": "Paul Peck",
+    "desiredOutcome": "Validate end-to-end Library import for all supported file types.",
+    "successCriteria": "All 13 file type demos import without error and preview correctly."
+  },
+  "workItems": [
+    { "title": "Import TXT sample", "status": "done", "priority": "normal" },
+    { "title": "Import MD sample", "status": "done", "priority": "normal" },
+    { "title": "Import JSON sample", "status": "done", "priority": "normal" },
+    { "title": "Import CSV sample", "status": "doing", "priority": "normal" },
+    { "title": "Import HTML sample", "status": "next", "priority": "normal" },
+    { "title": "Import EML sample", "status": "next", "priority": "normal" },
+    { "title": "Import DOCX sample", "status": "next", "priority": "normal" },
+    { "title": "Import PDF sample", "status": "next", "priority": "normal" },
+    { "title": "Import image samples (JPG, PNG)", "status": "next", "priority": "normal" }
+  ],
+  "notes": "JSON files are pretty-printed automatically in the preview pane."
+}

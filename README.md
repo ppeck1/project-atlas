@@ -21,7 +21,7 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
 - Project governance: people roster, risk register, decision log
 - Project media: app-owned image/file gallery with cover-image selection
-- Document library: import local files, link them to work items, and include them in AI analysis
+- Document library: native file picker, app-owned copies, in-app preview, and AI analysis integration
 
 ## Screenshots
 
@@ -73,13 +73,49 @@ After changing Drift tables or database code, rerun build runner before launchin
 | Today | Focus list for doing, overdue, due today, phone queue, blocked, and high-priority work |
 | Projects | Project list, active project switching, lifecycle metadata, tag/status/phase/priority filters, detail entry point |
 | Project Detail | Identity, scope, lifecycle fields, people roster, risk register, decision log, structured AI summary panel (7 sections, instant cached load, age badge), media gallery, tag assignment |
-| Library | Documents, project media, and AI drafts with search, project/type filters, import, copy, preview, and file-open actions |
+| Library | Documents, project media, and AI drafts with search, project/type filters, native file picker import, copy, preview, and file-open actions |
 | Settings | Integrations, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
 | Work | Legacy stage/task list with editable work items |
 | Review | Blocked/overdue/in-progress review and optional Ollama briefing |
 | Export | Markdown task list, Telegram send, AI summary, and outbox visibility |
 | Governance | Stage ownership and bottleneck flags |
 | Backend Log | Recent event log filtering and JSON/Markdown copy |
+
+## Document Library
+
+The Library screen unifies three content types: imported **documents**, project **media**, and AI **drafts**. All document types are imported via a native Windows file picker — no manual path entry.
+
+### Supported file types and preview behavior
+
+| Extension(s) | Preview | Content at import |
+|---|---|---|
+| `.txt`, `.csv` | Plain text (selectable) | Extracted to `extracted_text` column |
+| `.md` | Rendered Markdown | Stored in `rendered_markdown` column |
+| `.json` | Syntax-highlighted, pretty-printed | Extracted to `extracted_text` column |
+| `.html`, `.htm` | Rendered HTML via `flutter_html` | Read from disk on open |
+| `.eml` | RFC-2822 headers stripped, body shown as plain text | Read from disk on open |
+| `.docx` | Extracted paragraph text (plain) | Word XML parsed at import; stored in `extracted_text` |
+| `.doc` | "Open in system viewer" button | No extraction |
+| `.pdf` | "Open in system viewer" button | No extraction |
+| `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp` | Inline `InteractiveViewer` with pan/zoom | None (binary) |
+
+All imported files are **copied** into the app data directory (`atlas_documents/` subfolder). Moving or deleting the original has no effect on the stored copy.
+
+MIME type is detected at import and saved to the `mime_type` column. Image documents are tagged `mediaType: 'image'` internally so they appear under the **Images** filter and use the image viewer.
+
+### Library filters
+
+| Filter | Shows |
+|---|---|
+| All types | Everything |
+| Documents | Non-media, non-draft entries |
+| Media | All `project_media` entries |
+| Images | Media or documents with `mediaType = 'image'` |
+| AI Drafts | Ollama-generated drafts |
+
+### Linking documents to work items
+
+Documents can be linked to work items in the Work Item Detail sheet. Linked documents are included in Ollama work-item analysis and project structured summaries (up to 3 000 chars per document, 16 000 char total cap).
 
 ## Contacts / Workforce
 
@@ -159,16 +195,19 @@ Do not commit local database files, secrets, app-data folders, `.dart_tool`, `bu
 ```text
 lib/
   app/           App widget, router, theme
-  db/            Drift tables, AppDb, database open path
+  db/            Drift tables, AppDb, database open path, document_extractor
   services/      Ollama (OllamaService, project_summary_models.dart), Telegram, app logging
   features/      today, projects, library, settings, work, review, export, governance, log
   shared/
     models/      AppState and scope
-    widgets/     shell, dialogs, pickers, previews
+    widgets/     shell, dialogs, pickers, document_preview
 ```
+
+`lib/db/document_extractor.dart` — standalone pure-Dart utilities: `extractDocxTextFromBytes`, `mimeTypeForExtension`, `stripEmlBody`. Used by both `AppDb` and `DocumentPreview`; fully unit-tested without Flutter dependencies.
 
 See `VARIABLE_MAP.md` for complete table columns, service fields, data flows, and migration notes.
 See `HANDOFF.md` for project context, design decisions, and known issues.
+See `DEMO.md` for a step-by-step walkthrough covering all Library file types.
 
 ## Development Notes
 
@@ -195,6 +234,7 @@ Generated files and build products are intentionally ignored:
 
 ## Roadmap
 
+- In-app PDF rendering (currently opens in system viewer)
 - Drafts screen as a first-class route
 - Inbound Telegram commands such as `/done`, `/snooze`, and `/add`
 - Project snapshots and decision-log export

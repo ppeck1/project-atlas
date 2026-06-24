@@ -24,7 +24,20 @@ The core problem it solves: on any given morning, what am I doing, what is block
 
 **Schema migrations are defensive.** `addColumn` calls are wrapped in typed `on SqliteException` catches that only swallow duplicate-column errors and rethrow anything else. New tables use `CREATE TABLE IF NOT EXISTS` in the startup repair path. This means a partially-applied migration from a crash won't re-crash on the next open.
 
-**App-owned media copies.** When files are added to a project's media gallery or the document library, they are copied into the app data directory. The `stored_path` column points to the copy. The original source path is not tracked. Deleting a record does not delete the copy; manual cleanup via Admin → Open app data folder.
+**App-owned file copies.** When files are added to a project's media gallery or the document library, they are copied into the app data directory. For project media the copy goes into the app data root; for Library documents it goes into `atlas_documents/` inside `getApplicationDocumentsDirectory()`. The `stored_path` column points to the copy. The original source path is not preserved. Deleting a record does not delete the copy; manual cleanup via Admin → Open app data folder.
+
+**Document library import pipeline.** `importDocumentFromPath(path)` in `AppDb`:
+1. Copies the file into `<appDocDir>/atlas_documents/<id>.<ext>`.
+2. Detects MIME type via `mimeTypeForExtension(ext)` and saves it to `mime_type`.
+3. For text-extractable types, reads content immediately and stores it in the DB:
+   - `.txt`, `.csv`, `.json` → `extracted_text`
+   - `.md` → `rendered_markdown`
+   - `.docx` → `extracted_text` (DOCX XML parsed by `extractDocxTextFromBytes` in `document_extractor.dart`)
+4. Binary types (pdf, doc, images) get no extraction; `extracted_text` and `rendered_markdown` remain null.
+
+The extraction helpers live in `lib/db/document_extractor.dart` as standalone pure-Dart functions — no Flutter dependency — making them fully unit-testable.
+
+**Library entry model bridges documents and media.** `_LibraryEntry.fromDocument` in `library_screen.dart` detects image extensions (`jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`) and sets `isMedia: true` + `mediaType: 'image'`. This lets Library-imported images appear in the Images filter and use the `InteractiveViewer` image path without any special-casing in the viewer widget. Documents with `content == null` and no image type fall through to `DocumentPreview`, which handles HTML, EML, PDF (external viewer), and DOCX.
 
 **Structured AI Summary (two-layer design).** The project summary system separates LLM output from UI rendering. Ollama is called with `format:"json"` (an Ollama API parameter that forces valid JSON output), and the Flutter app renders the parsed result deterministically. This means the UI layout is never at the mercy of LLM prose formatting. All typed input/output models for the summary pipeline live in `lib/services/project_summary_models.dart`. `ProjectSummaryResult.tryParse()` handles three common LLM failure modes: `<think>…</think>` reasoning blocks (Qwen models), markdown code fences, and JSON parsing errors — returning null on any failure so the UI can gracefully fall back to prose. The system prompt instructs the model to use only supplied data and never invent document IDs, paths, people, or work assignments.
 
@@ -39,7 +52,8 @@ The core problem it solves: on any given morning, what am I doing, what is block
 ```text
 lib/
   app/           app.dart (root widget), router.dart (go_router), theme.dart
-  db/            tables.dart (all Drift tables), app_db.dart (AppDb + migrations), db_open.dart
+  db/            tables.dart (all Drift tables), app_db.dart (AppDb + migrations), db_open.dart,
+                 document_extractor.dart (DOCX/MIME/EML pure-Dart utilities)
   services/      ollama_service.dart, telegram_service.dart, app_logger.dart, project_summary_models.dart
   features/
     today/       today_screen.dart, work_item_detail_sheet.dart
@@ -60,6 +74,7 @@ lib/
 windows/runner/resources/app_icon.ico   ← Windows app icon (multi-size ICO)
 tools/generate_readme_screenshots.py    ← Python script to regenerate docs/screenshots/
 docs/screenshots/                       ← PNG screenshots used in README
+demo/                                   ← Sample files for Library import walkthrough (see DEMO.md)
 ```
 
 ---
@@ -107,7 +122,7 @@ flutter test
 | `daily_reviews` | Daily review snapshots (one per day) |
 | `outbox_messages` | Telegram send attempts with status |
 | `event_log` | Application event and error log |
-| `documents` | Imported document library |
+| `documents` | Imported document library — app-owned copies, MIME, extracted text |
 | `document_links` | Work item ↔ document associations |
 | `contacts` | Reusable people/company directory (v8) |
 | `project_people` | People roster per project (v5) |
@@ -161,22 +176,25 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 | `telegram_enabled` not enforced | The toggle is UI-only; the send path ignores it. |
 | `stages.is_bottleneck` vs `app_meta` | Duplicate bottleneck state. GovernanceScreen reads `app_meta`. Table column is legacy. |
 | Drafts no first-class route | Drafts exist in Library under type filter. No dedicated `/drafts` route yet. |
-| Media file cleanup | Deleting a `project_media` record does not delete the copied file in app data. |
+| Media file cleanup | Deleting a `project_media` or `documents` record does not delete the copied file in app data. |
 | `completed` boolean on work items | Legacy. `status='done'` is canonical. Both are kept in sync but only `status` should be used in logic. |
 | `accepted` on drafts | Schema column exists but is never set or checked. |
 | `project_risks`/`project_decisions` legacy `updated_at` | Resolved: startup repair adds missing columns; INSERT methods fall back to `customStatement` with explicit timestamp when `updated_at NOT NULL` constraint is present on older databases. |
+| PDF in-app rendering | PDF files open in the system viewer. No in-app PDF rendering; `pdfx`/PDFium integration is a future milestone. |
+| DOC (legacy Word) | `.doc` files show the external viewer button; no text extraction. Only `.docx` (OOXML ZIP format) supports text extraction. |
 
 ---
 
 ## Next Steps / Roadmap
 
-1. **Drafts screen** — first-class `/drafts` route in primary nav
-2. **Inbound Telegram** — `/done`, `/snooze`, `/add` commands via webhook
-3. **Project snapshots** — exportable decision-log and project state bundles
-4. **Backup restore** — import from the operational backup JSON
-5. **SQLCipher** — activate encryption before any broader distribution
-6. **Review history UI** — `watchRecentDailyReviews()` exists in the DB layer; no browsing screen yet
-7. **Tag management UI** — create/edit/delete tags from Settings
+1. **In-app PDF rendering** — integrate `pdfx` (PDFium) for Windows
+2. **Drafts screen** — first-class `/drafts` route in primary nav
+3. **Inbound Telegram** — `/done`, `/snooze`, `/add` commands via webhook
+4. **Project snapshots** — exportable decision-log and project state bundles
+5. **Backup restore** — import from the operational backup JSON
+6. **SQLCipher** — activate encryption before any broader distribution
+7. **Review history UI** — `watchRecentDailyReviews()` exists in the DB layer; no browsing screen yet
+8. **Tag management UI** — create/edit/delete tags from Settings
 
 ---
 
