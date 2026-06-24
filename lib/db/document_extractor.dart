@@ -37,6 +37,18 @@ String stripEmlBody(String raw) {
   return body.join('\n').trim();
 }
 
+/// Extensions that DocumentPreview will decode as text; all others show an
+/// external-viewer prompt or skip the file-read entirely.
+const textDocumentExtensions = {
+  'txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml',
+  'ini', 'toml', 'rst', 'html', 'htm', 'eml',
+};
+
+/// Returns true when [extension] (lowercase, no dot) is a text format that
+/// can safely be decoded and displayed as a string.
+bool shouldLoadDocumentText(String extension) =>
+    textDocumentExtensions.contains(extension.toLowerCase());
+
 /// Strips HTML tags from a file at [path], returning plain text.
 /// Returns null if the file cannot be read.
 String? extractHtmlText(String path) {

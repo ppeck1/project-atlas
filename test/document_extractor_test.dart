@@ -5,31 +5,6 @@ import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_atlas/db/document_extractor.dart';
 
-// Inline HTML-stripping logic that mirrors the expected extractHtmlText contract.
-// Tests below validate this exact behavior so that when extractHtmlText is
-// added to document_extractor.dart, a single swap confirms the implementation.
-String? _extractHtmlTextFromBytes(List<int> bytes) {
-  try {
-    final raw = utf8.decode(bytes, allowMalformed: true);
-    final stripped = raw.replaceAll(RegExp(r'<[^>]*>'), ' ');
-    return stripped.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
-  } catch (_) {
-    return null;
-  }
-}
-
-String? _extractHtmlTextFromFile(String path) {
-  try {
-    final file = File(path);
-    if (!file.existsSync()) return null;
-    final bytes = file.readAsBytesSync();
-    if (bytes.isEmpty) return '';
-    return _extractHtmlTextFromBytes(bytes);
-  } catch (_) {
-    return null;
-  }
-}
-
 // Builds a minimal in-memory .docx (ZIP) with a word/document.xml containing [text].
 List<int> _buildDocx(String text) {
   final xml = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -180,7 +155,7 @@ Second line.''';
     test('HTML tags are stripped and text content is preserved', () {
       final file = File('${tempDir.path}/page.html')
         ..writeAsStringSync('<h1>Title</h1><p>Body</p>');
-      final result = _extractHtmlTextFromFile(file.path);
+      final result = extractHtmlText(file.path);
       expect(result, isNotNull);
       expect(result, contains('Title'));
       expect(result, contains('Body'));
@@ -191,7 +166,7 @@ Second line.''';
     test('back-to-back tags do not produce multiple consecutive spaces', () {
       final file = File('${tempDir.path}/multi.html')
         ..writeAsStringSync('<h1>Hello</h1><h2>World</h2>');
-      final result = _extractHtmlTextFromFile(file.path);
+      final result = extractHtmlText(file.path);
       expect(result, isNotNull);
       expect(result, isNot(matches(RegExp(r'  +'))));
     });
@@ -204,18 +179,18 @@ Second line.''';
       ];
       final file = File('${tempDir.path}/latin1.html')
         ..writeAsBytesSync(latin1Bytes);
-      final result = _extractHtmlTextFromFile(file.path);
+      final result = extractHtmlText(file.path);
       expect(result, isNotNull);
     });
 
     test('missing file returns null', () {
-      final result = _extractHtmlTextFromFile('${tempDir.path}/no_such.html');
+      final result = extractHtmlText('${tempDir.path}/no_such.html');
       expect(result, isNull);
     });
 
     test('empty file returns empty or null without crashing', () {
       final file = File('${tempDir.path}/empty.html')..writeAsBytesSync([]);
-      final result = _extractHtmlTextFromFile(file.path);
+      final result = extractHtmlText(file.path);
       // Both null and empty string are acceptable; crash is not.
       expect(result == null || result.isEmpty, isTrue);
     });

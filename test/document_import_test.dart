@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:project_atlas/db/app_db.dart';
+import 'package:project_atlas/shared/models/app_state.dart';
 
 // ── Minimal path_provider mock ──────────────────────────────────────────────
 
@@ -20,27 +21,12 @@ class _FakePathProvider extends Fake
 
   @override
   Future<String?> getApplicationDocumentsPath() async => base;
+
+  @override
+  Future<String?> getApplicationSupportPath() async => base;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/// Mirrors the contract that AppDb.deleteDocument(id) is expected to fulfil:
-/// deletes the stored file from disk and removes the DB row plus any
-/// associated documentLinks entries.  Used in tests until the method is
-/// promoted to AppDb itself.
-Future<void> _deleteDocument(AppDb db, String id) async {
-  final doc = await (db.select(db.documents)
-        ..where((t) => t.id.equals(id)))
-      .getSingleOrNull();
-  if (doc != null && doc.storedPath != null) {
-    final f = File(doc.storedPath!);
-    if (f.existsSync()) await f.delete();
-  }
-  await (db.delete(db.documentLinks)
-        ..where((t) => t.documentId.equals(id)))
-      .go();
-  await (db.delete(db.documents)..where((t) => t.id.equals(id))).go();
-}
 
 List<int> _buildDocx(String text) {
   final xml = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -270,7 +256,7 @@ This is the email body.''';
       final storedPath = doc.storedPath!;
       expect(File(storedPath).existsSync(), isTrue);
 
-      await _deleteDocument(db, doc.id);
+      await db.deleteDocument(doc.id);
 
       final remaining = await db.watchDocuments().first;
       expect(remaining, isEmpty);
@@ -279,7 +265,7 @@ This is the email body.''';
 
     test('deleting a non-existent ID does not throw', () async {
       await expectLater(
-        _deleteDocument(db, 'non_existent_id_xyz'),
+        db.deleteDocument('non_existent_id_xyz'),
         completes,
       );
     });
@@ -303,10 +289,38 @@ This is the email body.''';
       final linksBefore = await db.select(db.documentLinks).get();
       expect(linksBefore, hasLength(1));
 
-      await _deleteDocument(db, doc.id);
+      await db.deleteDocument(doc.id);
 
       final linksAfter = await db.select(db.documentLinks).get();
       expect(linksAfter, isEmpty);
+    });
+  });
+
+  group('exportOperationalBackupToJson', () {
+    test('ZIP contains backup.json and a document entry', () async {
+      final src = File(p.join(tempDir.path, 'spec.txt'))
+        ..writeAsStringSync('Backup test content');
+      await db.importDocumentFromPath(src.path);
+
+      final state = AppState(db);
+      addTearDown(state.dispose);
+
+      final zipPath = p.join(tempDir.path, 'backup.zip');
+      await state.exportOperationalBackupToJson(zipPath);
+
+      final zipBytes = await File(zipPath).readAsBytes();
+      final archive = ZipDecoder().decodeBytes(zipBytes);
+      final entryNames = archive.map((e) => e.name).toSet();
+
+      expect(entryNames, contains('backup.json'));
+      expect(entryNames, anyElement(startsWith('documents/')));
+
+      final jsonEntry = archive.findFile('backup.json')!;
+      final payload = jsonDecode(
+        utf8.decode(jsonEntry.content as List<int>),
+      ) as Map<String, dynamic>;
+      expect(payload.containsKey('documents'), isTrue);
+      expect(payload.containsKey('projects'), isTrue);
     });
   });
 }
