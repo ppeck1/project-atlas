@@ -1271,7 +1271,7 @@ class AppState extends ChangeNotifier {
         .map(
           (d) => LinkedDocumentContext(
             title: d.title,
-            text: d.renderedMarkdown ?? d.extractedText ?? '',
+            text: d.extractedText ?? d.renderedMarkdown ?? '',
           ),
         )
         .toList(growable: false);

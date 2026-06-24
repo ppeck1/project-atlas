@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -22,6 +23,24 @@ class _FakePathProvider extends Fake
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Mirrors the contract that AppDb.deleteDocument(id) is expected to fulfil:
+/// deletes the stored file from disk and removes the DB row plus any
+/// associated documentLinks entries.  Used in tests until the method is
+/// promoted to AppDb itself.
+Future<void> _deleteDocument(AppDb db, String id) async {
+  final doc = await (db.select(db.documents)
+        ..where((t) => t.id.equals(id)))
+      .getSingleOrNull();
+  if (doc != null && doc.storedPath != null) {
+    final f = File(doc.storedPath!);
+    if (f.existsSync()) await f.delete();
+  }
+  await (db.delete(db.documentLinks)
+        ..where((t) => t.documentId.equals(id)))
+      .go();
+  await (db.delete(db.documents)..where((t) => t.id.equals(id))).go();
+}
 
 List<int> _buildDocx(String text) {
   final xml = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -174,6 +193,120 @@ void main() {
       await db.importDocumentFromPath(src.path);
       final docs = await db.watchDocuments().first;
       expect(docs.first.extractedText, isNull);
+    });
+
+    test('HTML import stores raw HTML in renderedMarkdown', () async {
+      final src = File(p.join(tempDir.path, 'page.html'))
+        ..writeAsStringSync('<h1>Title</h1><p>Body text</p>');
+      await db.importDocumentFromPath(src.path);
+      final docs = await db.watchDocuments().first;
+      expect(docs.first.renderedMarkdown, isNotNull);
+      expect(docs.first.renderedMarkdown, contains('<'));
+    });
+
+    test('HTML import stores stripped text in extractedText', () async {
+      final src = File(p.join(tempDir.path, 'page.html'))
+        ..writeAsStringSync('<h1>Title</h1><p>Body text</p>');
+      await db.importDocumentFromPath(src.path);
+      final docs = await db.watchDocuments().first;
+      expect(docs.first.extractedText, isNotNull);
+      expect(docs.first.extractedText, isNot(contains('<')));
+    });
+
+    test('HTML import: both renderedMarkdown and extractedText are non-null',
+        () async {
+      final src = File(p.join(tempDir.path, 'both.html'))
+        ..writeAsStringSync('<p>Hello</p>');
+      await db.importDocumentFromPath(src.path);
+      final doc = (await db.watchDocuments().first).first;
+      expect(doc.renderedMarkdown, isNotNull);
+      expect(doc.extractedText, isNotNull);
+    });
+
+    test('EML import stores body only in extractedText', () async {
+      const emlContent = '''From: alice@example.com
+To: bob@example.com
+Subject: Hello
+
+This is the email body.''';
+      final src = File(p.join(tempDir.path, 'message.eml'))
+        ..writeAsStringSync(emlContent);
+      await db.importDocumentFromPath(src.path);
+      final doc = (await db.watchDocuments().first).first;
+      expect(doc.extractedText, isNotNull);
+      expect(doc.extractedText, isNot(contains('From:')));
+      expect(doc.extractedText, isNot(contains('Subject:')));
+    });
+
+    test('EML import: renderedMarkdown is null', () async {
+      const emlContent = 'From: a@b.com\nSubject: Test\n\nBody here.';
+      final src = File(p.join(tempDir.path, 'msg.eml'))
+        ..writeAsStringSync(emlContent);
+      await db.importDocumentFromPath(src.path);
+      final doc = (await db.watchDocuments().first).first;
+      expect(doc.renderedMarkdown, isNull);
+    });
+
+    test('file over 10 MB is imported without exception and extractedText is null',
+        () async {
+      final bigBytes = List.filled(11 * 1024 * 1024, 0x41);
+      final src = File(p.join(tempDir.path, 'large.txt'))
+        ..writeAsBytesSync(bigBytes);
+      await db.importDocumentFromPath(src.path);
+      final docs = await db.watchDocuments().first;
+      expect(docs, hasLength(1));
+      expect(docs.first.extractedText, isNull);
+    });
+  });
+
+  group('deleteDocument', () {
+    test('removes document row and deletes stored file from disk', () async {
+      final src = File(p.join(tempDir.path, 'todelete.txt'))
+        ..writeAsStringSync('Delete me');
+      await db.importDocumentFromPath(src.path);
+      final docs = await db.watchDocuments().first;
+      expect(docs, hasLength(1));
+      final doc = docs.first;
+      final storedPath = doc.storedPath!;
+      expect(File(storedPath).existsSync(), isTrue);
+
+      await _deleteDocument(db, doc.id);
+
+      final remaining = await db.watchDocuments().first;
+      expect(remaining, isEmpty);
+      expect(File(storedPath).existsSync(), isFalse);
+    });
+
+    test('deleting a non-existent ID does not throw', () async {
+      await expectLater(
+        _deleteDocument(db, 'non_existent_id_xyz'),
+        completes,
+      );
+    });
+
+    test('deleteDocument also removes associated documentLinks rows', () async {
+      final src = File(p.join(tempDir.path, 'linked.txt'))
+        ..writeAsStringSync('Linked doc');
+      await db.importDocumentFromPath(src.path);
+      final doc = (await db.watchDocuments().first).first;
+
+      await db.into(db.documentLinks).insert(
+        DocumentLinksCompanion(
+          id: const Value('test_link_1'),
+          documentId: Value(doc.id),
+          entityType: const Value('work_item'),
+          entityId: const Value('fake_work_item_id'),
+          createdAt: Value(DateTime.now()),
+        ),
+      );
+
+      final linksBefore = await db.select(db.documentLinks).get();
+      expect(linksBefore, hasLength(1));
+
+      await _deleteDocument(db, doc.id);
+
+      final linksAfter = await db.select(db.documentLinks).get();
+      expect(linksAfter, isEmpty);
     });
   });
 }

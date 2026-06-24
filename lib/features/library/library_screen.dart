@@ -65,7 +65,7 @@ class _LibraryEntry {
       isMedia: isImage,
       projectId: d.projectId,
       extension: d.extension,
-      content: d.renderedMarkdown ?? d.extractedText,
+      content: d.extractedText ?? d.renderedMarkdown,
       createdAt: d.createdAt,
       storedPath: d.storedPath,
       mediaType: isImage ? 'image' : null,
@@ -168,7 +168,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       type: FileType.custom,
       allowedExtensions: [
         'txt', 'md', 'json', 'csv',
-        'log', 'xml', 'yaml', 'yml', 'ini', 'toml', 'rst',
+        'log', 'xml', 'yaml', 'yml', 'ini', 'toml', 'rst', 'rtf',
         'pdf', 'docx', 'doc',
         'html', 'htm', 'eml',
         'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',

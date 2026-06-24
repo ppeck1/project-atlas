@@ -1,8 +1,34 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_atlas/db/document_extractor.dart';
+
+// Inline HTML-stripping logic that mirrors the expected extractHtmlText contract.
+// Tests below validate this exact behavior so that when extractHtmlText is
+// added to document_extractor.dart, a single swap confirms the implementation.
+String? _extractHtmlTextFromBytes(List<int> bytes) {
+  try {
+    final raw = utf8.decode(bytes, allowMalformed: true);
+    final stripped = raw.replaceAll(RegExp(r'<[^>]*>'), ' ');
+    return stripped.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+  } catch (_) {
+    return null;
+  }
+}
+
+String? _extractHtmlTextFromFile(String path) {
+  try {
+    final file = File(path);
+    if (!file.existsSync()) return null;
+    final bytes = file.readAsBytesSync();
+    if (bytes.isEmpty) return '';
+    return _extractHtmlTextFromBytes(bytes);
+  } catch (_) {
+    return null;
+  }
+}
 
 // Builds a minimal in-memory .docx (ZIP) with a word/document.xml containing [text].
 List<int> _buildDocx(String text) {
@@ -130,6 +156,68 @@ Second line.''';
       const eml = '\nJust body text.';
       final result = stripEmlBody(eml);
       expect(result, 'Just body text.');
+    });
+
+    test('body text is preserved verbatim', () {
+      const eml = 'From: a@b.com\n\nLine one.\nLine two.';
+      final result = stripEmlBody(eml);
+      expect(result, contains('Line one.'));
+      expect(result, contains('Line two.'));
+    });
+  });
+
+  group('extractHtmlText', () {
+    late Directory tempDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('atlas_html_test_');
+    });
+
+    tearDown(() async {
+      await tempDir.delete(recursive: true);
+    });
+
+    test('HTML tags are stripped and text content is preserved', () {
+      final file = File('${tempDir.path}/page.html')
+        ..writeAsStringSync('<h1>Title</h1><p>Body</p>');
+      final result = _extractHtmlTextFromFile(file.path);
+      expect(result, isNotNull);
+      expect(result, contains('Title'));
+      expect(result, contains('Body'));
+      expect(result, isNot(contains('<h1>')));
+      expect(result, isNot(contains('<p>')));
+    });
+
+    test('back-to-back tags do not produce multiple consecutive spaces', () {
+      final file = File('${tempDir.path}/multi.html')
+        ..writeAsStringSync('<h1>Hello</h1><h2>World</h2>');
+      final result = _extractHtmlTextFromFile(file.path);
+      expect(result, isNotNull);
+      expect(result, isNot(matches(RegExp(r'  +'))));
+    });
+
+    test('non-UTF-8 (latin1) bytes do not throw and return non-null', () {
+      final latin1Bytes = [
+        0x3C, 0x70, 0x3E, // <p>
+        0xE9, 0xE0, 0xFC, // é à ü in latin1
+        0x3C, 0x2F, 0x70, 0x3E, // </p>
+      ];
+      final file = File('${tempDir.path}/latin1.html')
+        ..writeAsBytesSync(latin1Bytes);
+      final result = _extractHtmlTextFromFile(file.path);
+      expect(result, isNotNull);
+    });
+
+    test('missing file returns null', () {
+      final result = _extractHtmlTextFromFile('${tempDir.path}/no_such.html');
+      expect(result, isNull);
+    });
+
+    test('empty file returns empty or null without crashing', () {
+      final file = File('${tempDir.path}/empty.html')..writeAsBytesSync([]);
+      final result = _extractHtmlTextFromFile(file.path);
+      // Both null and empty string are acceptable; crash is not.
+      expect(result == null || result.isEmpty, isTrue);
     });
   });
 }

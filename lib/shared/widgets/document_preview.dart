@@ -7,7 +7,6 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../db/app_db.dart';
-import '../../db/document_extractor.dart';
 
 class DocumentPreview extends StatelessWidget {
   final Document document;
@@ -29,10 +28,11 @@ class DocumentPreview extends StatelessWidget {
     }
   }
 
-  bool get _shouldLoadText {
-    final ext = _extension;
-    return ext != 'pdf' && ext != 'doc' && ext != 'rtf';
-  }
+  static const _textExtensions = {
+    'txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml',
+    'ini', 'toml', 'rst', 'html', 'htm', 'eml',
+  };
+  bool get _shouldLoadText => _textExtensions.contains(_extension);
 
   String get _extension =>
       (document.extension ?? document.originalFilename.split('.').last)
