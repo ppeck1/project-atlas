@@ -83,12 +83,6 @@ function Resolve-DartCommand {
         return (Resolve-Path -LiteralPath $bundledDart).Path
     }
 
-    # Developer-local fallback — only valid on the original dev machine. Update if running on a different machine.
-    $hostFallback = "B:\dev\flutter\bin\cache\dart-sdk\bin\dart.exe"
-    if (Test-Path -LiteralPath $hostFallback) {
-        return (Resolve-Path -LiteralPath $hostFallback).Path
-    }
-
     Write-Host "ERROR: 'dart' not found in PATH or the resolved Flutter SDK cache." -ForegroundColor Red
     Write-Host "Set PROJECT_ATLAS_DART to an explicit executable path to override discovery." -ForegroundColor Yellow
     exit 1
@@ -97,7 +91,7 @@ function Resolve-DartCommand {
 $FlutterCommand = Resolve-ToolCommand `
     -Name "flutter" `
     -EnvVar "PROJECT_ATLAS_FLUTTER" `
-    -FallbackPaths @("B:\dev\flutter\bin\flutter.bat")
+    -FallbackPaths @()
 $DartCommand = Resolve-DartCommand -FlutterCommand $FlutterCommand
 
 Set-Location $ProjectRoot

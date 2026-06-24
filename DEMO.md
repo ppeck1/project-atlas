@@ -15,7 +15,7 @@ Sample files for all text-based formats are in the `demo/` directory.
 
 ## Part 1 — Library File Import
 
-The Library accepts 27 file extensions via a native Windows file picker.
+The Library accepts 25 file extensions via a native Windows file picker.
 Click **Import** in the Library header to open the picker.
 
 ---
@@ -197,7 +197,7 @@ All three are imported and displayed as plain selectable text. Try importing any
 | 2 | Click the entry — the preview shows an **"Open in system viewer"** button |
 | 3 | Click the button — the file opens in your system's default RTF viewer (WordPad on Windows) |
 
-**Note:** RTF is a binary format. No text is extracted at import; the app-owned copy is stored but not decoded.
+**Note:** RTF uses backslash escape markup sequences that require a dedicated parser to render. No in-app preview is available; the app-owned copy is stored but not decoded.
 
 ---
 

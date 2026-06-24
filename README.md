@@ -51,10 +51,9 @@ python tools\generate_readme_screenshots.py
 .\launch.ps1
 ```
 
-`launch.ps1` uses `flutter` and `dart` from `PATH` when available. If they are
-not on `PATH`, it falls back to `B:\dev\flutter\bin\flutter.bat` and that SDK's
-bundled Dart. Set `PROJECT_ATLAS_FLUTTER` or `PROJECT_ATLAS_DART` to an explicit
-executable path to override discovery.
+`launch.ps1` uses `flutter` and `dart` from `PATH`. Set `PROJECT_ATLAS_FLUTTER`
+or `PROJECT_ATLAS_DART` to an explicit executable path if your Flutter install
+is not on `PATH`.
 
 Manual path:
 
@@ -91,7 +90,7 @@ The Library screen unifies three content types: imported **documents**, project 
 |---|---|---|
 | `.txt`, `.log`, `.csv`, `.xml`, `.yaml`, `.yml`, `.ini`, `.toml`, `.rst` | Plain text (selectable, monospace) | Extracted to `extracted_text` column |
 | `.md` | Rendered Markdown (`flutter_markdown`) | Stored in `rendered_markdown` column |
-| `.json` | Syntax-highlighted, pretty-printed | Extracted to `extracted_text` column |
+| `.json` | Pretty-printed, indented (monospace) | Extracted to `extracted_text` column |
 | `.html`, `.htm` | Rendered HTML (`flutter_html`) | Raw HTML stored in `rendered_markdown`; tag-stripped text in `extracted_text` (searchable) |
 | `.eml` | RFC-2822 headers stripped, body as plain text | Body extracted to `extracted_text` at import |
 | `.docx` | Extracted paragraph text (plain) | Word XML parsed at import; stored in `extracted_text` |
@@ -237,6 +236,6 @@ Generated files and build products are intentionally ignored:
 - Drafts screen as a first-class route
 - Inbound Telegram commands such as `/done`, `/snooze`, and `/add`
 - Project snapshots and decision-log export
-- Restore/import flow for operational backup JSON
+- Restore/import flow for operational backup (ZIP)
 - SQLCipher encrypted storage path before broader distribution
 - Review history browser — `watchRecentDailyReviews()` exists in the DB layer; no history screen yet
