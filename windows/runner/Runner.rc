@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "project_atlas" "\0"
+            VALUE "CompanyName", "Paul Peck" "\0"
+            VALUE "FileDescription", "Project Atlas" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "project_atlas" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Paul Peck. All rights reserved." "\0"
             VALUE "OriginalFilename", "project_atlas.exe" "\0"
-            VALUE "ProductName", "project_atlas" "\0"
+            VALUE "ProductName", "Project Atlas" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
