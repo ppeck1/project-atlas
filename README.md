@@ -89,17 +89,16 @@ The Library screen unifies three content types: imported **documents**, project 
 
 | Extension(s) | Preview | Content at import |
 |---|---|---|
-| `.txt`, `.csv` | Plain text (selectable) | Extracted to `extracted_text` column |
-| `.md` | Rendered Markdown | Stored in `rendered_markdown` column |
+| `.txt`, `.log`, `.csv`, `.xml`, `.yaml`, `.yml`, `.ini`, `.toml`, `.rst` | Plain text (selectable, monospace) | Extracted to `extracted_text` column |
+| `.md` | Rendered Markdown (`flutter_markdown`) | Stored in `rendered_markdown` column |
 | `.json` | Syntax-highlighted, pretty-printed | Extracted to `extracted_text` column |
-| `.html`, `.htm` | Rendered HTML via `flutter_html` | Read from disk on open |
-| `.eml` | RFC-2822 headers stripped, body shown as plain text | Read from disk on open |
+| `.html`, `.htm` | Rendered HTML (`flutter_html`) | Raw HTML stored in `rendered_markdown`; tag-stripped text in `extracted_text` (searchable) |
+| `.eml` | RFC-2822 headers stripped, body as plain text | Body extracted to `extracted_text` at import |
 | `.docx` | Extracted paragraph text (plain) | Word XML parsed at import; stored in `extracted_text` |
-| `.doc` | "Open in system viewer" button | No extraction |
-| `.pdf` | "Open in system viewer" button | No extraction |
+| `.doc`, `.rtf`, `.pdf`, `.svg` | "Open in system viewer" button | No extraction |
 | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp` | Inline `InteractiveViewer` with pan/zoom | None (binary) |
 
-All imported files are **copied** into the app data directory (`atlas_documents/` subfolder). Moving or deleting the original has no effect on the stored copy.
+All imported files are **copied** into the app data directory (`atlas_documents/` subfolder). Moving or deleting the original has no effect on the stored copy. Deleting a document record via the Library UI also deletes the app-owned copy from disk.
 
 MIME type is detected at import and saved to the `mime_type` column. Image documents are tagged `mediaType: 'image'` internally so they appear under the **Images** filter and use the image viewer.
 
@@ -203,7 +202,7 @@ lib/
     widgets/     shell, dialogs, pickers, document_preview
 ```
 
-`lib/db/document_extractor.dart` — standalone pure-Dart utilities: `extractDocxTextFromBytes`, `mimeTypeForExtension`, `stripEmlBody`. Used by both `AppDb` and `DocumentPreview`; fully unit-tested without Flutter dependencies.
+`lib/db/document_extractor.dart` — standalone pure-Dart utilities: `textDocumentExtensions` (const Set), `shouldLoadDocumentText()`, `extractDocxTextFromBytes()`, `extractHtmlText()`, `mimeTypeForExtension()`, `stripEmlBody()`. Used by both `AppDb` and `DocumentPreview`; fully unit-tested without Flutter dependencies.
 
 See `VARIABLE_MAP.md` for complete table columns, service fields, data flows, and migration notes.
 See `HANDOFF.md` for project context, design decisions, and known issues.

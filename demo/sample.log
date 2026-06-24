@@ -1,0 +1,8 @@
+2024-06-01 08:00:01 INFO  [startup] Application started (v1.3.0+1)
+2024-06-01 08:00:02 DEBUG [db] Schema version 10 verified
+2024-06-01 08:00:03 INFO  [sync] Background summary refresh scheduled in 10s
+2024-06-01 08:01:15 INFO  [ollama] Structured summary generated for project P-001
+2024-06-01 08:02:00 WARN  [telegram] Bot token not configured — send skipped
+2024-06-01 09:14:44 ERROR [import] File read failed: permission denied on /tmp/locked.pdf
+2024-06-01 09:15:01 INFO  [import] Document imported: report.docx (14 KB)
+2024-06-01 10:30:00 INFO  [review] Daily review saved for 2024-06-01

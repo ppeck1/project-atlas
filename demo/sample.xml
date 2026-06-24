@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project id="P-001">
+  <title>Project Atlas</title>
+  <status>active</status>
+  <phase>build</phase>
+  <owner>Paul Peck</owner>
+  <milestones>
+    <milestone id="M1">
+      <name>Library overhaul</name>
+      <due>2024-06-30</due>
+      <complete>true</complete>
+    </milestone>
+    <milestone id="M2">
+      <name>In-app PDF rendering</name>
+      <due>2024-09-30</due>
+      <complete>false</complete>
+    </milestone>
+  </milestones>
+  <tags>
+    <tag>desktop</tag>
+    <tag>flutter</tag>
+    <tag>local-first</tag>
+  </tags>
+</project>

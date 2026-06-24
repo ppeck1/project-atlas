@@ -24,20 +24,25 @@ The core problem it solves: on any given morning, what am I doing, what is block
 
 **Schema migrations are defensive.** `addColumn` calls are wrapped in typed `on SqliteException` catches that only swallow duplicate-column errors and rethrow anything else. New tables use `CREATE TABLE IF NOT EXISTS` in the startup repair path. This means a partially-applied migration from a crash won't re-crash on the next open.
 
-**App-owned file copies.** When files are added to a project's media gallery or the document library, they are copied into the app data directory. For project media the copy goes into the app data root; for Library documents it goes into `atlas_documents/` inside `getApplicationDocumentsDirectory()`. The `stored_path` column points to the copy. The original source path is not preserved. Deleting a record does not delete the copy; manual cleanup via Admin → Open app data folder.
+**App-owned file copies.** When files are added to a project's media gallery or the document library, they are copied into the app data directory. For project media the copy goes into the app data root; for Library documents it goes into `atlas_documents/` inside `getApplicationDocumentsDirectory()`. The `stored_path` column points to the copy. The original source path is not preserved. For Library documents, `AppDb.deleteDocument(id)` removes the DB row, cascades document_links, and deletes the disk file. For project media, deleting a record does not delete the copied file — manual cleanup via Admin → Open app data folder.
 
 **Document library import pipeline.** `importDocumentFromPath(path)` in `AppDb`:
 1. Copies the file into `<appDocDir>/atlas_documents/<id>.<ext>`.
 2. Detects MIME type via `mimeTypeForExtension(ext)` and saves it to `mime_type`.
-3. For text-extractable types, reads content immediately and stores it in the DB:
-   - `.txt`, `.csv`, `.json` → `extracted_text`
+3. Files over 10 MB skip text extraction; both text columns stay null.
+4. For text-extractable types, reads content immediately and stores it in the DB:
+   - `.txt`, `.log`, `.csv`, `.xml`, `.yaml`, `.yml`, `.ini`, `.toml`, `.rst`, `.json` → `extracted_text`
    - `.md` → `rendered_markdown`
+   - `.html`/`.htm` → raw HTML into `rendered_markdown`; `extractHtmlText()` result (tags stripped) into `extracted_text` (dual storage: renders rich, searches clean)
+   - `.eml` → `stripEmlBody()` result into `extracted_text`
    - `.docx` → `extracted_text` (DOCX XML parsed by `extractDocxTextFromBytes` in `document_extractor.dart`)
-4. Binary types (pdf, doc, images) get no extraction; `extracted_text` and `rendered_markdown` remain null.
+5. Binary types (`.pdf`, `.doc`, `.rtf`, `.svg`, images) get no extraction; both text columns remain null.
+
+`document_extractor.dart` exports a `textDocumentExtensions` const Set and `shouldLoadDocumentText(ext)` function as the single source of truth used by the picker allowlist, the importer, and `DocumentPreview`.
 
 The extraction helpers live in `lib/db/document_extractor.dart` as standalone pure-Dart functions — no Flutter dependency — making them fully unit-testable.
 
-**Library entry model bridges documents and media.** `_LibraryEntry.fromDocument` in `library_screen.dart` detects image extensions (`jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`) and sets `isMedia: true` + `mediaType: 'image'`. This lets Library-imported images appear in the Images filter and use the `InteractiveViewer` image path without any special-casing in the viewer widget. Documents with `content == null` and no image type fall through to `DocumentPreview`, which handles HTML, EML, PDF (external viewer), and DOCX.
+**Library entry model bridges documents and media.** `_LibraryEntry.fromDocument` in `library_screen.dart` detects image extensions (`jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`) and sets `isMedia: true` + `mediaType: 'image'`. This lets Library-imported images appear in the Images filter and use the `InteractiveViewer` image path. The entry's `content` field uses `extractedText ?? renderedMarkdown` (stripped text first, so HTML search/copy doesn't expose raw markup). Documents with `content == null` and no image type fall through to `DocumentPreview`, which handles the full extension matrix: rendered Markdown, pretty-printed JSON, rendered HTML, EML body text, plain text, external-viewer prompt (PDF, RTF, SVG, .doc), and DOCX extracted text.
 
 **Structured AI Summary (two-layer design).** The project summary system separates LLM output from UI rendering. Ollama is called with `format:"json"` (an Ollama API parameter that forces valid JSON output), and the Flutter app renders the parsed result deterministically. This means the UI layout is never at the mercy of LLM prose formatting. All typed input/output models for the summary pipeline live in `lib/services/project_summary_models.dart`. `ProjectSummaryResult.tryParse()` handles three common LLM failure modes: `<think>…</think>` reasoning blocks (Qwen models), markdown code fences, and JSON parsing errors — returning null on any failure so the UI can gracefully fall back to prose. The system prompt instructs the model to use only supplied data and never invent document IDs, paths, people, or work assignments.
 

@@ -234,14 +234,17 @@ Key-value store for all runtime settings and active-state flags.
 **Import pipeline:**
 1. Copies the source file to `atlas_documents/<id>.<ext>` via `File.copy()`.
 2. Saves `mimeType` via `mimeTypeForExtension(ext)`.
-3. For `.txt`/`.csv`/`.json`: reads the file as a string into `extractedText`.
-4. For `.md`: reads into `renderedMarkdown`.
-5. For `.docx`: calls `extractDocxText(destPath)` from `document_extractor.dart`; stores result in `extractedText`.
-6. Binary types (`.pdf`, `.doc`, `.jpg`, etc.): no extraction; both text columns remain null.
+3. Files over 10 MB: skips text extraction; both text columns remain null.
+4. For `.txt`, `.csv`, `.json`, `.log`, `.xml`, `.yaml`, `.yml`, `.ini`, `.toml`, `.rst`: reads as UTF-8 (latin1 fallback) into `extractedText`.
+5. For `.md`: reads into `renderedMarkdown`.
+6. For `.html`/`.htm`: raw HTML stored in `renderedMarkdown`; `extractHtmlText()` result (tags stripped) stored in `extractedText`. This dual-storage allows rich rendering and full-text search from the same document.
+7. For `.eml`: `stripEmlBody(raw)` result stored in `extractedText`; `renderedMarkdown` is null.
+8. For `.docx`: calls `extractDocxText(destPath)` from `document_extractor.dart`; stores result in `extractedText`.
+9. Binary types (`.pdf`, `.doc`, `.rtf`, `.svg`, images): no extraction; both text columns remain null.
 
-**Library entry model behavior:** `_LibraryEntry.fromDocument` in `library_screen.dart` sets `content = renderedMarkdown ?? extractedText`. If `content` is null and the entry has a `document` reference, `_EntryViewer` delegates rendering to `DocumentPreview`. Image extensions (`jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`) additionally receive `isMedia: true` + `mediaType: 'image'`, routing them to the `InteractiveViewer` image path.
+**Library entry model behavior:** `_LibraryEntry.fromDocument` in `library_screen.dart` sets `content = extractedText ?? renderedMarkdown`. (Note: `extractedText` is preferred so HTML search/copy uses stripped text, not raw markup.) If `content` is null and the entry has a `document` reference, `_EntryViewer` delegates rendering to `DocumentPreview`. `DocumentPreview` uses `renderedMarkdown ?? extractedText` for display — which means HTML renders via `flutter_html` on the raw HTML stored in `renderedMarkdown`. Image extensions (`jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`) additionally receive `isMedia: true` + `mediaType: 'image'`, routing them to the `InteractiveViewer` image path.
 
-**Quirks:** Moving or deleting the original source file does not affect the stored copy. Deleting a `documents` record does not delete the app-owned copy — clean up manually via Admin → Open app data folder.
+**Quirks:** Moving or deleting the original source file does not affect the stored copy. `AppDb.deleteDocument(id)` deletes the `document_links` rows, the `documents` row, and the app-owned file from disk in one call. `AppState.deleteDocument(id)` wraps this and calls `notifyListeners()`.
 
 ---
 
@@ -417,7 +420,7 @@ Data class: `ProjectMediaItem`
 
 **Written by:** `addProjectMedia()`, `updateProjectMedia()`, `deleteProjectMedia()`, `setProjectCoverImage()`  
 **Read by:** `watchProjectMedia()` → `ProjectDetailScreen` Media gallery  
-**Quirks:** App-owned copies are stored under the app data directory. Deleting a media record does **not** auto-delete the copied file — cleanup is manual via "Open app data folder" in Admin.
+**Quirks:** App-owned copies are stored under the app data directory. Deleting a `project_media` record does **not** auto-delete the copied file — cleanup is manual via "Open app data folder" in Admin. (Note: `documents` records use `AppDb.deleteDocument()` which does clean up the disk file; `project_media` records do not have an equivalent.)
 
 ---
 
@@ -436,13 +439,16 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 
 **`_backgroundSummaryRefresh()`** — private async method; checks Ollama availability, iterates active projects, skips if today's draft already exists, calls `summarizeProjectFull()`, applies a 3 s delay between projects.
 
-**New AppState methods:**
+**AppState document methods:**
 
 | Method | Returns | Notes |
 |--------|---------|-------|
+| `importDocumentFromPath(path, {projectId})` | `Future<void>` | Delegates to `db.importDocumentFromPath`, then `notifyListeners()`. |
+| `deleteDocument(id)` | `Future<void>` | Calls `db.deleteDocument(id)` (removes document_links, documents row, and disk file), then `notifyListeners()`. |
 | `getLatestProjectSummaryDraft(projectId)` | `Future<Draft?>` | Delegate to `db.getLatestProjectSummaryDraft(projectId)`. |
 | `getDocumentPathsForProject(projectId)` | `Future<Map<String, String?>>` | Delegate to `db.getDocumentPathsForProject(projectId)`. |
 | `summarizeProjectFull(projectId)` | `Future<ProjectSummaryOutcome>` | Return type changed from `OllamaResult`. Now also fetches people, risks, decisions, and document excerpts (3000 chars/doc, 16000 total cap); auto-saves to Drafts on success. |
+| `exportOperationalBackupToJson(path)` | `Future<void>` | Exports a ZIP archive to `path` containing `backup.json` (all DB tables serialized) plus `documents/<id>.<ext>` and `media/<id>.<ext>` entries for all stored files. |
 
 **Key exposed streams:**
 
@@ -488,14 +494,18 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 
 Standalone pure-Dart utility module. No Flutter dependency; fully unit-testable. Used by both `AppDb` (at import time) and `DocumentPreview` (at render time).
 
-| Function | Signature | Notes |
-|----------|-----------|-------|
+| Export | Type / Signature | Notes |
+|--------|-----------------|-------|
+| `textDocumentExtensions` | `const Set<String>` | Single source of truth for which extensions are decoded as text: `{txt, md, json, csv, log, xml, yaml, yml, ini, toml, rst, html, htm, eml}`. Referenced by the file picker allowlist, import pipeline, and preview widget. |
+| `shouldLoadDocumentText(extension)` | `bool Function(String extension)` | Returns true when `extension` (any case, no dot) is in `textDocumentExtensions`. Called by `DocumentPreview._shouldLoadText` to decide whether to disk-read the file. |
+| `extractHtmlText(path)` | `String? Function(String path)` | Reads a file at `path` as UTF-8 (latin1 fallback on `FormatException`), strips all `<[^>]+>` HTML tags, collapses consecutive spaces, and trims. Returns null on any I/O failure. Used by `AppDb.importDocumentFromPath` to populate `extractedText` for `.html`/`.htm` files. |
 | `extractDocxText(path)` | `String? Function(String path)` | Reads `.docx` bytes from disk, delegates to `extractDocxTextFromBytes`. Returns null on any I/O or parse failure. |
 | `extractDocxTextFromBytes(bytes)` | `String? Function(List<int> bytes)` | Unzips the DOCX (ZIP format) via the `archive` package, finds `word/document.xml`, UTF-8 decodes it, parses XML via the `xml` package, extracts all `<w:t>` inner text nodes with `<w:p>` paragraph separators. Returns null on failure. |
 | `mimeTypeForExtension(ext)` | `String? Function(String? ext)` | Calls `lookupMimeType('file.$ext')` from the `mime` package. Returns null for null input or unknown extensions. Used by `AppDb.importDocumentFromPath` and `AppDb.addProjectMedia`. |
-| `stripEmlBody(raw)` | `String Function(String raw)` | Splits the EML string on newlines, discards all lines up to and including the first blank line (RFC-2822 header/body separator), returns trimmed body. Used by `DocumentPreview` for `.eml` files. |
+| `stripEmlBody(raw)` | `String Function(String raw)` | Splits the EML string on newlines, discards all lines up to and including the first blank line (RFC-2822 header/body separator), returns trimmed body. Used by `AppDb.importDocumentFromPath` (stored in `extractedText`) and by `DocumentPreview` (renders the stored value directly without re-stripping). |
 
-**Tests:** `test/document_extractor_test.dart` — covers DOCX extraction (valid, invalid, empty, multi-paragraph, UTF-8), MIME lookup (common types, null, unknown), and EML body stripping (headers present, no body, body-only input).
+**Tests:** `test/document_extractor_test.dart` — covers DOCX extraction (valid, invalid, empty, multi-paragraph, UTF-8), MIME lookup (common types, null, unknown), EML body stripping (headers, no body, body-only), and `extractHtmlText` (tags stripped, no double-spaces, latin1, missing file, empty file).  
+**Tests:** `test/document_preview_allowlist_test.dart` — covers `shouldLoadDocumentText` (all text extensions return true, binary extensions return false, case-insensitive).
 
 ---
 
@@ -687,35 +697,46 @@ Settings → Workforce → select contact → _ContactDetail
 ### Document Library Import
 ```
 LibraryScreen → _importByPath()
-  → FilePicker.platform.pickFiles(allowedExtensions: [txt,md,json,csv,pdf,docx,doc,html,htm,eml,jpg,jpeg,png,gif,webp,bmp])
+  → FilePicker.platform.pickFiles(allowedExtensions:
+      [txt,md,json,csv,log,xml,yaml,yml,ini,toml,rst,rtf,
+       pdf,docx,doc,html,htm,eml,jpg,jpeg,png,gif,webp,bmp,svg])
   → AppState.importDocumentFromPath(path)
     → AppDb.importDocumentFromPath(path, {projectId})
       → File(path).existsSync()  ← throws FileSystemException if missing
       → File.copy(destPath)      ← destPath = atlas_documents/<id>.<ext>
       → mimeTypeForExtension(ext) ← document_extractor.dart
-      → if txt/csv/json: File(destPath).readAsString() → extractedText
-      → if md: File(destPath).readAsString() → renderedMarkdown
+      → if file > 10 MB: skip extraction (both columns stay null)
+      → if shouldLoadDocumentText(ext) && ext not in {html,htm,eml,md}:
+          File(destPath).readAsString(utf8, fallback latin1) → extractedText
+      → if md: readAsString() → renderedMarkdown
+      → if html/htm:
+          raw → renderedMarkdown
+          extractHtmlText(destPath) → extractedText  ← dual storage
+      → if eml:
+          stripEmlBody(readAsString()) → extractedText
       → if docx: extractDocxText(destPath) → extractedText
-        → ZipDecoder().decodeBytes(bytes)
-        → archive.findFile('word/document.xml')
-        → XmlDocument.parse(utf8.decode(content))
-        → collect <w:t> nodes, separate <w:p> with newlines
+          → ZipDecoder().decodeBytes(bytes)
+          → archive.findFile('word/document.xml')
+          → XmlDocument.parse(utf8.decode(content))
+          → collect <w:t> nodes, separate <w:p> with newlines
       → INSERT INTO documents (storedPath=destPath, mimeType, extractedText, renderedMarkdown, ...)
   → watchDocuments() stream fires → LibraryScreen rebuilds
   → _LibraryEntry.fromDocument(d)
       → if ext in {jpg,jpeg,png,gif,webp,bmp}: isMedia=true, mediaType='image'
-      → content = d.renderedMarkdown ?? d.extractedText
+      → content = d.extractedText ?? d.renderedMarkdown  ← stripped text preferred
   → _EntryViewer renders:
       → mediaType='image' → InteractiveViewer(Image.file)
-      → content != null  → SelectableText(content)
+      → content != null  → SelectableText(content)  [for most text types]
       → document != null → DocumentPreview(document)
-          → ext='md'          → Markdown widget
-          → ext='json'        → _CodeBlock (pretty-printed)
-          → ext='html'/'htm'  → Html widget (flutter_html)
-          → ext='eml'         → _CodeBlock(stripEmlBody(body))
-          → ext='txt'/'csv'   → _CodeBlock(body)
-          → ext='pdf'         → _ExternalViewerPrompt (url_launcher)
-          → ext='docx'/'doc'  → _CodeBlock(body) if content, else _ExternalViewerPrompt
+          → _shouldLoadText (shouldLoadDocumentText) decides if disk-read needed
+          → display uses: renderedMarkdown ?? extractedText
+          → ext='md'               → Markdown widget (flutter_markdown)
+          → ext='json'             → _CodeBlock (JsonEncoder.withIndent)
+          → ext='html'/'htm'       → Html widget (flutter_html) on renderedMarkdown
+          → ext='eml'              → _CodeBlock(body) — body already stripped at import
+          → ext in text extensions → _CodeBlock(body)
+          → ext='pdf'/'rtf'/'svg'  → _ExternalViewerPrompt (url_launcher)
+          → ext='docx'/'doc'       → _CodeBlock(body) if content, else _ExternalViewerPrompt
 ```
 
 ---
