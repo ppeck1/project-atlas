@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -657,71 +658,68 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   Future<void> _showImportMediaDialog(BuildContext context) async {
     final state = AppStateScope.of(context);
-    final pathCtrl = TextEditingController();
-    final titleCtrl = TextEditingController();
-    final captionCtrl = TextEditingController();
-    var makeCover = false;
+    // Step 1: native picker
+    final result = await FilePicker.platform.pickFiles(type: FileType.any);
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) return;
+    final defaultTitle = result.files.single.name;
 
-    await showDialog<void>(
+    // Step 2: title + cover option dialog
+    final titleCtrl = TextEditingController(text: defaultTitle);
+    bool makeCover = false;
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          backgroundColor: _kPanel,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: const BorderSide(color: _kLine),
-          ),
+        builder: (ctx, setDialogState) => AlertDialog(
           title: const Text('Add project media'),
           content: SizedBox(
-            width: 560,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _mf(pathCtrl, r'Local image or file path'),
-                  _mf(titleCtrl, 'Title (optional)'),
-                  _mf(captionCtrl, 'Caption / note', multiline: true),
-                  CheckboxListTile(
-                    value: makeCover,
-                    onChanged: (v) => setLocal(() => makeCover = v ?? false),
-                    title: const Text('Use as cover image'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ],
-              ),
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(defaultTitle, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: titleCtrl,
+                  decoration: const InputDecoration(labelText: 'Title (optional)', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  value: makeCover,
+                  onChanged: (v) => setDialogState(() => makeCover = v ?? false),
+                  title: const Text('Set as cover image'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ],
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton.icon(
-              onPressed: () async {
-                final path = _nt(pathCtrl.text);
-                if (path == null) return;
-                final mediaId = await state.importProjectMediaFromPath(
-                  widget.projectId,
-                  path,
-                  title: _nt(titleCtrl.text),
-                  caption: _nt(captionCtrl.text),
-                  isCover: makeCover,
-                );
-                if (makeCover) {
-                  await state.setProjectCoverMedia(widget.projectId, mediaId);
-                }
-                if (ctx.mounted) Navigator.of(ctx).pop();
-              },
-              icon: const Icon(Icons.upload_file, size: 16),
-              label: const Text('Import'),
-            ),
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
           ],
         ),
       ),
     );
-    pathCtrl.dispose();
+    final titleText = titleCtrl.text.trim();
     titleCtrl.dispose();
-    captionCtrl.dispose();
+    if (confirmed != true) return;
+
+    try {
+      final mediaId = await state.importProjectMediaFromPath(
+        widget.projectId,
+        path,
+        title: titleText.isEmpty ? null : titleText,
+        isCover: makeCover,
+      );
+      if (makeCover) {
+        await state.setProjectCoverMedia(widget.projectId, mediaId);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+      }
+    }
   }
 
   Future<void> _showAddPersonDialog(BuildContext context) async {

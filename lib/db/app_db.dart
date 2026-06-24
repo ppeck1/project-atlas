@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
@@ -1501,33 +1502,81 @@ class AppDb extends _$AppDb {
 
     String? extractedTextValue;
     String? renderedMarkdownValue;
-    const _textTypes = {'txt', 'csv', 'json'};
-    if (ext != null) {
-      if (_textTypes.contains(ext)) {
-        extractedTextValue = await File(destPath).readAsString();
-      } else if (ext == 'md') {
-        renderedMarkdownValue = await File(destPath).readAsString();
-      } else if (ext == 'docx') {
-        extractedTextValue = extractDocxText(destPath);
+    const _maxExtractBytes = 10 * 1024 * 1024;
+    const _textTypes = {
+      'txt', 'csv', 'json', 'log', 'xml', 'yaml', 'yml',
+      'ini', 'toml', 'rst', 'rtf', 'svg',
+    };
+    try {
+      if (ext != null) {
+        final destFile = File(destPath);
+        final fileSize = await destFile.length();
+        if (fileSize <= _maxExtractBytes) {
+          Future<String> readText() async {
+            try {
+              return await destFile.readAsString();
+            } on FormatException {
+              final bytes = await destFile.readAsBytes();
+              return latin1.decode(bytes);
+            }
+          }
+
+          if (_textTypes.contains(ext)) {
+            extractedTextValue = await readText();
+          } else if (ext == 'md') {
+            renderedMarkdownValue = await readText();
+          } else if (ext == 'docx') {
+            extractedTextValue = extractDocxText(destPath);
+          } else if (ext == 'html' || ext == 'htm') {
+            extractedTextValue = extractHtmlText(destPath);
+          } else if (ext == 'eml') {
+            final raw = await readText();
+            extractedTextValue = stripEmlBody(raw);
+          }
+        }
       }
+    } catch (_) {
+      // Extraction failure must not prevent the DB record from being created.
+      extractedTextValue = null;
+      renderedMarkdownValue = null;
     }
 
-    await into(documents).insert(
-      DocumentsCompanion(
-        id: Value(id),
-        title: Value(name),
-        originalFilename: Value(name),
-        storedPath: Value(destPath),
-        extension: Value(ext),
-        mimeType: Value(mimeTypeForExtension(ext)),
-        projectId: Value(projectId),
-        status: const Value('imported'),
-        extractedText: Value(extractedTextValue),
-        renderedMarkdown: Value(renderedMarkdownValue),
-        createdAt: Value(now),
-        updatedAt: Value(now),
-      ),
-    );
+    try {
+      await into(documents).insert(
+        DocumentsCompanion(
+          id: Value(id),
+          title: Value(name),
+          originalFilename: Value(name),
+          storedPath: Value(destPath),
+          extension: Value(ext),
+          mimeType: Value(mimeTypeForExtension(ext)),
+          projectId: Value(projectId),
+          status: const Value('imported'),
+          extractedText: Value(extractedTextValue),
+          renderedMarkdown: Value(renderedMarkdownValue),
+          createdAt: Value(now),
+          updatedAt: Value(now),
+        ),
+      );
+    } catch (e) {
+      // Clean up the copied file if the DB insert fails.
+      try {
+        final copied = File(destPath);
+        if (await copied.exists()) await copied.delete();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  Future<void> deleteDocument(String id) async {
+    final doc = await (select(documents)..where((d) => d.id.equals(id))).getSingleOrNull();
+    if (doc == null) return;
+    await (delete(documentLinks)..where((l) => l.documentId.equals(id))).go();
+    await (delete(documents)..where((d) => d.id.equals(id))).go();
+    if (doc.storedPath != null) {
+      final file = File(doc.storedPath!);
+      if (await file.exists()) await file.delete();
+    }
   }
 
   // ── Event log ─────────────────────────────────────────────────────────────

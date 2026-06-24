@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -842,6 +843,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> deleteDocument(String id) async {
+    await db.deleteDocument(id);
+    notifyListeners();
+  }
+
   Future<Directory> _projectMediaDirectory(String projectId) async {
     final supportDir = await getApplicationSupportDirectory();
     final dir = Directory(p.join(supportDir.path, 'project_media', projectId));
@@ -1340,15 +1346,31 @@ class AppState extends ChangeNotifier {
 
   Future<String> getAppDataPath() async {
     final supportDir = await getApplicationSupportDirectory();
-    return supportDir.path;
+    final docsDir = p.join(
+      (await getApplicationDocumentsDirectory()).path,
+      'atlas_documents',
+    );
+    return '${supportDir.path}\n$docsDir';
   }
 
   Future<void> openAppDataFolder() async {
     final supportDir = await getApplicationSupportDirectory();
     await Process.start('explorer.exe', [supportDir.path]);
+    final docsDir = Directory(
+      p.join(
+        (await getApplicationDocumentsDirectory()).path,
+        'atlas_documents',
+      ),
+    );
+    if (docsDir.existsSync()) {
+      await Process.start('explorer.exe', [docsDir.path]);
+    }
   }
 
   Future<int> exportOperationalBackupToJson(String path) async {
+    final allDocs = await db.select(db.documents).get();
+    final allMedia = await db.getAllProjectMedia();
+
     final payload = {
       'schema': 'project_atlas_operational_backup_v1',
       'exportedAt': DateTime.now().toIso8601String(),
@@ -1359,9 +1381,7 @@ class AppState extends ChangeNotifier {
       'projectTags': (await db.select(db.projectTags).get())
           .map((row) => row.toJson())
           .toList(),
-      'projectMedia': (await db.getAllProjectMedia())
-          .map((row) => row.toJson())
-          .toList(),
+      'projectMedia': allMedia.map((row) => row.toJson()).toList(),
       'stages': (await db.select(db.stages).get())
           .map((row) => row.toJson())
           .toList(),
@@ -1374,9 +1394,7 @@ class AppState extends ChangeNotifier {
       'workItemAnalyses': (await db.select(db.workItemAnalyses).get())
           .map((row) => row.toJson())
           .toList(),
-      'documents': (await db.select(db.documents).get())
-          .map((row) => row.toJson())
-          .toList(),
+      'documents': allDocs.map((row) => row.toJson()).toList(),
       'documentLinks': (await db.select(db.documentLinks).get())
           .map((row) => row.toJson())
           .toList(),
@@ -1397,9 +1415,44 @@ class AppState extends ChangeNotifier {
           .map((row) => row.toJson())
           .toList(),
     };
-    await File(
-      path,
-    ).writeAsString(const JsonEncoder.withIndent('  ').convert(payload));
+
+    final archive = Archive();
+
+    // Add backup.json
+    final jsonBytes = utf8.encode(
+      const JsonEncoder.withIndent('  ').convert(payload),
+    );
+    archive.addFile(ArchiveFile('backup.json', jsonBytes.length, jsonBytes));
+
+    // Add document files
+    for (final doc in allDocs) {
+      if (doc.storedPath != null) {
+        final f = File(doc.storedPath!);
+        if (await f.exists()) {
+          final bytes = await f.readAsBytes();
+          final name = 'documents/${doc.id}.${doc.extension ?? 'bin'}';
+          archive.addFile(ArchiveFile(name, bytes.length, bytes));
+        }
+      }
+    }
+
+    // Add project media files
+    for (final m in allMedia) {
+      final f = File(m.storedPath);
+      if (await f.exists()) {
+        final bytes = await f.readAsBytes();
+        final ext =
+            m.extension ?? m.storedPath.split('.').lastOrNull ?? 'bin';
+        archive.addFile(
+          ArchiveFile('media/${m.id}.$ext', bytes.length, bytes),
+        );
+      }
+    }
+
+    // Write ZIP
+    final zipBytes = ZipEncoder().encode(archive)!;
+    await File(path).writeAsBytes(zipBytes);
+
     await db.logEvent(
       area: 'backup',
       action: 'operational_backup_exported',

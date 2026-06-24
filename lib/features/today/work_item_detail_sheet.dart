@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -315,50 +316,27 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
   }
 
   Future<void> _importDocument() async {
-    final ctrl = TextEditingController();
-    final path = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Import document'),
-        content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(
-            labelText: 'Local file path',
-            hintText: r'C:\Users\you\Documents\spec.md',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (_) => Navigator.pop(ctx, ctrl.text.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('Import'),
-          ),
-        ],
-      ),
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      allowMultiple: false,
     );
-    ctrl.dispose();
-    if (path == null || path.trim().isEmpty) return;
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) return;
     try {
-      await _state.importDocumentFromPath(path.trim());
+      await _state.importDocumentFromPath(path);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Document imported. Use Link existing document to attach it.',
-            ),
+            content: Text('Document imported. Use Link existing document to attach it.'),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e')),
+        );
       }
     }
   }

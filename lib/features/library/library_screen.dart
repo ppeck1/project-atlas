@@ -376,6 +376,57 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                                   }
                                                 }
                                               : null,
+                                          onDeleteDoc: selected.document != null && !selected.isDraft && !selected.isMedia
+                                              ? () async {
+                                                  final ok = await showDialog<bool>(
+                                                    context: context,
+                                                    builder: (ctx) => AlertDialog(
+                                                      backgroundColor: _panel,
+                                                      title: Text(
+                                                        'Delete ${selected.title}?',
+                                                      ),
+                                                      content: const Text(
+                                                        'This permanently removes the file from disk.',
+                                                      ),
+                                                      actions: [
+                                                        TextButton(
+                                                          onPressed: () =>
+                                                              Navigator.pop(
+                                                                ctx,
+                                                                false,
+                                                              ),
+                                                          child: const Text(
+                                                            'Cancel',
+                                                          ),
+                                                        ),
+                                                        FilledButton(
+                                                          style:
+                                                              FilledButton.styleFrom(
+                                                                backgroundColor:
+                                                                    Colors.red,
+                                                              ),
+                                                          onPressed: () =>
+                                                              Navigator.pop(
+                                                                ctx,
+                                                                true,
+                                                              ),
+                                                          child: const Text(
+                                                            'Delete',
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  );
+                                                  if (ok == true && mounted) {
+                                                    await state.deleteDocument(
+                                                      selected.document!.id,
+                                                    );
+                                                    setState(
+                                                      () => _selectedId = null,
+                                                    );
+                                                  }
+                                                }
+                                              : null,
                                         ),
                                 ),
                               ],
@@ -745,12 +796,14 @@ class _EntryViewer extends StatelessWidget {
   final List<Project> projects;
   final VoidCallback? onOpenFile;
   final VoidCallback? onDeleteDraft;
+  final VoidCallback? onDeleteDoc;
 
   const _EntryViewer({
     required this.entry,
     required this.projects,
     this.onOpenFile,
     this.onDeleteDraft,
+    this.onDeleteDoc,
   });
 
   String _formatDate(DateTime dt) {
@@ -900,6 +953,13 @@ class _EntryViewer extends StatelessWidget {
                       onTap: onDeleteDraft!,
                       danger: true,
                     ),
+                  if (onDeleteDoc != null)
+                    _ActionBtn(
+                      icon: Icons.delete_outline,
+                      label: 'Delete',
+                      onTap: onDeleteDoc!,
+                      danger: true,
+                    ),
                 ],
               ),
             ],
@@ -928,7 +988,7 @@ class _EntryViewer extends StatelessWidget {
                             ),
                           ),
                   )
-                : entry.document != null && (content == null || content.isEmpty)
+                : entry.document != null
                 ? DocumentPreview(document: entry.document!)
                 : content == null || content.isEmpty
                 ? const Center(

@@ -37,6 +37,23 @@ String stripEmlBody(String raw) {
   return body.join('\n').trim();
 }
 
+/// Strips HTML tags from a file at [path], returning plain text.
+/// Returns null if the file cannot be read.
+String? extractHtmlText(String path) {
+  try {
+    final bytes = File(path).readAsBytesSync();
+    String raw;
+    try {
+      raw = utf8.decode(bytes);
+    } catch (_) {
+      raw = latin1.decode(bytes);
+    }
+    return raw.replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r' {2,}'), ' ').trim();
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Extracts plain text from raw .docx bytes (ZIP containing word/document.xml).
 /// Returns null if parsing fails.
 String? extractDocxTextFromBytes(List<int> bytes) {
