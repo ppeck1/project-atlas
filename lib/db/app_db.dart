@@ -1396,7 +1396,7 @@ class AppDb extends _$AppDb {
       originalFilename: filename,
       storedPath: path,
       mediaType: _mediaTypeForExtension(cleanExt),
-      mimeType: _mimeTypeForExtension(cleanExt),
+      mimeType: mimeTypeForExtension(cleanExt),
       extension: cleanExt,
       byteSize: stat.size,
       fileModifiedAt: stat.modified,

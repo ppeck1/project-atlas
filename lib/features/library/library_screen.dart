@@ -52,17 +52,26 @@ class _LibraryEntry {
     this.document,
   });
 
-  static _LibraryEntry fromDocument(Document d) => _LibraryEntry(
-    id: d.id,
-    title: d.title,
-    isDraft: false,
-    projectId: d.projectId,
-    extension: d.extension,
-    content: d.renderedMarkdown ?? d.extractedText,
-    createdAt: d.createdAt,
-    storedPath: d.storedPath,
-    document: d,
-  );
+  static const _imageExts = {
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+  };
+
+  static _LibraryEntry fromDocument(Document d) {
+    final isImage = _imageExts.contains(d.extension?.toLowerCase());
+    return _LibraryEntry(
+      id: d.id,
+      title: d.title,
+      isDraft: false,
+      isMedia: isImage,
+      projectId: d.projectId,
+      extension: d.extension,
+      content: d.renderedMarkdown ?? d.extractedText,
+      createdAt: d.createdAt,
+      storedPath: d.storedPath,
+      mediaType: isImage ? 'image' : null,
+      document: d,
+    );
+  }
 
   static _LibraryEntry fromMedia(ProjectMediaItem m) => _LibraryEntry(
     id: m.id,
