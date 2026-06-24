@@ -35,3 +35,7 @@ telegram_token.txt
 
 # Local demo/runtime scratch
 .demo_appdata/
+
+# Installer output (built artifacts, not source)
+dist/
+atlas-windows-*.zip
