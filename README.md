@@ -17,7 +17,7 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Contacts / workforce directory with JSON and CSV import/export
 - Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
 - Owner pickers on work items, project owners, and governance stages — all linked to the contact directory
-- Project organization: category grouping, pinned categories/projects, category and project sorting, tag assignment, project filters for context/status/phase/priority, and project merge
+- Project organization: category grouping, pinned categories/projects, category and project sorting, tag assignment, project filters for context/status/phase/priority, status descriptors for Open/Review/Inactive/Closed lifecycle states, and project merge
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
 - Project governance: people roster, risk register, decision log
 - Project media: app-owned image/file gallery with cover-image selection; media can be attached to work items and queued LLM tasks; local refresh imports discovered image, video, and audio files from linked project folders
