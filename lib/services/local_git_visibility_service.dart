@@ -366,7 +366,7 @@ class LocalGitVisibilityService {
         );
       }
     } on TimeoutException {
-      process?.kill();
+      await _terminateTimedOutGitProcess(process);
       warnings.add('git ${args.join(' ')} timed out in $root');
     } on ProcessException catch (error) {
       if (warnOnFailure) {
@@ -374,6 +374,18 @@ class LocalGitVisibilityService {
       }
     }
     return null;
+  }
+
+  Future<void> _terminateTimedOutGitProcess(Process? process) async {
+    if (process == null) return;
+    process.kill();
+    try {
+      await process.exitCode.timeout(const Duration(seconds: 2));
+    } on TimeoutException {
+      process.kill();
+    } on Object {
+      // Best effort: read-only git inspection should degrade to warnings.
+    }
   }
 
   List<String> _cap(List<String> values) {

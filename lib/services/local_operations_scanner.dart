@@ -325,12 +325,24 @@ class LocalOperationsScanner {
           ? output.trimRight()
           : output.trim().split('\n').first.trim();
     } on TimeoutException {
-      process?.kill();
+      await _terminateTimedOutGitProcess(process);
       warnings.add('git ${args.join(' ')} timed out in ${dir.path}');
       return null;
     } on ProcessException catch (error) {
       warnings.add('git ${args.join(' ')} failed: ${error.message}');
       return null;
+    }
+  }
+
+  Future<void> _terminateTimedOutGitProcess(Process? process) async {
+    if (process == null) return;
+    process.kill();
+    try {
+      await process.exitCode.timeout(const Duration(seconds: 2));
+    } on TimeoutException {
+      process.kill();
+    } on Object {
+      // Best effort: the timeout path should never throw while scanning.
     }
   }
 

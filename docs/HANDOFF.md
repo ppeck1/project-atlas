@@ -10,23 +10,26 @@ Project Atlas is a public Flutter Windows desktop repo. The active app repo is t
 |---|---|
 | Run ID | 20260701-080143-project-atlas-ops-capsule |
 | Run State | SIGNABLE |
-| Last Verified At | 2026-07-01T08:10:02-04:00 |
+| Last Verified At | 2026-07-01T18:17:49-04:00 |
 | Validation State | pass |
 
 ## Validation Evidence
 
+- `dart format lib\services\local_operations_scanner.dart lib\services\local_git_visibility_service.dart`: pass, zero changes required.
+- `flutter test test\local_operations_scanner_test.dart test\local_git_visibility_service_test.dart`: pass, 9 tests passed.
+- `flutter analyze`: pass, no issues found.
 - `git diff --check`: pass.
-- Dirty Dart-file format check: pass, zero changes required.
-- `dart run build_runner build`: pass.
-- `flutter analyze`: pass.
-- Focused DB/schema/document/smoke tests: 69 passed.
-- Focused scanner/Git/GitHub/MCP/agent tests: 28 passed.
-- Full `flutter test`: 135 passed.
+- Full `flutter test`: pass, 143 tests passed.
+- Serial `flutter test --concurrency=1`: pass, 143 tests passed.
 - `flutter build windows --release`: pass.
+
+## Latest Stabilization Pass
+
+The Windows temp-directory lock seen in the local Operations scanner test was fixed by waiting for timed-out read-only git probe processes to exit after killing them. The same timeout cleanup pattern was applied to Local Git Visibility inspection. The MCP adapter regression test now also covers project category metadata in `list_projects` and attached media metadata in `get_llm_task`.
 
 ## Known Risks
 
-- The working tree remains intentionally scoped-dirty with the Operations/local-registry/MCP-agent feature work plus this capsule install.
+- The working tree remains scoped-dirty with the follow-up git timeout cleanup and MCP adapter regression coverage.
 - Raw capsule run ledgers and outboxes are local-only for public-repo safety.
 
 ## Project Atlas Status
@@ -39,8 +42,8 @@ BOH sync is outbox-first and evidence-only. The packet is queued locally at `.pr
 
 ## Git Status
 
-Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`, start/end commit `2c211027431e8be101dbe268f16d0af49604a6d1`. Git state is scoped dirty; no commit and no push were performed.
+Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`, ahead of `origin/main` by 3 commits. Follow-up stabilization was committed locally; no push was performed.
 
 ## Next Best Action
 
-Review the scoped diff, then commit locally when accepted. Push remains manual.
+Review the local commit stack, then push manually when accepted.

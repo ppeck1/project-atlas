@@ -44,12 +44,14 @@ void main() {
     test('dispatches read tools with JSON-safe results', () async {
       await db.createProject('bravo', 'Bravo', DateTime(2026, 1, 1));
       await db.createProject('alpha', 'Alpha', DateTime(2026, 1, 1));
+      await db.updateProjectMeta('alpha', {'category': 'Program'});
 
       final result = await adapter.callTool('list_projects');
 
       expect(result.isError, isFalse);
       final rows = result.data as List;
       expect(rows.map((row) => (row as Map)['title']), ['Alpha', 'Bravo']);
+      expect((rows.first as Map)['category'], 'Program');
     });
 
     test('returns cached GitHub remote status through read tool', () async {
@@ -157,6 +159,44 @@ void main() {
         expect((proposals.data as List), hasLength(1));
       },
     );
+
+    test('returns attached media metadata for LLM task detail', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+      final taskId = await db.enqueueLlmTask(
+        projectId: 'atlas',
+        title: 'Review screenshot',
+        objective: 'Use the attached screenshot as context.',
+        contextJson: '{}',
+      );
+      final mediaId = await db.saveProjectMedia(
+        projectId: 'atlas',
+        title: 'Screenshot',
+        originalFilename: 'screenshot.png',
+        storedPath: r'B:\tmp\screenshot.png',
+        mediaType: 'image',
+        mimeType: 'image/png',
+        extension: 'png',
+        byteSize: 42,
+        source: r'C:\Users\peckm\Downloads\screenshot.png',
+      );
+      await db.linkProjectMediaToEntity(
+        mediaId: mediaId,
+        entityType: 'llm_task',
+        entityId: taskId,
+      );
+
+      final result = await adapter.callTool('get_llm_task', {'taskId': taskId});
+
+      expect(result.isError, isFalse);
+      final task = result.data as Map;
+      expect(task['id'], taskId);
+      final media = task['media'] as List;
+      expect(media, hasLength(1));
+      expect((media.single as Map)['id'], mediaId);
+      expect((media.single as Map)['originalFilename'], 'screenshot.png');
+      expect((media.single as Map)['mediaType'], 'image');
+      expect((media.single as Map)['storedPath'], r'B:\tmp\screenshot.png');
+    });
 
     test('returns an error result for unknown tools', () async {
       final result = await adapter.callTool('delete_project', {
