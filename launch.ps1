@@ -91,7 +91,7 @@ function Resolve-DartCommand {
 $FlutterCommand = Resolve-ToolCommand `
     -Name "flutter" `
     -EnvVar "PROJECT_ATLAS_FLUTTER" `
-    -FallbackPaths @()
+    -FallbackPaths @("B:\dev\flutter\bin\flutter.bat")
 $DartCommand = Resolve-DartCommand -FlutterCommand $FlutterCommand
 
 Set-Location $ProjectRoot
@@ -116,6 +116,7 @@ if ($Clean) {
 # ── Flutter pub get ─────────────────────────────────────────────────────────
 $needsPubGet = $Full -or $Clean -or
     (-not (Test-Path ".\pubspec.lock")) -or
+    (-not (Test-Path ".\.dart_tool\package_config.json")) -or
     (
         (Get-Item ".\pubspec.yaml").LastWriteTime -gt
         (Get-Item ".\pubspec.lock").LastWriteTime
