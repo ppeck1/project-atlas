@@ -334,7 +334,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       return 'AI summary refresh skipped: Ollama is unavailable.';
     }
     if (result.considered == 0) {
-      return 'AI summary refresh found no active projects.';
+      return 'AI summary refresh found no open or review-ready projects.';
     }
     final skipped = result.skipped == 0 ? '' : ', ${result.skipped} skipped';
     return 'AI summaries: ${result.refreshed} refreshed$skipped, ${result.failed} failed across ${result.considered} projects.';
@@ -1124,7 +1124,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               )) {
             return false;
           }
-          if (_statusFilter != null && p.status != _statusFilter) return false;
+          if (_statusFilter != null &&
+              normalizeProjectStatusValue(p.status) != _statusFilter) {
+            return false;
+          }
           if (_phaseFilter != null && p.phase != _phaseFilter) return false;
           if (_priorityFilter != null &&
               normalizePriorityValue(p.priority) != _priorityFilter) {
@@ -1275,8 +1278,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   }
 
   int _attentionRank(Project project) {
-    final status = normalizeProjectStatusValue(project.status);
-    return attentionProjectStatuses.contains(status) ? 0 : 1;
+    return isAttentionProjectStatus(project.status) ? 0 : 1;
   }
 }
 
@@ -1659,13 +1661,16 @@ class _FilterBar extends StatelessWidget {
           ),
           _Dropdown<String?>(
             value: statusFilter,
-            width: 140,
+            width: 170,
             items: [
               const DropdownMenuItem(value: null, child: Text('All statuses')),
               for (final option in projectStatusOptions)
                 DropdownMenuItem(
                   value: option.value,
-                  child: Text(option.label),
+                  child: Tooltip(
+                    message: '${option.descriptor}: ${option.description}',
+                    child: Text(option.label, overflow: TextOverflow.ellipsis),
+                  ),
                 ),
             ],
             onChanged: onStatusChanged,
@@ -1850,6 +1855,9 @@ class _ProjectTile extends StatelessWidget {
                         _Pill(
                           label: projectStatusLabel(project.status),
                           color: projectStatusColor(project.status),
+                          tooltip:
+                              '${projectStatusDescriptor(project.status)}: '
+                              '${projectStatusDescription(project.status)}',
                         ),
                         if (normalizeProjectCategory(project.category) != null)
                           _Pill(
@@ -2177,11 +2185,12 @@ class _Dropdown<T> extends StatelessWidget {
 class _Pill extends StatelessWidget {
   final String label;
   final Color color;
-  const _Pill({required this.label, required this.color});
+  final String? tooltip;
+  const _Pill({required this.label, required this.color, this.tooltip});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final child = Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
         color: color.withAlpha(34),
@@ -2197,6 +2206,7 @@ class _Pill extends StatelessWidget {
         ),
       ),
     );
+    return tooltip == null ? child : Tooltip(message: tooltip!, child: child);
   }
 }
 

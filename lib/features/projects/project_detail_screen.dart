@@ -1115,7 +1115,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
               _Section(
                 id: 'closure',
                 title: 'Closure',
-                subtitle: project.status == 'completed'
+                subtitle:
+                    normalizeProjectStatusValue(project.status) == 'completed'
                     ? 'Completed'
                     : 'Open project',
                 expanded: _expandedSection == 'closure',
@@ -2266,21 +2267,29 @@ class _BackBtn extends StatelessWidget {
 class _Pill extends StatelessWidget {
   final String label;
   final Color color;
-  const _Pill({required this.label, required this.color});
+  final String? tooltip;
+  const _Pill({required this.label, required this.color, this.tooltip});
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-    decoration: BoxDecoration(
-      color: color.withAlpha(34),
-      border: Border.all(color: color.withAlpha(68)),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final child = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withAlpha(34),
+        border: Border.all(color: color.withAlpha(68)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+    return tooltip == null ? child : Tooltip(message: tooltip!, child: child);
+  }
 }
 
 class _ProjectBundleExportRequest {
@@ -2809,7 +2818,7 @@ class _TaskHeaderProjectList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (items.isEmpty) {
       return const Text(
-        'No active project tasks.',
+        'No open project tasks.',
         style: TextStyle(color: Colors.white38),
       );
     }
@@ -3477,6 +3486,9 @@ class _QuickBar extends StatelessWidget {
               _Pill(
                 label: projectStatusLabel(project.status),
                 color: projectStatusColor(project.status),
+                tooltip:
+                    '${projectStatusDescriptor(project.status)}: '
+                    '${projectStatusDescription(project.status)}',
               ),
               if (normalizeProjectCategory(project.category) != null) ...[
                 const SizedBox(width: 6),
@@ -3526,7 +3538,7 @@ class _QuickBar extends StatelessWidget {
           Row(
             children: [
               _MetricCard(
-                label: 'Active',
+                label: 'Open',
                 value: activeCount,
                 color: const Color(0xFF448AFF),
               ),

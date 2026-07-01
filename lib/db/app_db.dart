@@ -1013,7 +1013,7 @@ class AppDb extends _$AppDb {
           : const Value.absent(),
       owner: _v<String>('owner'),
       status: fields.containsKey('status')
-          ? Value(fields['status'] as String? ?? 'active')
+          ? Value(normalizeProjectStatusValue(fields['status'] as String?))
           : const Value.absent(),
       category: _v<String>('category'),
       description: _v<String>('description'),
@@ -1056,9 +1056,7 @@ class AppDb extends _$AppDb {
 
   Future<List<Project>> getSummaryEligibleProjects() => getProjectsFull().then(
     (rows) => rows
-        .where(
-          (project) => summaryEligibleProjectStatuses.contains(project.status),
-        )
+        .where((project) => isSummaryEligibleProjectStatus(project.status))
         .toList(growable: false),
   );
 

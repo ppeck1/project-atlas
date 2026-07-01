@@ -116,6 +116,20 @@ void main() {
   });
 
   test(
+    'project status aliases persist canonically for summary selection',
+    () async {
+      await db.createProject('review-project', 'Review', DateTime(2026, 1, 1));
+      await db.updateProjectMeta('review-project', {'status': 'Needs Review'});
+
+      final stored = await db.getProjectFull('review-project');
+      expect(stored!.status, 'needs_review');
+
+      final eligible = await db.getSummaryEligibleProjects();
+      expect(eligible.map((project) => project.id), contains('review-project'));
+    },
+  );
+
+  test(
     'tags can be assigned to work items independently of project tags',
     () async {
       await db.createProject('project-a', 'Alpha', DateTime(2026, 1, 1));

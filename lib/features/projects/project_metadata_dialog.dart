@@ -117,10 +117,19 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
                     .map(
                       (s) => DropdownMenuItem(
                         value: s.value,
-                        child: Text(s.label),
+                        child: _ProjectStatusMenuItem(option: s),
                       ),
                     )
                     .toList(),
+                selectedItemBuilder: (context) => projectStatusOptions
+                    .map(
+                      (s) => Text(
+                        '${s.label} (${s.descriptor})',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    )
+                    .toList(),
+                isExpanded: true,
                 onChanged: _saving
                     ? null
                     : (value) => setState(() => _status = value ?? _status),
@@ -250,6 +259,29 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
         _error = 'Save failed: $error';
       });
     }
+  }
+}
+
+class _ProjectStatusMenuItem extends StatelessWidget {
+  final ProjectStatusOption option;
+
+  const _ProjectStatusMenuItem({required this.option});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: option.description,
+      child: Row(
+        children: [
+          Expanded(child: Text(option.label, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 8),
+          Text(
+            option.descriptor,
+            style: const TextStyle(fontSize: 11, color: Colors.white54),
+          ),
+        ],
+      ),
+    );
   }
 }
 
