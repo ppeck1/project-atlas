@@ -177,7 +177,7 @@ void main() {
         mimeType: 'image/png',
         extension: 'png',
         byteSize: 42,
-        source: r'C:\Users\peckm\Downloads\screenshot.png',
+        source: 'test_fixtures/screenshot.png',
       );
       await db.linkProjectMediaToEntity(
         mediaId: mediaId,

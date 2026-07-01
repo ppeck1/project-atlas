@@ -91,7 +91,7 @@ function Resolve-DartCommand {
 $FlutterCommand = Resolve-ToolCommand `
     -Name "flutter" `
     -EnvVar "PROJECT_ATLAS_FLUTTER" `
-    -FallbackPaths @("B:\dev\flutter\bin\flutter.bat")
+    -FallbackPaths @()
 $DartCommand = Resolve-DartCommand -FlutterCommand $FlutterCommand
 
 Set-Location $ProjectRoot

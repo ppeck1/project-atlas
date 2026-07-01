@@ -12,7 +12,7 @@ Future<String?> showCreateProjectDialog(BuildContext context) async {
           autofocus: true,
           decoration: const InputDecoration(
             labelText: 'Project title',
-            hintText: 'e.g., Coheron v1.0 build',
+            hintText: 'e.g., Desktop app v1.0 build',
           ),
           onSubmitted: (_) => Navigator.of(ctx).pop(controller.text),
         ),

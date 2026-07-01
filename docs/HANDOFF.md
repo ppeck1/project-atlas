@@ -42,7 +42,7 @@ BOH sync is outbox-first and evidence-only. The packet is queued locally at `.pr
 
 ## Git Status
 
-Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`, ahead of `origin/main` by 3 commits. Follow-up stabilization was committed locally; no push was performed.
+Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`. Follow-up stabilization and public-safety cleanup were committed locally; no push was performed.
 
 ## Next Best Action
 
