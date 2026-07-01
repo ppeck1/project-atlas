@@ -1231,12 +1231,7 @@ class _EnrichmentRunTile extends StatelessWidget {
                   ),
                 );
               }
-              return Column(
-                children: findings
-                    .take(80)
-                    .map((finding) => _EnrichmentFindingRow(finding: finding))
-                    .toList(growable: false),
-              );
+              return _EnrichmentFindingsSection(findings: findings);
             },
           ),
         ],
@@ -1420,6 +1415,135 @@ class _EnrichmentProposalRow extends StatelessWidget {
   }
 }
 
+class _EnrichmentFindingsSection extends StatelessWidget {
+  final List<ProjectEnrichmentFinding> findings;
+
+  const _EnrichmentFindingsSection({required this.findings});
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = _groupOpenEnrichmentFindings(findings);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (groups.isNotEmpty) ...[
+          const Text(
+            'Open findings summary',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          for (final group in groups.take(12))
+            _EnrichmentFindingGroupRow(group: group),
+          if (groups.length > 12)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '${groups.length - 12} more finding groups recorded.',
+                style: const TextStyle(color: _text54, fontSize: 12),
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
+        Text(
+          groups.isEmpty ? 'Recorded findings' : 'Individual findings',
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        for (final finding in findings.take(80))
+          _EnrichmentFindingRow(finding: finding),
+        if (findings.length > 80)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              '${findings.length - 80} more individual findings recorded.',
+              style: const TextStyle(color: _text54, fontSize: 12),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _EnrichmentFindingGroup {
+  final String severity;
+  final String category;
+  final String title;
+  final String? detail;
+  final List<ProjectEnrichmentFinding> findings;
+
+  const _EnrichmentFindingGroup({
+    required this.severity,
+    required this.category,
+    required this.title,
+    required this.detail,
+    required this.findings,
+  });
+
+  int get count => findings.length;
+}
+
+class _EnrichmentFindingGroupRow extends StatelessWidget {
+  final _EnrichmentFindingGroup group;
+
+  const _EnrichmentFindingGroupRow({required this.group});
+
+  @override
+  Widget build(BuildContext context) {
+    final examples = _findingGroupExamples(group.findings);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0x1FFF9800),
+        border: Border.all(color: const Color(0x44FF9800)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _Pill(label: '${group.count} open'),
+              _Pill(label: group.severity),
+              _Pill(label: group.category),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            group.title,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          if ((group.detail ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              group.detail!,
+              style: const TextStyle(color: _text54, fontSize: 12),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Text(
+            _findingGroupActionHint(group),
+            style: const TextStyle(color: Colors.amber, fontSize: 12),
+          ),
+          if (examples.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Examples: ${examples.join(' / ')}',
+              style: const TextStyle(color: _text54, fontSize: 11),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _EnrichmentFindingRow extends StatelessWidget {
   final ProjectEnrichmentFinding finding;
 
@@ -1476,6 +1600,120 @@ class _EnrichmentFindingRow extends StatelessWidget {
       ),
     );
   }
+}
+
+List<_EnrichmentFindingGroup> _groupOpenEnrichmentFindings(
+  List<ProjectEnrichmentFinding> findings,
+) {
+  final grouped = <String, List<ProjectEnrichmentFinding>>{};
+  for (final finding in findings.where((row) => row.status == 'open')) {
+    final key = jsonEncode([
+      finding.severity,
+      finding.category,
+      finding.title,
+      finding.detail ?? '',
+    ]);
+    grouped.putIfAbsent(key, () => <ProjectEnrichmentFinding>[]).add(finding);
+  }
+
+  final groups = grouped.values.map((rows) {
+    final first = rows.first;
+    return _EnrichmentFindingGroup(
+      severity: first.severity,
+      category: first.category,
+      title: first.title,
+      detail: first.detail,
+      findings: rows,
+    );
+  }).toList();
+
+  groups.sort((a, b) {
+    final severity = _findingSeverityRank(
+      a.severity,
+    ).compareTo(_findingSeverityRank(b.severity));
+    if (severity != 0) return severity;
+    final count = b.count.compareTo(a.count);
+    if (count != 0) return count;
+    final category = a.category.compareTo(b.category);
+    if (category != 0) return category;
+    return a.title.compareTo(b.title);
+  });
+  return groups;
+}
+
+int _findingSeverityRank(String severity) {
+  switch (severity.toLowerCase()) {
+    case 'error':
+      return 0;
+    case 'warning':
+      return 1;
+    case 'info':
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+List<String> _findingGroupExamples(List<ProjectEnrichmentFinding> findings) {
+  final examples = <String>[];
+  for (final finding in findings) {
+    final evidence = finding.evidence;
+    final raw =
+        evidence['projectTitle'] ??
+        evidence['displayName'] ??
+        evidence['localPath'];
+    final label = _compactFindingExample(raw?.toString());
+    if (label == null || examples.contains(label)) continue;
+    examples.add(label);
+    if (examples.length >= 3) break;
+  }
+  return examples;
+}
+
+String? _compactFindingExample(String? value) {
+  final trimmed = value?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  final parts = trimmed.split(RegExp(r'[\\/]')).where((part) {
+    return part.trim().isNotEmpty;
+  }).toList();
+  final label = parts.isEmpty ? trimmed : parts.last.trim();
+  if (label.length <= 64) return label;
+  return '${label.substring(0, 61)}...';
+}
+
+String _findingGroupActionHint(_EnrichmentFindingGroup group) {
+  final category = group.category.toLowerCase();
+  final title = group.title.toLowerCase();
+  if (category == 'registry') {
+    if (title.contains('not linked to an atlas project')) {
+      return 'Link to an existing project, import it as a new project, or mark the candidate ignored.';
+    }
+    if (title.contains('still needs review')) {
+      return 'Use Review Candidates to bulk accept, ignore, or keep needs-review rows.';
+    }
+    if (title.contains('not linked to a local registry entry')) {
+      return 'Run or refresh an Operations scan, then link or upload the matching local project.';
+    }
+    if (title.contains('multiple local registry entries')) {
+      return 'Review duplicate linked registry rows and unlink or ignore duplicates.';
+    }
+  }
+  if (category == 'repository' && title.contains('github remote')) {
+    return 'Use Refresh GitHub from Project Detail > Local Repo for the affected projects.';
+  }
+  if (category == 'library') {
+    if (title.contains('no imported documents')) {
+      return 'Run linked project refresh or import project documents before summary refresh.';
+    }
+    if (title.contains('no individual cards imported')) {
+      return 'Run linked project refresh and review card parser or source coverage.';
+    }
+  }
+  if (category == 'ai_summary' && title.contains('no cached ai summary')) {
+    return 'Run AI summary refresh after documents and media are imported.';
+  }
+  return group.detail ??
+      'Review the grouped findings and address the repeated source.';
 }
 
 enum _RegistryFilter { needsAction, linked, ignored, all }
