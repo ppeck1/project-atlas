@@ -1,0 +1,606 @@
+import 'dart:convert';
+
+import '../shared/models/app_state.dart';
+import '../services/atlas_agent_service.dart';
+import '../services/local_git_visibility_service.dart';
+import '../services/local_project_refresh_service.dart';
+
+class AtlasMcpTool {
+  final String name;
+  final String description;
+  final Map<String, Object?> inputSchema;
+
+  const AtlasMcpTool({
+    required this.name,
+    required this.description,
+    required this.inputSchema,
+  });
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'description': description,
+    'inputSchema': inputSchema,
+  };
+}
+
+class AtlasMcpCallResult {
+  final Object? data;
+  final bool isError;
+
+  const AtlasMcpCallResult({required this.data, this.isError = false});
+
+  Map<String, Object?> toJson() => {
+    'content': [
+      {
+        'type': 'text',
+        'text': const JsonEncoder.withIndent('  ').convert(data),
+      },
+    ],
+    'isError': isError,
+  };
+}
+
+class AtlasMcpAdapter {
+  final AtlasAgentService agent;
+
+  AtlasMcpAdapter(this.agent);
+
+  static const _projectIdSchema = {
+    'type': 'object',
+    'properties': {
+      'projectId': {'type': 'string'},
+    },
+    'required': ['projectId'],
+  };
+
+  List<AtlasMcpTool> listTools() => const [
+    AtlasMcpTool(
+      name: 'list_projects',
+      description:
+          'List visible Project Atlas projects alphabetically with operational counts.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'includeArchived': {'type': 'boolean'},
+        },
+      },
+    ),
+    AtlasMcpTool(
+      name: 'get_project_status',
+      description: 'Get one project status and operational counts.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'get_project_brief',
+      description:
+          'Get one project brief with lifecycle, tasks, tags, people, risks, decisions, registry, and cached summary.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'get_project_summary',
+      description: 'Get the latest cached AI summary draft for a project.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'get_stale_projects',
+      description:
+          'List projects needing attention because of status or blocked work.',
+      inputSchema: {'type': 'object', 'properties': {}},
+    ),
+    AtlasMcpTool(
+      name: 'list_agent_proposals',
+      description:
+          'List recent proposal drafts and review status. Does not approve or apply them.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'limit': {'type': 'integer'},
+        },
+      },
+    ),
+    AtlasMcpTool(
+      name: 'preview_local_refresh',
+      description:
+          'Preview local project refresh actions for a linked registry project.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'inspect_git_visibility',
+      description:
+          'Inspect read-only local git visibility for a linked registry project.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'get_github_remote_status',
+      description:
+          'Get cached GitHub remote metadata for a linked project without network access.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'refresh_github_remote_status',
+      description:
+          'Refresh cached GitHub remote metadata using read-only gh api calls.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'refresh_project_summaries',
+      description:
+          'Trigger the governed project summary refresh loop. This may call local Ollama.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'force': {'type': 'boolean'},
+        },
+      },
+    ),
+    AtlasMcpTool(
+      name: 'list_project_enrichment_runs',
+      description:
+          'List recent Atlas enrichment runs with completeness and finding counts.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'limit': {'type': 'integer'},
+        },
+      },
+    ),
+    AtlasMcpTool(
+      name: 'get_project_enrichment_run',
+      description:
+          'Get one Atlas enrichment run with its exception/completeness findings.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'runId': {'type': 'string'},
+        },
+        'required': ['runId'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'run_project_enrichment',
+      description:
+          'Run the Atlas-only local project enrichment workflow. This refreshes Atlas records but does not mutate source repositories.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'refreshLinkedProjects': {'type': 'boolean'},
+          'includeSourceDocuments': {'type': 'boolean'},
+          'refreshSummaries': {'type': 'boolean'},
+        },
+      },
+    ),
+    AtlasMcpTool(
+      name: 'enqueue_llm_task',
+      description:
+          'Add a project-scoped task to the durable LLM queue. This only queues work; results must return through reviewable drafts.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'workItemId': {'type': 'string'},
+          'title': {'type': 'string'},
+          'objective': {'type': 'string'},
+          'priority': {'type': 'string'},
+          'context': {'type': 'object'},
+          'createdBy': {'type': 'string'},
+        },
+        'required': ['projectId', 'title', 'objective'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'list_llm_tasks',
+      description:
+          'List durable LLM queue tasks, optionally filtered by project or status.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'status': {'type': 'string'},
+          'limit': {'type': 'integer'},
+        },
+      },
+    ),
+    AtlasMcpTool(
+      name: 'get_llm_task',
+      description: 'Get one durable LLM queue task by ID.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'taskId': {'type': 'string'},
+        },
+        'required': ['taskId'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'claim_llm_task',
+      description:
+          'Lease the next pending LLM queue task, or a specific task, for a worker.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'taskId': {'type': 'string'},
+          'workerId': {'type': 'string'},
+          'leaseMinutes': {'type': 'integer'},
+        },
+        'required': ['workerId'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'complete_llm_task',
+      description:
+          'Mark an LLM queue task complete. Optional proposalBody creates a reviewable Atlas draft; it does not directly mutate project records.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'taskId': {'type': 'string'},
+          'workerId': {'type': 'string'},
+          'result': {'type': 'object'},
+          'proposalTitle': {'type': 'string'},
+          'proposalBody': {'type': 'string'},
+        },
+        'required': ['taskId', 'result'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'fail_llm_task',
+      description: 'Mark an LLM queue task failed with an error payload.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'taskId': {'type': 'string'},
+          'workerId': {'type': 'string'},
+          'error': {'type': 'string'},
+          'result': {'type': 'object'},
+        },
+        'required': ['taskId', 'error'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'propose_status_change',
+      description:
+          'Create a reviewable status-change proposal draft. Does not apply the change.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'status': {'type': 'string'},
+          'reason': {'type': 'string'},
+        },
+        'required': ['projectId', 'status'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'propose_task_update',
+      description:
+          'Create a reviewable task create/update proposal draft. Does not apply the change.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'workItemId': {'type': 'string'},
+          'title': {'type': 'string'},
+          'description': {'type': 'string'},
+          'status': {'type': 'string'},
+          'priority': {'type': 'string'},
+          'dueAt': {'type': 'string'},
+          'blockedReason': {'type': 'string'},
+          'tagNames': {
+            'type': 'array',
+            'items': {'type': 'string'},
+          },
+        },
+        'required': ['projectId', 'title'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'propose_manifest_update',
+      description:
+          'Create a reviewable project manifest update proposal draft. Does not apply the change.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'fields': {'type': 'object'},
+          'reason': {'type': 'string'},
+        },
+        'required': ['projectId', 'fields'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'record_validation_run',
+      description:
+          'Create a reviewable validation-run record proposal draft. Does not apply the record.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'command': {'type': 'string'},
+          'passed': {'type': 'boolean'},
+          'exitCode': {'type': 'integer'},
+          'summary': {'type': 'string'},
+          'logExcerpt': {'type': 'string'},
+        },
+        'required': ['projectId', 'command', 'passed'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'record_handoff',
+      description:
+          'Create a reviewable handoff proposal draft. Does not create the handoff until approved in Atlas.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'title': {'type': 'string'},
+          'body': {'type': 'string'},
+        },
+        'required': ['projectId', 'title', 'body'],
+      },
+    ),
+  ];
+
+  Future<AtlasMcpCallResult> callTool(
+    String name, [
+    Map<String, Object?> arguments = const {},
+  ]) async {
+    try {
+      return AtlasMcpCallResult(data: await _dispatch(name, arguments));
+    } catch (error) {
+      return AtlasMcpCallResult(
+        data: {'error': error.toString(), 'tool': name},
+        isError: true,
+      );
+    }
+  }
+
+  Future<Object?> _dispatch(String name, Map<String, Object?> args) async {
+    return switch (name) {
+      'list_projects' => (await agent.listProjects(
+        includeArchived: _bool(args, 'includeArchived') ?? true,
+      )).map((project) => project.toJson()).toList(),
+      'get_project_status' => (await agent.getProjectStatus(
+        _requiredString(args, 'projectId'),
+      ))?.toJson(),
+      'get_project_brief' => (await agent.getProjectBrief(
+        _requiredString(args, 'projectId'),
+      ))?.toJson(),
+      'get_project_summary' => {
+        'projectId': _requiredString(args, 'projectId'),
+        'summary': await agent.getProjectSummary(
+          _requiredString(args, 'projectId'),
+        ),
+      },
+      'get_stale_projects' =>
+        (await agent.getStaleProjects())
+            .map((project) => project.toJson())
+            .toList(),
+      'list_agent_proposals' => (await agent.listRecentAgentProposalReviews(
+        limit: _int(args, 'limit') ?? 50,
+      )).map((proposal) => proposal.toJson()).toList(),
+      'preview_local_refresh' => _refreshPreviewToJson(
+        await agent.previewLocalRefresh(_requiredString(args, 'projectId')),
+      ),
+      'inspect_git_visibility' => _gitReportToJson(
+        await agent.inspectGitVisibility(_requiredString(args, 'projectId')),
+      ),
+      'get_github_remote_status' => (await agent.getGithubRemoteStatus(
+        _requiredString(args, 'projectId'),
+      ))?.toJson(),
+      'refresh_github_remote_status' => (await agent.refreshGithubRemoteStatus(
+        _requiredString(args, 'projectId'),
+      )).toJson(),
+      'refresh_project_summaries' => (await agent.refreshProjectSummaries(
+        force: _bool(args, 'force') ?? false,
+      )).toJson(),
+      'list_project_enrichment_runs' => (await agent.listProjectEnrichmentRuns(
+        limit: _int(args, 'limit') ?? 20,
+      )).map((run) => run.toJson()).toList(),
+      'get_project_enrichment_run' => await agent.getProjectEnrichmentRun(
+        _requiredString(args, 'runId'),
+      ),
+      'run_project_enrichment' => (await agent.runProjectEnrichment(
+        refreshLinkedProjects: _bool(args, 'refreshLinkedProjects') ?? true,
+        includeSourceDocuments: _bool(args, 'includeSourceDocuments') ?? true,
+        refreshSummaries: _bool(args, 'refreshSummaries') ?? true,
+      )).toJson(),
+      'enqueue_llm_task' => (await agent.enqueueLlmTask(
+        projectId: _requiredString(args, 'projectId'),
+        workItemId: _string(args, 'workItemId'),
+        title: _requiredString(args, 'title'),
+        objective: _requiredString(args, 'objective'),
+        priority: _string(args, 'priority') ?? 'normal',
+        context: _objectMap(args['context']),
+        createdBy: _string(args, 'createdBy') ?? 'mcp',
+      )).toJson(),
+      'list_llm_tasks' => (await agent.listLlmTasks(
+        projectId: _string(args, 'projectId'),
+        status: _string(args, 'status'),
+        limit: _int(args, 'limit') ?? 50,
+      )).map((task) => task.toJson()).toList(),
+      'get_llm_task' => await agent.getLlmTaskDetail(
+        _requiredString(args, 'taskId'),
+      ),
+      'claim_llm_task' => (await agent.claimLlmTask(
+        taskId: _string(args, 'taskId'),
+        workerId: _requiredString(args, 'workerId'),
+        leaseMinutes: _int(args, 'leaseMinutes') ?? 60,
+      ))?.toJson(),
+      'complete_llm_task' => (await agent.completeLlmTask(
+        taskId: _requiredString(args, 'taskId'),
+        workerId: _string(args, 'workerId'),
+        result: _objectMap(args['result']),
+        proposalTitle: _string(args, 'proposalTitle'),
+        proposalBody: _string(args, 'proposalBody'),
+      )).toJson(),
+      'fail_llm_task' => (await agent.failLlmTask(
+        taskId: _requiredString(args, 'taskId'),
+        workerId: _string(args, 'workerId'),
+        error: _requiredString(args, 'error'),
+        result: _objectMap(args['result']),
+      )).toJson(),
+      'propose_status_change' => (await agent.proposeStatusChange(
+        projectId: _requiredString(args, 'projectId'),
+        status: _requiredString(args, 'status'),
+        reason: _string(args, 'reason'),
+      )).toJson(),
+      'propose_task_update' => (await agent.proposeTaskUpdate(
+        projectId: _requiredString(args, 'projectId'),
+        workItemId: _string(args, 'workItemId'),
+        title: _requiredString(args, 'title'),
+        description: _string(args, 'description'),
+        status: _string(args, 'status') ?? 'next',
+        priority: _string(args, 'priority') ?? 'normal',
+        dueAt: _date(args, 'dueAt'),
+        blockedReason: _string(args, 'blockedReason'),
+        tagNames: _stringList(args, 'tagNames'),
+      )).toJson(),
+      'propose_manifest_update' => (await agent.proposeManifestUpdate(
+        projectId: _requiredString(args, 'projectId'),
+        fields: _objectMap(args['fields']),
+        reason: _string(args, 'reason'),
+      )).toJson(),
+      'record_validation_run' => (await agent.recordValidationRun(
+        projectId: _requiredString(args, 'projectId'),
+        command: _requiredString(args, 'command'),
+        passed: _requiredBool(args, 'passed'),
+        exitCode: _int(args, 'exitCode'),
+        summary: _string(args, 'summary'),
+        logExcerpt: _string(args, 'logExcerpt'),
+      )).toJson(),
+      'record_handoff' => (await agent.recordHandoff(
+        projectId: _requiredString(args, 'projectId'),
+        title: _requiredString(args, 'title'),
+        body: _requiredString(args, 'body'),
+      )).toJson(),
+      _ => throw ArgumentError('Unknown Atlas MCP tool: $name'),
+    };
+  }
+
+  Map<String, Object?> _refreshPreviewToJson(LocalProjectRefreshPreview p) => {
+    'registryId': p.registryId,
+    'projectId': p.projectId,
+    'localPath': p.localPath,
+    'profile': p.profile,
+    'branch': p.branch,
+    'headSha': p.headSha,
+    'dirtyCount': p.dirtyCount,
+    'remoteUrl': p.remoteUrl,
+    'observedAt': p.observedAt?.toIso8601String(),
+    'warnings': p.warnings,
+    'entries': p.entries
+        .map(
+          (entry) => {
+            'status': entry.status,
+            'existingTargetId': entry.existingTargetId,
+            'shouldApplyByDefault': entry.shouldApplyByDefault,
+            'action': {
+              'id': entry.action.id,
+              'sourceKind': entry.action.sourceKind,
+              'sourceKey': entry.action.sourceKey,
+              'targetType': entry.action.targetType,
+              'title': entry.action.title,
+              'detail': entry.action.detail,
+              'fingerprint': entry.action.fingerprint,
+              'payload': entry.action.payload,
+            },
+          },
+        )
+        .toList(),
+  };
+
+  Map<String, Object?> _gitReportToJson(LocalGitVisibilityReport report) => {
+    'requestedPath': report.requestedPath,
+    'gitRoot': report.gitRoot,
+    'branch': report.branch,
+    'headSha': report.headSha,
+    'remoteUrl': report.remoteUrl,
+    'comparisonRef': report.comparisonRef,
+    'inspectedAt': report.inspectedAt.toIso8601String(),
+    'localTrackedCount': report.localTrackedCount,
+    'remoteTrackedCount': report.remoteTrackedCount,
+    'localOnlyTrackedPaths': report.localOnlyTrackedPaths,
+    'remoteOnlyTrackedPaths': report.remoteOnlyTrackedPaths,
+    'changedTrackedPaths': report.changedTrackedPaths,
+    'untrackedPaths': report.untrackedPaths,
+    'ignoredPaths': report.ignoredPaths,
+    'gitignorePatterns': report.gitignorePatterns,
+    'suggestedIgnoreEntries': report.suggestedIgnoreEntries,
+    'warnings': report.warnings,
+  };
+
+  String _requiredString(Map<String, Object?> args, String key) {
+    final value = _string(args, key);
+    if (value == null) throw ArgumentError('Missing required string: $key');
+    return value;
+  }
+
+  bool _requiredBool(Map<String, Object?> args, String key) {
+    final value = _bool(args, key);
+    if (value == null) throw ArgumentError('Missing required boolean: $key');
+    return value;
+  }
+
+  String? _string(Map<String, Object?> args, String key) {
+    final value = args[key];
+    if (value == null) return null;
+    final trimmed = '$value'.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  bool? _bool(Map<String, Object?> args, String key) {
+    final value = args[key];
+    if (value is bool) return value;
+    if (value is String) {
+      return switch (value.trim().toLowerCase()) {
+        'true' || '1' || 'yes' => true,
+        'false' || '0' || 'no' => false,
+        _ => null,
+      };
+    }
+    return null;
+  }
+
+  int? _int(Map<String, Object?> args, String key) {
+    final value = args[key];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  DateTime? _date(Map<String, Object?> args, String key) {
+    final value = args[key];
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  List<String> _stringList(Map<String, Object?> args, String key) {
+    final value = args[key];
+    if (value is Iterable) {
+      return value
+          .map((item) => '$item'.trim())
+          .where((item) => item.isNotEmpty)
+          .toList();
+    }
+    final single = _string(args, key);
+    return single == null ? const [] : [single];
+  }
+
+  Map<String, Object?> _objectMap(Object? value) {
+    if (value is! Map) return const {};
+    return value.map((key, value) => MapEntry('$key', value));
+  }
+}
+
+extension _ProjectSummaryRefreshResultJson on ProjectSummaryRefreshResult {
+  Map<String, Object?> toJson() => {
+    'considered': considered,
+    'refreshed': refreshed,
+    'skipped': skipped,
+    'failed': failed,
+    'aiUnavailable': aiUnavailable,
+    'alreadyRunning': alreadyRunning,
+    'errors': errors,
+  };
+}

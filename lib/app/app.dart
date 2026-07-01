@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../db/app_db.dart';
 import '../shared/models/app_state.dart';
 import '../shared/models/app_state_scope.dart';
@@ -35,4 +35,3 @@ class _ProjectAtlasAppState extends State<ProjectAtlasApp> {
     );
   }
 }
-

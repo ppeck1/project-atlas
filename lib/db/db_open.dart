@@ -16,6 +16,7 @@ QueryExecutor openEncryptedExecutor() {
     return NativeDatabase(
       File(dbPath),
       setup: (rawDb) {
+        rawDb.execute('PRAGMA busy_timeout = 30000;');
         rawDb.execute('PRAGMA foreign_keys = ON;');
       },
     );

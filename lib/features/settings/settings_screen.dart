@@ -181,8 +181,7 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
     setState(() {
       _loadingModels = false;
       _availableModels = models;
-      if (models.isNotEmpty &&
-          !models.contains(_ollamaModelCtrl.text.trim())) {
+      if (models.isNotEmpty && !models.contains(_ollamaModelCtrl.text.trim())) {
         _ollamaModelCtrl.text = models.first;
         autoFixed = models.first;
       }
@@ -368,7 +367,8 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
                       models: _availableModels,
                       selected: _ollamaModelCtrl.text.trim(),
                       onChanged: (v) {
-                        if (v != null) setState(() => _ollamaModelCtrl.text = v);
+                        if (v != null)
+                          setState(() => _ollamaModelCtrl.text = v);
                       },
                     ),
             ),
@@ -582,59 +582,63 @@ class _ActivityLogTabState extends State<_ActivityLogTab>
                           child: Material(
                             color: _panel,
                             child: ExpansionTile(
-                            tilePadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 0,
-                            ),
-                            leading: Icon(Icons.circle, size: 8, color: color),
-                            title: Text(
-                              '${e.area}.${e.action}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: _text87,
+                              tilePadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 0,
                               ),
-                            ),
-                            subtitle: Text(
-                              '${e.timestamp.toIso8601String().substring(0, 19)} · ${e.level}'
-                              '${e.entityType != null ? ' · ${e.entityType}:${e.entityId ?? ''}' : ''}',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: _text38,
+                              leading: Icon(
+                                Icons.circle,
+                                size: 8,
+                                color: color,
                               ),
+                              title: Text(
+                                '${e.area}.${e.action}',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: _text87,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '${e.timestamp.toIso8601String().substring(0, 19)} · ${e.level}'
+                                '${e.entityType != null ? ' · ${e.entityType}:${e.entityId ?? ''}' : ''}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: _text38,
+                                ),
+                              ),
+                              childrenPadding: const EdgeInsets.fromLTRB(
+                                16,
+                                0,
+                                16,
+                                12,
+                              ),
+                              children: [
+                                if (e.inputJson != null)
+                                  SelectableText(
+                                    'Input:\n${e.inputJson}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: _text54,
+                                    ),
+                                  ),
+                                if (e.outputJson != null)
+                                  SelectableText(
+                                    'Output:\n${e.outputJson}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: _text54,
+                                    ),
+                                  ),
+                                if (e.error != null)
+                                  SelectableText(
+                                    'Error:\n${e.error}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.redAccent,
+                                    ),
+                                  ),
+                              ],
                             ),
-                            childrenPadding: const EdgeInsets.fromLTRB(
-                              16,
-                              0,
-                              16,
-                              12,
-                            ),
-                            children: [
-                              if (e.inputJson != null)
-                                SelectableText(
-                                  'Input:\n${e.inputJson}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: _text54,
-                                  ),
-                                ),
-                              if (e.outputJson != null)
-                                SelectableText(
-                                  'Output:\n${e.outputJson}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: _text54,
-                                  ),
-                                ),
-                              if (e.error != null)
-                                SelectableText(
-                                  'Error:\n${e.error}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.redAccent,
-                                  ),
-                                ),
-                            ],
-                          ),
                           ),
                         );
                       },
@@ -1713,9 +1717,7 @@ class _ModelDropdown extends StatelessWidget {
         labelStyle: TextStyle(color: _text54),
         helperText: 'Select a model from your local Ollama install',
         helperStyle: TextStyle(fontSize: 11, color: _text38),
-        enabledBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: _line),
-        ),
+        enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: _line)),
         focusedBorder: OutlineInputBorder(
           borderSide: BorderSide(color: _primary),
         ),

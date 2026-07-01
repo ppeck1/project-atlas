@@ -1,14 +1,22 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as p;
 
 import '../../db/app_db.dart';
+import '../../services/github_remote_metadata_service.dart';
+import '../../services/local_git_visibility_service.dart';
+import '../../services/local_project_refresh_service.dart';
 import '../../services/project_summary_models.dart';
+import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/models/project_metadata.dart';
 import '../../shared/widgets/contact_picker.dart';
 import '../../shared/widgets/create_work_item_dialog.dart';
+import 'project_metadata_dialog.dart';
 import '../today/work_item_detail_sheet.dart';
 import '../work/status_priority_helpers.dart';
 
@@ -17,13 +25,6 @@ const _kPrimary = Color(0xFF79A7FF);
 const _kPanel = Color(0xFF151A22);
 const _kLine = Color(0xFF273044);
 
-const _kStatusColors = <String, Color>{
-  'active': Color(0xFF4CAF50),
-  'paused': Color(0xFFFF9800),
-  'blocked': Color(0xFFF44336),
-  'completed': Color(0xFF2196F3),
-  'archived': Color(0xFF607D8B),
-};
 const _kPhaseColors = <String, Color>{
   'idea': Color(0xFF9C27B0),
   'design': Color(0xFF2196F3),
@@ -38,9 +39,39 @@ const _kPriorityColors = <String, Color>{
   'low': Color(0xFF607D8B),
 };
 
-Color _sc(String? s) => _kStatusColors[s] ?? const Color(0x61FFFFFF);
 Color _pc(String? p) => _kPhaseColors[p] ?? const Color(0x61FFFFFF);
 Color _prc(String? p) => _kPriorityColors[p] ?? const Color(0x61FFFFFF);
+String _shortSha(String sha) => sha.length <= 8 ? sha : sha.substring(0, 8);
+String _compactDate(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+String _compactDateTime(DateTime? value) {
+  if (value == null) return 'n/a';
+  return '${_compactDate(value)} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+}
+
+String _prettyJsonObject(Map<String, Object?> value) =>
+    const JsonEncoder.withIndent('  ').convert(value);
+Map<String, Object?> _parseJsonObject(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return const <String, Object?>{};
+  final decoded = jsonDecode(trimmed);
+  if (decoded is! Map) {
+    throw const FormatException('Context must be a JSON object.');
+  }
+  return decoded.map((key, value) => MapEntry('$key', value));
+}
+
+String _libraryRouteForProject(
+  String projectId, {
+  String? entryType,
+  String? entryId,
+}) {
+  final queryParameters = <String, String>{'projectId': projectId};
+  if (entryType != null) queryParameters['entryType'] = entryType;
+  if (entryId != null) queryParameters['entryId'] = entryId;
+  return Uri(path: '/library', queryParameters: queryParameters).toString();
+}
+
 Color _tagColor(Tag tag) {
   final raw = tag.color;
   if (raw != null && raw.startsWith('#') && raw.length == 7) {
@@ -50,9 +81,39 @@ Color _tagColor(Tag tag) {
   return _kPrimary;
 }
 
-const _kStatuses = ['active', 'paused', 'blocked', 'completed', 'archived'];
-const _kPhases = ['', 'idea', 'design', 'build', 'test', 'ship', 'stabilize'];
+IconData _projectMediaIcon(String mediaType) {
+  return switch (mediaType) {
+    'image' => Icons.image_outlined,
+    'video' => Icons.movie_outlined,
+    'audio' => Icons.audiotrack_outlined,
+    'folder' => Icons.folder_outlined,
+    _ => Icons.attach_file,
+  };
+}
+
 const _kPriorities = ['low', 'normal', 'high', 'urgent'];
+
+class _LlmTaskEditResult {
+  final String action;
+  final String projectId;
+  final String? workItemId;
+  final String title;
+  final String objective;
+  final String priority;
+  final Map<String, Object?> context;
+  final String? reason;
+
+  const _LlmTaskEditResult({
+    required this.action,
+    required this.projectId,
+    required this.workItemId,
+    required this.title,
+    required this.objective,
+    required this.priority,
+    required this.context,
+    this.reason,
+  });
+}
 
 // ─── Main widget ──────────────────────────────────────────────────────────
 class ProjectDetailScreen extends StatefulWidget {
@@ -65,6 +126,7 @@ class ProjectDetailScreen extends StatefulWidget {
 
 class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   String? _expandedSection = 'identity';
+  bool _taskHeaderExpanded = true;
   bool _aiExpanded = false;
   bool _includeLibrary = false;
   bool _summaryLoading = false;
@@ -73,6 +135,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   DateTime? _summaryGeneratedAt;
 
   List<WorkItem> _workItems = const [];
+  List<LlmTaskQueueItem> _llmQueueItems = const [];
   List<ProjectPerson> _people = const [];
   List<ProjectRisk> _risks = const [];
   List<ProjectDecision> _decisions = const [];
@@ -93,6 +156,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     // missing column that _ensureProjectCompatibilityColumns hasn't patched
     // yet on this run) must not prevent the others from loading.
     final items = await state.getWorkItemsForProject(widget.projectId);
+    List<LlmTaskQueueItem> llmTasks = _llmQueueItems;
+    try {
+      llmTasks = await state.getLlmTasksForProject(widget.projectId, limit: 50);
+    } catch (_) {}
     final people = await state.getProjectPeople(widget.projectId);
     List<ProjectRisk> risks = _risks;
     try {
@@ -112,16 +179,17 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     if (!mounted) return;
     setState(() {
       _workItems = items;
+      _llmQueueItems = llmTasks;
       _people = people;
       _risks = risks;
       _decisions = decisions;
     });
 
-    if (cachedDraft != null && _summaryOutcome == null && _summaryText == null) {
-      final docPaths =
-          await state.getDocumentPathsForProject(widget.projectId);
-      final structured =
-          ProjectSummaryResult.tryParse(cachedDraft.inputJson);
+    if (cachedDraft != null &&
+        _summaryOutcome == null &&
+        _summaryText == null) {
+      final docPaths = await state.getDocumentPathsForProject(widget.projectId);
+      final structured = ProjectSummaryResult.tryParse(cachedDraft.inputJson);
       if (!mounted) return;
       setState(() {
         _summaryGeneratedAt = cachedDraft!.createdAt;
@@ -143,6 +211,633 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   void _toggleSection(String key) =>
       setState(() => _expandedSection = _expandedSection == key ? null : key);
+
+  Future<void> _addProjectTask(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final draft = await showCreateWorkItemDialog(context);
+    if (draft == null) return;
+    DateTime? dueAt;
+    final rawDate = draft['dueAt'];
+    if (rawDate != null && rawDate.isNotEmpty) {
+      dueAt = DateTime.tryParse(rawDate);
+    }
+    await state.addWorkItemToProject(
+      widget.projectId,
+      draft['title']!,
+      description: draft['description'],
+      owner: draft['owner'],
+      status: normalizeStatusValue(draft['status']),
+      priority: normalizePriorityValue(draft['priority']),
+      dueAt: dueAt,
+    );
+    await _loadAll();
+  }
+
+  Future<void> _showCreateLlmTaskDialog(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final title = TextEditingController();
+    final objective = TextEditingController();
+    final contextNotes = TextEditingController();
+    final attachmentPaths = <String>[];
+    var priority = 'normal';
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Queue LLM task'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: title,
+                  decoration: const InputDecoration(labelText: 'Title'),
+                  autofocus: true,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: objective,
+                  minLines: 3,
+                  maxLines: 5,
+                  decoration: const InputDecoration(labelText: 'Objective'),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: priority,
+                  decoration: const InputDecoration(labelText: 'Priority'),
+                  items: const ['low', 'normal', 'high', 'urgent']
+                      .map(
+                        (value) =>
+                            DropdownMenuItem(value: value, child: Text(value)),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) setDialogState(() => priority = value);
+                  },
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: contextNotes,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: const InputDecoration(labelText: 'Context'),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final result = await FilePicker.platform.pickFiles(
+                        allowMultiple: true,
+                        type: FileType.any,
+                      );
+                      if (result == null) return;
+                      final paths = result.files
+                          .map((file) => file.path)
+                          .whereType<String>()
+                          .where((path) => path.trim().isNotEmpty);
+                      setDialogState(() => attachmentPaths.addAll(paths));
+                    },
+                    icon: const Icon(Icons.attach_file, size: 16),
+                    label: const Text('Attach media'),
+                  ),
+                ),
+                if (attachmentPaths.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  ...attachmentPaths.map(
+                    (path) => ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.perm_media_outlined, size: 18),
+                      title: Text(
+                        p.basename(path),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Remove',
+                        icon: const Icon(Icons.close, size: 16),
+                        onPressed: () =>
+                            setDialogState(() => attachmentPaths.remove(path)),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              icon: const Icon(Icons.add_task, size: 16),
+              label: const Text('Queue'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (submitted != true) return;
+    final cleanTitle = title.text.trim();
+    final cleanObjective = objective.text.trim();
+    if (cleanTitle.isEmpty || cleanObjective.isEmpty) return;
+    final taskId = await state.enqueueLlmTask(
+      projectId: widget.projectId,
+      title: cleanTitle,
+      objective: cleanObjective,
+      priority: priority,
+      createdBy: 'ui',
+      context: {
+        if (contextNotes.text.trim().isNotEmpty)
+          'notes': contextNotes.text.trim(),
+        'source': 'project_detail_header',
+      },
+    );
+    for (final path in attachmentPaths) {
+      await state.importLlmTaskMediaFromPath(taskId, path);
+    }
+    await _loadAll();
+  }
+
+  Future<void> _showLlmQueueManagerDialog(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final items = await state.getLlmTasksForProject(
+      widget.projectId,
+      limit: 100,
+    );
+    if (!context.mounted) return;
+    final selected = await showDialog<LlmTaskQueueItem>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('LLM queue'),
+        content: SizedBox(
+          width: 620,
+          height: 520,
+          child: items.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No queued LLM tasks.',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: items.length,
+                  separatorBuilder: (_, __) =>
+                      const Divider(height: 1, color: _kLine),
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+                    return ListTile(
+                      leading: Icon(
+                        _llmQueueIcon(item.status),
+                        color: _llmQueueColor(item.status),
+                      ),
+                      title: Text(
+                        item.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${item.status} - ${item.priority} - updated ${_compactDateTime(item.updatedAt)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(dialogContext).pop(item),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+    await _showEditLlmTaskDialog(context, selected);
+  }
+
+  Future<void> _showEditLlmTaskDialog(
+    BuildContext context,
+    LlmTaskQueueItem item,
+  ) async {
+    final state = AppStateScope.of(context);
+    final projects = await state.getVisibleProjects();
+    final projectIds = projects.map((project) => project.id).toSet();
+    final selectedInitialProjectId = projectIds.contains(item.projectId)
+        ? item.projectId
+        : widget.projectId;
+    var selectedProjectId = selectedInitialProjectId;
+    var workItems = await state.getWorkItemsForProject(selectedProjectId);
+    var selectedWorkItemId =
+        item.workItemId != null &&
+            workItems.any((workItem) => workItem.id == item.workItemId)
+        ? item.workItemId
+        : null;
+    if (!context.mounted) return;
+
+    final title = TextEditingController(text: item.title);
+    final objective = TextEditingController(text: item.objective);
+    final contextJson = TextEditingController(
+      text: _prettyJsonObject(item.context),
+    );
+    final cancelReason = TextEditingController();
+    var attachments = await state.getMediaForLlmTask(item.id);
+    if (!context.mounted) return;
+    var priority = item.priority;
+    String? errorText;
+    final editable = item.status != 'completed';
+
+    final result = await showDialog<_LlmTaskEditResult>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          Future<void> switchProject(String projectId) async {
+            setDialogState(() {
+              selectedProjectId = projectId;
+              selectedWorkItemId = null;
+              workItems = const [];
+            });
+            final loaded = await state.getWorkItemsForProject(projectId);
+            if (!dialogContext.mounted) return;
+            setDialogState(() => workItems = loaded);
+          }
+
+          Future<void> attachMedia() async {
+            final result = await FilePicker.platform.pickFiles(
+              allowMultiple: true,
+              type: FileType.any,
+            );
+            if (result == null) return;
+            for (final file in result.files) {
+              final path = file.path;
+              if (path == null || path.trim().isEmpty) continue;
+              await state.importLlmTaskMediaFromPath(item.id, path);
+            }
+            final loaded = await state.getMediaForLlmTask(item.id);
+            if (!dialogContext.mounted) return;
+            setDialogState(() => attachments = loaded);
+          }
+
+          Future<void> unlinkMedia(ProjectMediaItem media) async {
+            await state.unlinkProjectMediaFromLlmTask(item.id, media.id);
+            final loaded = await state.getMediaForLlmTask(item.id);
+            if (!dialogContext.mounted) return;
+            setDialogState(() => attachments = loaded);
+          }
+
+          _LlmTaskEditResult? buildSaveResult() {
+            final cleanTitle = title.text.trim();
+            final cleanObjective = objective.text.trim();
+            if (cleanTitle.isEmpty || cleanObjective.isEmpty) {
+              setDialogState(
+                () => errorText = 'Title and objective are required.',
+              );
+              return null;
+            }
+            Map<String, Object?> parsedContext;
+            try {
+              parsedContext = _parseJsonObject(contextJson.text);
+            } on FormatException catch (error) {
+              setDialogState(() => errorText = error.message);
+              return null;
+            } catch (error) {
+              setDialogState(
+                () => errorText = 'Context JSON is invalid: $error',
+              );
+              return null;
+            }
+            setDialogState(() => errorText = null);
+            return _LlmTaskEditResult(
+              action: 'save',
+              projectId: selectedProjectId,
+              workItemId: selectedWorkItemId,
+              title: cleanTitle,
+              objective: cleanObjective,
+              priority: priority,
+              context: parsedContext,
+            );
+          }
+
+          final terminalLabel = switch (item.status) {
+            'failed' => 'Failed',
+            'cancelled' => 'Cancelled',
+            _ => 'Completed',
+          };
+
+          return AlertDialog(
+            title: const Text('LLM task'),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _MiniPill('Status', item.status),
+                        _MiniPill('Attempts', '${item.attempts}'),
+                        if (item.leasedBy != null)
+                          _MiniPill('Leased', item.leasedBy!),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Created ${_compactDateTime(item.createdAt)} by ${item.createdBy}',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (item.completedAt != null)
+                      Text(
+                        '$terminalLabel ${_compactDateTime(item.completedAt)}',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
+                      ),
+                    if (item.error != null && item.error!.trim().isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          item.error!,
+                          style: const TextStyle(
+                            color: Color(0xFFFF8A80),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedProjectId,
+                      decoration: const InputDecoration(labelText: 'Project'),
+                      items: projects
+                          .map(
+                            (project) => DropdownMenuItem(
+                              value: project.id,
+                              child: Text(project.title),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: editable
+                          ? (value) {
+                              if (value != null) switchProject(value);
+                            }
+                          : null,
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String?>(
+                      value: selectedWorkItemId,
+                      decoration: const InputDecoration(
+                        labelText: 'Work item anchor',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('No linked work item'),
+                        ),
+                        ...workItems.map(
+                          (workItem) => DropdownMenuItem<String?>(
+                            value: workItem.id,
+                            child: Text(
+                              workItem.title,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: editable
+                          ? (value) =>
+                                setDialogState(() => selectedWorkItemId = value)
+                          : null,
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: title,
+                      enabled: editable,
+                      decoration: const InputDecoration(labelText: 'Title'),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: objective,
+                      enabled: editable,
+                      minLines: 3,
+                      maxLines: 6,
+                      decoration: const InputDecoration(labelText: 'Objective'),
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: _kPriorities.contains(priority)
+                          ? priority
+                          : 'normal',
+                      decoration: const InputDecoration(labelText: 'Priority'),
+                      items: _kPriorities
+                          .map(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(value),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: editable
+                          ? (value) {
+                              if (value != null) {
+                                setDialogState(() => priority = value);
+                              }
+                            }
+                          : null,
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: contextJson,
+                      enabled: editable,
+                      minLines: 4,
+                      maxLines: 8,
+                      style: const TextStyle(fontFamily: 'monospace'),
+                      decoration: const InputDecoration(
+                        labelText: 'Context JSON',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Media attachments',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        if (editable)
+                          OutlinedButton.icon(
+                            onPressed: attachMedia,
+                            icon: const Icon(Icons.attach_file, size: 16),
+                            label: const Text('Attach'),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    if (attachments.isEmpty)
+                      const Text(
+                        'No media attached.',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                      )
+                    else
+                      ...attachments.map(
+                        (media) => ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            _projectMediaIcon(media.mediaType),
+                            size: 18,
+                          ),
+                          title: Text(
+                            media.title,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            media.originalFilename,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: editable
+                              ? IconButton(
+                                  tooltip: 'Unlink media',
+                                  icon: const Icon(Icons.link_off, size: 18),
+                                  onPressed: () => unlinkMedia(media),
+                                )
+                              : null,
+                        ),
+                      ),
+                    if (editable) ...[
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: cancelReason,
+                        minLines: 1,
+                        maxLines: 2,
+                        decoration: const InputDecoration(
+                          labelText: 'Cancel reason',
+                        ),
+                      ),
+                    ],
+                    if (errorText != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(color: Color(0xFFFF8A80)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Close'),
+              ),
+              if (editable && item.status != 'cancelled')
+                TextButton.icon(
+                  onPressed: () => Navigator.of(dialogContext).pop(
+                    _LlmTaskEditResult(
+                      action: 'cancel',
+                      projectId: selectedProjectId,
+                      workItemId: selectedWorkItemId,
+                      title: title.text,
+                      objective: objective.text,
+                      priority: priority,
+                      context: const {},
+                      reason: cancelReason.text.trim(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.cancel_outlined, size: 16),
+                  label: const Text('Cancel task'),
+                ),
+              if ({'failed', 'cancelled'}.contains(item.status))
+                TextButton.icon(
+                  onPressed: () => Navigator.of(dialogContext).pop(
+                    _LlmTaskEditResult(
+                      action: 'requeue',
+                      projectId: selectedProjectId,
+                      workItemId: selectedWorkItemId,
+                      title: title.text,
+                      objective: objective.text,
+                      priority: priority,
+                      context: const {},
+                    ),
+                  ),
+                  icon: const Icon(Icons.restart_alt, size: 16),
+                  label: const Text('Requeue'),
+                ),
+              if (editable)
+                FilledButton.icon(
+                  onPressed: () {
+                    final saveResult = buildSaveResult();
+                    if (saveResult != null) {
+                      Navigator.of(dialogContext).pop(saveResult);
+                    }
+                  },
+                  icon: const Icon(Icons.save_outlined, size: 16),
+                  label: const Text('Save'),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+    if (result == null) return;
+
+    try {
+      switch (result.action) {
+        case 'save':
+          await state.updateLlmTask(
+            taskId: item.id,
+            projectId: result.projectId,
+            workItemId: result.workItemId,
+            title: result.title,
+            objective: result.objective,
+            priority: result.priority,
+            context: result.context,
+          );
+          break;
+        case 'cancel':
+          await state.cancelLlmTask(
+            item.id,
+            reason: result.reason?.trim().isEmpty == true
+                ? null
+                : result.reason,
+          );
+          break;
+        case 'requeue':
+          await state.requeueLlmTask(item.id);
+          break;
+      }
+      await _loadAll();
+      if (!context.mounted) return;
+      final moved =
+          result.action == 'save' && result.projectId != widget.projectId;
+      final message = switch (result.action) {
+        'cancel' => 'LLM task cancelled.',
+        'requeue' => 'LLM task requeued.',
+        _ => moved ? 'LLM task moved to another project.' : 'LLM task updated.',
+      };
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('LLM task update failed: $error')));
+    }
+  }
 
   Future<void> _generateSummary() async {
     final state = AppStateScope.of(context);
@@ -259,8 +954,29 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              _ProjectTaskHeaderPanel(
+                projectId: widget.projectId,
+                items: _workItems,
+                llmQueueItems: _llmQueueItems,
+                expanded: _taskHeaderExpanded,
+                onToggle: () =>
+                    setState(() => _taskHeaderExpanded = !_taskHeaderExpanded),
+                onAddProjectTask: () => _addProjectTask(context),
+                onAddLlmTask: () => _showCreateLlmTaskDialog(context),
+                onOpenWorkboard: () => _toggleSection('work'),
+                onRefresh: _loadAll,
+                onOpenTask: (item) async {
+                  await showWorkItemDetailSheet(context, item.id);
+                  await _loadAll();
+                },
+                onOpenLlmTask: (item) => _showEditLlmTaskDialog(context, item),
+                onManageLlmTasks: () => _showLlmQueueManagerDialog(context),
+              ),
+              const SizedBox(height: 8),
+
               // AI assistant panel
               _AiPanel(
+                projectId: widget.projectId,
                 expanded: _aiExpanded,
                 includeLibrary: _includeLibrary,
                 summaryLoading: _summaryLoading,
@@ -303,8 +1019,27 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 expanded: _expandedSection == 'identity',
                 onTap: () => _toggleSection('identity'),
                 child: _IdentitySection(
+                  projectId: widget.projectId,
                   project: project,
                   onEdit: () => _showIdentityDialog(context, project),
+                ),
+              ),
+              _Section(
+                id: 'local_repo',
+                title: 'Local Repo',
+                subtitle: 'Refresh from reviewed local project files',
+                expanded: _expandedSection == 'local_repo',
+                onTap: () => _toggleSection('local_repo'),
+                child: _LocalRepoSection(
+                  projectId: widget.projectId,
+                  onChooseLocalRepo: () => _replaceLocalRepoLink(context),
+                  onAssociateFile: () => _associateLocalFile(context),
+                  onAssociateFolder: () => _associateLocalFolder(context),
+                  onPreviewRefresh: () => _showLocalRefreshDialog(context),
+                  onExportBundle: () =>
+                      _showProjectBundleExportDialog(context, project.title),
+                  onInspectGit: () => _showGitVisibilityDialog(context),
+                  onRefreshGithub: () => _refreshGithubMetadata(context),
                 ),
               ),
               _Section(
@@ -333,6 +1068,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   projectId: widget.projectId,
                   items: _workItems,
                   onChanged: _loadAll,
+                  onAddProjectTask: () => _addProjectTask(context),
                 ),
               ),
               _Section(
@@ -404,15 +1140,279 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   // ── Dialogs ───────────────────────────────────────────────────────────────
 
-  Future<void> _showMetaDialog(BuildContext context, Project project) async {
+  Future<void> _showLocalRefreshDialog(BuildContext context) async {
     final state = AppStateScope.of(context);
-    String status = _normalizeProjectStatus(project.status);
-    String? phase = project.phase;
-    String? priority = normalizePriorityValue(project.priority);
-    final titleCtrl = TextEditingController(text: project.title);
-    final ownerCtrl = TextEditingController(text: project.owner ?? '');
+    LocalProjectRefreshPreview preview;
+    try {
+      preview = await state.previewLocalProjectRefresh(widget.projectId);
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Refresh preview failed: $error')));
+      return;
+    }
+    if (!context.mounted) return;
+    final selected = preview.entries
+        .where((entry) => entry.shouldApplyByDefault)
+        .map((entry) => entry.action.id)
+        .toSet();
+    final selectedActionIds = await showDialog<Set<String>>(
+      context: context,
+      useRootNavigator: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: _kPanel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: _kLine),
+          ),
+          title: const Text('Preview local repo refresh'),
+          content: SizedBox(
+            width: 760,
+            height: 560,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  preview.localPath,
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 6,
+                  children: [
+                    _MiniPill('Profile', preview.profile),
+                    if ((preview.branch ?? '').isNotEmpty)
+                      _MiniPill('Branch', preview.branch!),
+                    if ((preview.headSha ?? '').isNotEmpty)
+                      _MiniPill('SHA', _shortSha(preview.headSha!)),
+                    if (preview.dirtyCount != null)
+                      _MiniPill('Dirty', '${preview.dirtyCount}'),
+                  ],
+                ),
+                if (preview.warnings.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    preview.warnings.join('\n'),
+                    style: const TextStyle(fontSize: 11, color: Colors.amber),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Expanded(
+                  child: preview.entries.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No refreshable local project entries found.',
+                            style: TextStyle(color: Colors.white38),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: preview.entries.length,
+                          itemBuilder: (context, index) {
+                            final entry = preview.entries[index];
+                            final canSelect = entry.status != 'unchanged';
+                            return CheckboxListTile(
+                              value: selected.contains(entry.action.id),
+                              onChanged: canSelect
+                                  ? (value) => setLocal(() {
+                                      if (value == true) {
+                                        selected.add(entry.action.id);
+                                      } else {
+                                        selected.remove(entry.action.id);
+                                      }
+                                    })
+                                  : null,
+                              title: Text(entry.action.title),
+                              subtitle: Text(
+                                '${entry.action.targetType} - ${entry.status}\n${entry.action.detail}',
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              secondary: _StatusDot(status: entry.status),
+                              controlAffinity: ListTileControlAffinity.leading,
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(ctx, rootNavigator: true).maybePop();
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: selected.isEmpty
+                  ? null
+                  : () {
+                      Navigator.of(
+                        ctx,
+                        rootNavigator: true,
+                      ).maybePop(Set<String>.from(selected));
+                    },
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Apply selected'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selectedActionIds == null || selectedActionIds.isEmpty) return;
+    if (!context.mounted) return;
+    try {
+      final result = await state.applyLocalProjectRefresh(
+        widget.projectId,
+        selectedActionIds: selectedActionIds,
+      );
+      await _loadAll();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Refresh applied: ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Refresh apply failed: $error')));
+    }
+  }
 
+  Future<void> _replaceLocalRepoLink(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final path = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Choose local project folder',
+    );
+    if (path == null || path.trim().isEmpty) return;
+    try {
+      final registry = await state.replaceProjectLocalRepoLink(
+        widget.projectId,
+        path,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Local repo linked: ${registry.displayName}')),
+      );
+      setState(() {});
+      await _loadAll();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Local repo link failed: $error')));
+    }
+  }
+
+  Future<void> _associateLocalFile(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final result = await FilePicker.platform.pickFiles(type: FileType.any);
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null || path.trim().isEmpty) return;
+    try {
+      await state.associateProjectFile(widget.projectId, path);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Associated file added.')));
+      setState(() {});
+      await _loadAll();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Associated file failed: $error')));
+    }
+  }
+
+  Future<void> _associateLocalFolder(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final path = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Choose associated folder',
+    );
+    if (path == null || path.trim().isEmpty) return;
+    try {
+      await state.associateProjectFolder(widget.projectId, path);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Associated folder added.')));
+      setState(() {});
+      await _loadAll();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Associated folder failed: $error')),
+      );
+    }
+  }
+
+  Future<void> _showGitVisibilityDialog(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    LocalGitVisibilityReport report;
+    try {
+      report = await state.inspectLocalGitVisibility(widget.projectId);
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Git inspection failed: $error')));
+      return;
+    }
+    if (!context.mounted) return;
     await showDialog<void>(
+      context: context,
+      builder: (ctx) => _GitVisibilityDialog(report: report),
+    );
+  }
+
+  Future<void> _refreshGithubMetadata(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    try {
+      final status = await state.refreshProjectGithubRemoteMetadata(
+        widget.projectId,
+      );
+      if (!context.mounted) return;
+      final label = status.hasError
+          ? 'GitHub metadata check saved with warning.'
+          : 'GitHub metadata refreshed: ${status.fullName} (${status.visibility ?? 'unknown'}).';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(label)));
+      setState(() {});
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('GitHub metadata refresh failed: $error')),
+      );
+    }
+  }
+
+  Future<void> _showProjectBundleExportDialog(
+    BuildContext context,
+    String projectTitle,
+  ) async {
+    final state = AppStateScope.of(context);
+    final safeTitle = projectTitle
+        .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+    final defaultPath =
+        '${Directory.current.path}\\${safeTitle}_project_bundle.zip';
+    final pathCtrl = TextEditingController(text: defaultPath);
+    var includeFiles = true;
+    var previewFuture = state.previewProjectBundleExport(
+      widget.projectId,
+      includeFiles: includeFiles,
+    );
+    final request = await showDialog<_ProjectBundleExportRequest>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
@@ -421,46 +1421,113 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             borderRadius: BorderRadius.circular(14),
             side: const BorderSide(color: _kLine),
           ),
-          title: const Text('Edit project metadata'),
+          title: const Text('Export project bundle'),
           content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _mf(titleCtrl, 'Project name'),
-                  const SizedBox(height: 4),
-                  DropdownButtonFormField<String>(
-                    value: _normalizeProjectStatus(status),
-                    items: _kStatuses
-                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                        .toList(),
-                    onChanged: (v) => setLocal(() => status = v ?? status),
-                    decoration: const InputDecoration(labelText: 'Status'),
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: pathCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'ZIP output path',
+                    border: OutlineInputBorder(),
                   ),
-                  DropdownButtonFormField<String>(
-                    value: phase ?? '',
-                    items: _kPhases
-                        .map(
-                          (s) => DropdownMenuItem(
-                            value: s,
-                            child: Text(s.isEmpty ? '(none)' : s),
+                ),
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  value: includeFiles,
+                  onChanged: (value) => setLocal(() {
+                    includeFiles = value ?? true;
+                    previewFuture = state.previewProjectBundleExport(
+                      widget.projectId,
+                      includeFiles: includeFiles,
+                    );
+                  }),
+                  title: const Text('Include copied document and media files'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+                const SizedBox(height: 8),
+                FutureBuilder<ProjectBundleExportPreview>(
+                  future: previewFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const LinearProgressIndicator(minHeight: 2);
+                    }
+                    if (snapshot.hasError) {
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0x22FF9800),
+                          border: Border.all(color: const Color(0x66FF9800)),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text('Preview failed: ${snapshot.error}'),
+                      );
+                    }
+                    final preview = snapshot.data!;
+                    return Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0x22111622),
+                        border: Border.all(color: _kLine),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _MiniPill(
+                                'Atlas records',
+                                '${preview.atlasRecordCount}',
+                              ),
+                              _MiniPill('Documents', '${preview.documents}'),
+                              _MiniPill(
+                                'Copied files',
+                                '${preview.copiedFileCount}',
+                              ),
+                              _MiniPill('Work', '${preview.workItems}'),
+                              _MiniPill('Risks', '${preview.risks}'),
+                              _MiniPill('Decisions', '${preview.decisions}'),
+                              _MiniPill(
+                                'Observations',
+                                '${preview.observations}',
+                              ),
+                              _MiniPill(
+                                'Refresh ledger',
+                                '${preview.refreshItems}',
+                              ),
+                            ],
                           ),
-                        )
-                        .toList(),
-                    onChanged: (v) =>
-                        setLocal(() => phase = (v?.isEmpty ?? true) ? null : v),
-                    decoration: const InputDecoration(labelText: 'Phase'),
-                  ),
-                  DropdownButtonFormField<String>(
-                    value: normalizePriorityValue(priority),
-                    items: uniqueStringDropdownItems(_kPriorities),
-                    onChanged: (v) => setLocal(() => priority = v),
-                    decoration: const InputDecoration(labelText: 'Priority'),
-                  ),
-                  ContactOwnerField(controller: ownerCtrl),
-                ],
-              ),
+                          if (preview.warnings.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            ...preview.warnings
+                                .take(4)
+                                .map(
+                                  (warning) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 4),
+                                    child: Text(
+                                      warning,
+                                      style: const TextStyle(
+                                        color: Color(0xFFFFB74D),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                          ],
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
           ),
           actions: [
@@ -468,25 +1535,48 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
               onPressed: () => Navigator.of(ctx).pop(),
               child: const Text('Cancel'),
             ),
-            FilledButton(
-              onPressed: () async {
-                await state.updateProjectMeta(widget.projectId, {
-                  'title': _nt(titleCtrl.text) ?? project.title,
-                  'status': status,
-                  'phase': phase,
-                  'priority': normalizePriorityValue(priority),
-                  'owner': _nt(ownerCtrl.text),
-                });
-                if (ctx.mounted) Navigator.of(ctx).pop();
+            FilledButton.icon(
+              onPressed: () {
+                final path = pathCtrl.text.trim();
+                if (path.isEmpty) return;
+                Navigator.of(ctx).pop(
+                  _ProjectBundleExportRequest(
+                    path: path,
+                    includeFiles: includeFiles,
+                  ),
+                );
               },
-              child: const Text('Save'),
+              icon: const Icon(Icons.archive_outlined, size: 16),
+              label: const Text('Export bundle'),
             ),
           ],
         ),
       ),
     );
-    titleCtrl.dispose();
-    ownerCtrl.dispose();
+    pathCtrl.dispose();
+    if (request == null) return;
+    if (!context.mounted) return;
+    try {
+      await state.exportProjectBundleToZip(
+        widget.projectId,
+        request.path,
+        includeFiles: request.includeFiles,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Project bundle exported: ${request.path}')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Export failed: $error')));
+    }
+  }
+
+  Future<void> _showMetaDialog(BuildContext context, Project project) async {
+    final saved = await showProjectMetadataDialog(context, project);
+    if (saved == true) await _loadAll();
   }
 
   Future<void> _showIdentityDialog(
@@ -666,7 +1756,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
     if (!context.mounted) return; // Fix 1: mounted check after async gap
     final titleCtrl = TextEditingController(text: defaultTitle);
-    final captionCtrl = TextEditingController(); // Fix 2: restored caption field
+    final captionCtrl =
+        TextEditingController(); // Fix 2: restored caption field
     bool makeCover = false;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -678,22 +1769,32 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(defaultTitle, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                Text(
+                  defaultTitle,
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: titleCtrl,
-                  decoration: const InputDecoration(labelText: 'Title (optional)', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    labelText: 'Title (optional)',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: captionCtrl,
-                  decoration: const InputDecoration(labelText: 'Caption / note (optional)', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    labelText: 'Caption / note (optional)',
+                    border: OutlineInputBorder(),
+                  ),
                   maxLines: 3,
                 ),
                 const SizedBox(height: 12),
                 CheckboxListTile(
                   value: makeCover,
-                  onChanged: (v) => setDialogState(() => makeCover = v ?? false),
+                  onChanged: (v) =>
+                      setDialogState(() => makeCover = v ?? false),
                   title: const Text('Set as cover image'),
                   contentPadding: EdgeInsets.zero,
                 ),
@@ -701,8 +1802,14 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add'),
+            ),
           ],
         ),
       ),
@@ -718,7 +1825,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         widget.projectId,
         path,
         title: titleText.isEmpty ? null : titleText,
-        caption: captionText.isEmpty ? null : captionText, // Fix 2: restored caption param
+        caption: captionText.isEmpty
+            ? null
+            : captionText, // Fix 2: restored caption param
         isCover: makeCover,
       );
       if (makeCover) {
@@ -726,7 +1835,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
       }
     }
   }
@@ -1120,11 +2231,6 @@ String? _nt(String s) {
   return t.isEmpty ? null : t;
 }
 
-String _normalizeProjectStatus(String? value) {
-  final raw = (value ?? '').trim().toLowerCase();
-  return _kStatuses.contains(raw) ? raw : 'active';
-}
-
 Widget _mf(TextEditingController ctrl, String label, {bool multiline = false}) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 10),
@@ -1177,6 +2283,284 @@ class _Pill extends StatelessWidget {
   );
 }
 
+class _ProjectBundleExportRequest {
+  final String path;
+  final bool includeFiles;
+
+  const _ProjectBundleExportRequest({
+    required this.path,
+    required this.includeFiles,
+  });
+}
+
+class _MiniPill extends StatelessWidget {
+  final String label;
+  final String value;
+  const _MiniPill(this.label, this.value);
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: Colors.white.withAlpha(8),
+      border: Border.all(color: _kLine),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Text(
+      '$label: $value',
+      style: const TextStyle(fontSize: 11, color: Colors.white70),
+    ),
+  );
+}
+
+class _StatusDot extends StatelessWidget {
+  final String status;
+  const _StatusDot({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status) {
+      'new' => _kPrimary,
+      'changed' => Colors.amber,
+      'unchanged' => Colors.white30,
+      _ => Colors.white54,
+    };
+    return Container(
+      width: 12,
+      height: 12,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+  }
+}
+
+class _GitVisibilityDialog extends StatelessWidget {
+  final LocalGitVisibilityReport report;
+
+  const _GitVisibilityDialog({required this.report});
+
+  @override
+  Widget build(BuildContext context) {
+    final sha = report.headSha;
+    final shortSha = sha == null
+        ? null
+        : sha.length <= 8
+        ? sha
+        : sha.substring(0, 8);
+    return AlertDialog(
+      backgroundColor: _kPanel,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: _kLine),
+      ),
+      title: const Text('Git visibility'),
+      content: SizedBox(
+        width: 780,
+        height: 620,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText(
+              report.gitRoot ?? report.requestedPath,
+              style: const TextStyle(fontSize: 12, color: Colors.white54),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MiniPill('Branch', report.branch ?? 'unknown'),
+                _MiniPill('HEAD', shortSha ?? 'unknown'),
+                _MiniPill('Compare', report.comparisonRef ?? 'none'),
+                _MiniPill(
+                  'Remote',
+                  report.remoteUrl == null ? 'none' : 'origin',
+                ),
+                _MiniPill('Tracked', '${report.localTrackedCount}'),
+                _MiniPill('Remote files', '${report.remoteTrackedCount}'),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _GitMetric(
+                  label: 'Local only',
+                  value: report.localOnlyTrackedCount,
+                  color: Colors.orangeAccent,
+                ),
+                const SizedBox(width: 8),
+                _GitMetric(
+                  label: 'Remote only',
+                  value: report.remoteOnlyTrackedCount,
+                  color: Colors.lightBlueAccent,
+                ),
+                const SizedBox(width: 8),
+                _GitMetric(
+                  label: 'Changed',
+                  value: report.changedTrackedCount,
+                  color: Colors.amber,
+                ),
+                const SizedBox(width: 8),
+                _GitMetric(
+                  label: 'Untracked',
+                  value: report.untrackedCount,
+                  color: Colors.purpleAccent,
+                ),
+                const SizedBox(width: 8),
+                _GitMetric(
+                  label: 'Ignored',
+                  value: report.ignoredCount,
+                  color: Colors.greenAccent,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ListView(
+                children: [
+                  _GitPathGroup(
+                    title: 'Local tracked not in compare ref',
+                    paths: report.localOnlyTrackedPaths,
+                  ),
+                  _GitPathGroup(
+                    title: 'Compare ref not in local tracked tree',
+                    paths: report.remoteOnlyTrackedPaths,
+                  ),
+                  _GitPathGroup(
+                    title: 'Changed tracked files',
+                    paths: report.changedTrackedPaths,
+                  ),
+                  _GitPathGroup(
+                    title: 'Untracked files',
+                    paths: report.untrackedPaths,
+                  ),
+                  _GitPathGroup(
+                    title: 'Ignored files',
+                    paths: report.ignoredPaths,
+                  ),
+                  _GitPathGroup(
+                    title: 'Suggested .gitignore entries',
+                    paths: report.suggestedIgnoreEntries,
+                  ),
+                  if (report.warnings.isNotEmpty)
+                    _GitPathGroup(title: 'Warnings', paths: report.warnings),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
+class _GitMetric extends StatelessWidget {
+  final String label;
+  final int value;
+  final Color color;
+
+  const _GitMetric({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        height: 58,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: color.withAlpha(18),
+          border: Border.all(color: color.withAlpha(58)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+            const Spacer(),
+            Text(
+              '$value',
+              style: TextStyle(
+                color: color,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GitPathGroup extends StatelessWidget {
+  final String title;
+  final List<String> paths;
+
+  const _GitPathGroup({required this.title, required this.paths});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: _kLine),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          title: Text(title, style: const TextStyle(fontSize: 13)),
+          trailing: _MiniPill('Count', '${paths.length}'),
+          initiallyExpanded: paths.isNotEmpty && paths.length <= 8,
+          children: [
+            if (paths.isEmpty)
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'None',
+                  style: TextStyle(fontSize: 12, color: Colors.white38),
+                ),
+              )
+            else
+              for (final path in paths.take(80))
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: SelectableText(
+                    path,
+                    style: const TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                ),
+            if (paths.length > 80)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${paths.length - 80} more',
+                  style: const TextStyle(fontSize: 12, color: Colors.white38),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MetricCard extends StatelessWidget {
   final String label;
   final int value;
@@ -1217,7 +2601,362 @@ class _MetricCard extends StatelessWidget {
   );
 }
 
+class _ProjectTaskHeaderPanel extends StatelessWidget {
+  final String projectId;
+  final List<WorkItem> items;
+  final List<LlmTaskQueueItem> llmQueueItems;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final Future<void> Function() onAddProjectTask;
+  final Future<void> Function() onAddLlmTask;
+  final VoidCallback onOpenWorkboard;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(WorkItem item) onOpenTask;
+  final Future<void> Function(LlmTaskQueueItem item) onOpenLlmTask;
+  final Future<void> Function() onManageLlmTasks;
+
+  const _ProjectTaskHeaderPanel({
+    required this.projectId,
+    required this.items,
+    required this.llmQueueItems,
+    required this.expanded,
+    required this.onToggle,
+    required this.onAddProjectTask,
+    required this.onAddLlmTask,
+    required this.onOpenWorkboard,
+    required this.onRefresh,
+    required this.onOpenTask,
+    required this.onOpenLlmTask,
+    required this.onManageLlmTasks,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final active = items
+        .where((item) => !['done', 'archived'].contains(item.status))
+        .toList(growable: false);
+    final pendingQueue = llmQueueItems
+        .where((item) => item.status == 'pending' || item.status == 'leased')
+        .toList(growable: false);
+    return Container(
+      decoration: BoxDecoration(
+        color: _kPanel,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _kLine),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    expanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.white70,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Tasks',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                  _MiniPill('Project', '${active.length}'),
+                  const SizedBox(width: 6),
+                  _MiniPill('LLM', '${pendingQueue.length}'),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Refresh',
+                    icon: const Icon(Icons.refresh, size: 18),
+                    onPressed: onRefresh,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (expanded) ...[
+            const Divider(height: 1, color: _kLine),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= 760;
+                  final sections = [
+                    _ProjectTaskHeaderSubsection(
+                      title: 'Project tasks',
+                      icon: Icons.task_alt,
+                      actionIcon: Icons.add,
+                      actionLabel: 'Add task',
+                      onAction: onAddProjectTask,
+                      child: _TaskHeaderProjectList(
+                        items: active,
+                        onOpenTask: onOpenTask,
+                        onOpenWorkboard: onOpenWorkboard,
+                      ),
+                    ),
+                    _ProjectTaskHeaderSubsection(
+                      title: 'LLM queue',
+                      icon: Icons.memory,
+                      actionIcon: Icons.add_task,
+                      actionLabel: 'Queue task',
+                      onAction: onAddLlmTask,
+                      child: _TaskHeaderLlmQueueList(
+                        items: llmQueueItems,
+                        onOpenTask: onOpenLlmTask,
+                        onShowAll: onManageLlmTasks,
+                      ),
+                    ),
+                  ];
+                  if (wide) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: sections[0]),
+                        const SizedBox(width: 12),
+                        Expanded(child: sections[1]),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: [
+                      sections[0],
+                      const SizedBox(height: 12),
+                      sections[1],
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectTaskHeaderSubsection extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final IconData actionIcon;
+  final String actionLabel;
+  final Future<void> Function() onAction;
+  final Widget child;
+
+  const _ProjectTaskHeaderSubsection({
+    required this.title,
+    required this.icon,
+    required this.actionIcon,
+    required this.actionLabel,
+    required this.onAction,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(7),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _kLine),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: _kPrimary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onAction,
+                icon: Icon(actionIcon, size: 16),
+                label: Text(actionLabel),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskHeaderProjectList extends StatelessWidget {
+  final List<WorkItem> items;
+  final Future<void> Function(WorkItem item) onOpenTask;
+  final VoidCallback onOpenWorkboard;
+
+  const _TaskHeaderProjectList({
+    required this.items,
+    required this.onOpenTask,
+    required this.onOpenWorkboard,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) {
+      return const Text(
+        'No active project tasks.',
+        style: TextStyle(color: Colors.white38),
+      );
+    }
+    final visible = items.take(5).toList(growable: false);
+    return Column(
+      children: [
+        for (final item in visible)
+          _TaskHeaderRow(
+            icon: statusFor(item.status).icon,
+            iconColor: statusFor(item.status).color,
+            title: item.title,
+            subtitle: [
+              normalizeStatusValue(item.status),
+              normalizePriorityValue(item.priority),
+              if ((item.owner ?? '').trim().isNotEmpty) item.owner!.trim(),
+            ].join(' - '),
+            onTap: () => onOpenTask(item),
+          ),
+        if (items.length > visible.length)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onOpenWorkboard,
+              icon: const Icon(Icons.view_kanban_outlined, size: 16),
+              label: Text('${items.length - visible.length} more'),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _TaskHeaderLlmQueueList extends StatelessWidget {
+  final List<LlmTaskQueueItem> items;
+  final Future<void> Function(LlmTaskQueueItem item) onOpenTask;
+  final Future<void> Function() onShowAll;
+
+  const _TaskHeaderLlmQueueList({
+    required this.items,
+    required this.onOpenTask,
+    required this.onShowAll,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) {
+      return const Text(
+        'No queued LLM tasks.',
+        style: TextStyle(color: Colors.white38),
+      );
+    }
+    final visible = items.take(5).toList(growable: false);
+    return Column(
+      children: [
+        for (final item in visible)
+          _TaskHeaderRow(
+            icon: _llmQueueIcon(item.status),
+            iconColor: _llmQueueColor(item.status),
+            title: item.title,
+            subtitle: '${item.status} - ${item.priority}',
+            onTap: () => onOpenTask(item),
+          ),
+        if (items.length > visible.length)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onShowAll,
+              icon: const Icon(Icons.list_alt, size: 16),
+              label: Text('${items.length - visible.length} more'),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _TaskHeaderRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final Future<void> Function()? onTap;
+
+  const _TaskHeaderRow({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: iconColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Colors.white54),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+IconData _llmQueueIcon(String status) => switch (status) {
+  'leased' => Icons.play_circle_outline,
+  'completed' => Icons.check_circle_outline,
+  'failed' => Icons.error_outline,
+  'cancelled' => Icons.cancel_outlined,
+  _ => Icons.schedule,
+};
+
+Color _llmQueueColor(String status) => switch (status) {
+  'leased' => const Color(0xFF79A7FF),
+  'completed' => const Color(0xFF4CAF50),
+  'failed' => const Color(0xFFF44336),
+  'cancelled' => const Color(0xFF90A4AE),
+  _ => const Color(0xFFFFC107),
+};
+
 class _AiPanel extends StatelessWidget {
+  final String projectId;
   final bool expanded;
   final bool includeLibrary;
   final bool summaryLoading;
@@ -1229,6 +2968,7 @@ class _AiPanel extends StatelessWidget {
   final VoidCallback onGenerate;
 
   const _AiPanel({
+    required this.projectId,
     required this.expanded,
     required this.includeLibrary,
     required this.summaryLoading,
@@ -1354,6 +3094,7 @@ class _AiPanel extends StatelessWidget {
               )
             else if (summaryOutcome?.hasStructured == true)
               _StructuredSummaryView(
+                projectId: projectId,
                 result: summaryOutcome!.structured!,
                 documentPaths: summaryOutcome!.documentPaths,
                 onRegenerate: onGenerate,
@@ -1402,11 +3143,13 @@ class _AiPanel extends StatelessWidget {
 // ─── Structured summary renderer ─────────────────────────────────────────────
 
 class _StructuredSummaryView extends StatelessWidget {
+  final String projectId;
   final ProjectSummaryResult result;
   final Map<String, String?> documentPaths;
   final VoidCallback onRegenerate;
 
   const _StructuredSummaryView({
+    required this.projectId,
     required this.result,
     required this.documentPaths,
     required this.onRegenerate,
@@ -1611,7 +3354,11 @@ class _StructuredSummaryView extends StatelessWidget {
                             OutlinedButton.icon(
                               onPressed: () {
                                 context.go(
-                                  '/library?entryType=document&entryId=${doc.documentId}',
+                                  _libraryRouteForProject(
+                                    projectId,
+                                    entryType: 'document',
+                                    entryId: doc.documentId,
+                                  ),
                                 );
                               },
                               icon: const Icon(Icons.library_books, size: 13),
@@ -1727,7 +3474,17 @@ class _QuickBar extends StatelessWidget {
         children: [
           Row(
             children: [
-              _Pill(label: project.status, color: _sc(project.status)),
+              _Pill(
+                label: projectStatusLabel(project.status),
+                color: projectStatusColor(project.status),
+              ),
+              if (normalizeProjectCategory(project.category) != null) ...[
+                const SizedBox(width: 6),
+                _Pill(
+                  label: projectCategoryLabel(project.category),
+                  color: const Color(0xFF00BCD4),
+                ),
+              ],
               if ((project.phase ?? '').isNotEmpty) ...[
                 const SizedBox(width: 6),
                 _Pill(label: project.phase!, color: _pc(project.phase)),
@@ -1885,13 +3642,13 @@ class _FieldRow extends StatelessWidget {
   final String label;
   final String? value;
   final String placeholder;
-  final VoidCallback onEdit;
+  final VoidCallback? onEdit;
 
   const _FieldRow({
     required this.label,
     required this.value,
     required this.placeholder,
-    required this.onEdit,
+    this.onEdit,
   });
 
   @override
@@ -1927,12 +3684,14 @@ class _FieldRow extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  const Icon(
-                    Icons.edit_outlined,
-                    size: 13,
-                    color: Colors.white24,
-                  ),
+                  if (onEdit != null) ...[
+                    const SizedBox(width: 6),
+                    const Icon(
+                      Icons.edit_outlined,
+                      size: 13,
+                      color: Colors.white24,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1944,9 +3703,14 @@ class _FieldRow extends StatelessWidget {
 }
 
 class _IdentitySection extends StatelessWidget {
+  final String projectId;
   final Project project;
   final VoidCallback onEdit;
-  const _IdentitySection({required this.project, required this.onEdit});
+  const _IdentitySection({
+    required this.projectId,
+    required this.project,
+    required this.onEdit,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1986,9 +3750,428 @@ class _IdentitySection extends StatelessWidget {
           placeholder: 'Click to edit',
           onEdit: onEdit,
         ),
+        const Divider(height: 1, color: Color(0x44273044)),
+        _GithubIdentityRow(projectId: projectId),
       ],
     );
   }
+}
+
+class _GithubIdentityRow extends StatelessWidget {
+  final String projectId;
+
+  const _GithubIdentityRow({required this.projectId});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return FutureBuilder<ProjectGitRemoteStatus?>(
+      future: state.getLatestProjectGitRemoteStatus(projectId),
+      builder: (context, remoteSnap) {
+        final remote = remoteSnap.data;
+        if (remote != null) {
+          final details = [
+            remote.htmlUrl ?? remote.remoteUrl,
+            if ((remote.visibility ?? '').isNotEmpty) remote.visibility!,
+            if (remote.hasError) 'warning saved',
+          ];
+          return _FieldRow(
+            label: 'GitHub repository',
+            value: details.join(' - '),
+            placeholder: 'No GitHub repository recorded',
+          );
+        }
+        if (remoteSnap.connectionState == ConnectionState.waiting) {
+          return const _FieldRow(
+            label: 'GitHub repository',
+            value: 'Loading...',
+            placeholder: '',
+          );
+        }
+        return FutureBuilder<ProjectObservation?>(
+          future: state.getLatestLocalProjectObservation(projectId),
+          builder: (context, observationSnap) {
+            final identity = GithubRemoteMetadataService.parseGithubRemoteUrl(
+              observationSnap.data?.remoteUrl,
+            );
+            if (identity != null) {
+              return _FieldRow(
+                label: 'GitHub repository',
+                value: identity.htmlUrl,
+                placeholder: 'No GitHub repository recorded',
+              );
+            }
+            if (observationSnap.connectionState == ConnectionState.waiting) {
+              return const _FieldRow(
+                label: 'GitHub repository',
+                value: 'Loading...',
+                placeholder: '',
+              );
+            }
+            return const _FieldRow(
+              label: 'GitHub repository',
+              value: null,
+              placeholder: 'No GitHub repository recorded',
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _LocalRepoSection extends StatelessWidget {
+  final String projectId;
+  final VoidCallback onChooseLocalRepo;
+  final VoidCallback onAssociateFile;
+  final VoidCallback onAssociateFolder;
+  final VoidCallback onPreviewRefresh;
+  final VoidCallback onExportBundle;
+  final VoidCallback onInspectGit;
+  final VoidCallback onRefreshGithub;
+
+  const _LocalRepoSection({
+    required this.projectId,
+    required this.onChooseLocalRepo,
+    required this.onAssociateFile,
+    required this.onAssociateFolder,
+    required this.onPreviewRefresh,
+    required this.onExportBundle,
+    required this.onInspectGit,
+    required this.onRefreshGithub,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return FutureBuilder<ProjectLocalRepoSummary?>(
+      future: state.getProjectLocalRepoSummary(projectId),
+      builder: (context, registrySnap) {
+        final summary = registrySnap.data;
+        if (registrySnap.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(minHeight: 2),
+          );
+        }
+        if (summary == null) {
+          return const SizedBox.shrink();
+        }
+        final registry = summary.registry;
+        if (registry == null) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This Atlas project is not linked to a local repo folder.',
+                style: TextStyle(fontSize: 13, color: Colors.white38),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: onChooseLocalRepo,
+                icon: const Icon(Icons.create_new_folder_outlined, size: 16),
+                label: const Text('Add folder'),
+              ),
+              const SizedBox(height: 12),
+              _LocalRepoAssociatedFiles(summary: summary),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: onAssociateFile,
+                    icon: const Icon(Icons.attach_file, size: 16),
+                    label: const Text('Associate file'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: onAssociateFolder,
+                    icon: const Icon(Icons.folder_copy_outlined, size: 16),
+                    label: const Text('Associate folder'),
+                  ),
+                ],
+              ),
+            ],
+          );
+        }
+        final observation = summary.observation;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _FieldRow(
+              label: 'Repo root',
+              value: summary.repoRoot,
+              placeholder: '',
+            ),
+            if (summary.repoRoot != registry.localPath) ...[
+              const Divider(height: 1, color: Color(0x44273044)),
+              _FieldRow(
+                label: 'Selected folder',
+                value: registry.localPath,
+                placeholder: '',
+              ),
+            ],
+            const Divider(height: 1, color: Color(0x44273044)),
+            _FieldRow(
+              label: 'Registry state',
+              value: '${registry.classification} - ${registry.reviewState}',
+              placeholder: '',
+            ),
+            if (observation != null) ...[
+              const Divider(height: 1, color: Color(0x44273044)),
+              _FieldRow(
+                label: 'Last observation',
+                value: [
+                  if ((observation.branch ?? '').isNotEmpty)
+                    'branch ${observation.branch}',
+                  if ((observation.headSha ?? '').isNotEmpty)
+                    'sha ${_shortSha(observation.headSha!)}',
+                  if (observation.dirtyCount != null)
+                    '${observation.dirtyCount} dirty',
+                ].join(' - '),
+                placeholder: 'No git facts recorded',
+              ),
+            ],
+            const Divider(height: 1, color: Color(0x44273044)),
+            FutureBuilder<ProjectGitRemoteStatus?>(
+              future: state.getLatestProjectGitRemoteStatus(projectId),
+              builder: (context, remoteSnap) {
+                final remote = remoteSnap.data;
+                if (remoteSnap.connectionState == ConnectionState.waiting) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: LinearProgressIndicator(minHeight: 2),
+                  );
+                }
+                if (remote == null) {
+                  return const _FieldRow(
+                    label: 'GitHub',
+                    value: 'No cached GitHub metadata',
+                    placeholder: '',
+                  );
+                }
+                final visibility = remote.visibility ?? 'unknown';
+                final warning = remote.hasError ? ' - warning saved' : '';
+                return Column(
+                  children: [
+                    _FieldRow(
+                      label: 'GitHub',
+                      value: '${remote.fullName} - $visibility$warning',
+                      placeholder: '',
+                    ),
+                    const Divider(height: 1, color: Color(0x44273044)),
+                    _FieldRow(
+                      label: 'Remote check',
+                      value: [
+                        if ((remote.defaultBranch ?? '').isNotEmpty)
+                          'default ${remote.defaultBranch}',
+                        if ((remote.onlineHeadSha ?? '').isNotEmpty)
+                          'head ${_shortSha(remote.onlineHeadSha!)}',
+                        'checked ${_compactDate(remote.checkedAt)}',
+                      ].join(' - '),
+                      placeholder: '',
+                    ),
+                    if (remote.hasError) ...[
+                      const Divider(height: 1, color: Color(0x44273044)),
+                      _FieldRow(
+                        label: 'GitHub warning',
+                        value: remote.error,
+                        placeholder: '',
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            _LocalRepoAssociatedFiles(summary: summary),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: onPreviewRefresh,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Preview refresh'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onChooseLocalRepo,
+                  icon: const Icon(Icons.create_new_folder_outlined, size: 16),
+                  label: const Text('Replace folder'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onAssociateFile,
+                  icon: const Icon(Icons.attach_file, size: 16),
+                  label: const Text('Associate file'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onAssociateFolder,
+                  icon: const Icon(Icons.folder_copy_outlined, size: 16),
+                  label: const Text('Associate folder'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onInspectGit,
+                  icon: const Icon(Icons.account_tree_outlined, size: 16),
+                  label: const Text('Inspect git'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onRefreshGithub,
+                  icon: const Icon(Icons.cloud_sync_outlined, size: 16),
+                  label: const Text('Refresh GitHub'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onExportBundle,
+                  icon: const Icon(Icons.archive_outlined, size: 16),
+                  label: const Text('Export bundle'),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _LocalRepoAssociatedFiles extends StatelessWidget {
+  final ProjectLocalRepoSummary summary;
+
+  const _LocalRepoAssociatedFiles({required this.summary});
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <_AssociatedFileRow>[
+      for (final item in summary.refreshItems)
+        _AssociatedFileRow(
+          icon: _sourceKindIcon(item.sourceKind),
+          title: item.sourceKey,
+          detail: '${_sourceKindLabel(item.sourceKind)} - ${item.targetType}',
+        ),
+      for (final doc in summary.documents)
+        _AssociatedFileRow(
+          icon: Icons.description_outlined,
+          title: doc.originalFilename,
+          detail: doc.source ?? 'Project document',
+        ),
+      for (final media in summary.media)
+        _AssociatedFileRow(
+          icon: _mediaIcon(media.mediaType),
+          title: media.originalFilename,
+          detail: media.source ?? media.mediaType,
+        ),
+    ];
+    final distinct = <String, _AssociatedFileRow>{};
+    for (final row in rows) {
+      distinct.putIfAbsent('${row.detail}::${row.title}', () => row);
+    }
+    final visibleRows = distinct.values.take(8).toList(growable: false);
+    final hiddenCount = distinct.length - visibleRows.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _MiniPill('Documents', '${summary.documents.length}'),
+            _MiniPill('Media', '${summary.media.length}'),
+            _MiniPill('Source files', '${summary.sourceFileCount}'),
+            _MiniPill('Cards', '${summary.cardCount}'),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (visibleRows.isEmpty)
+          const Text(
+            'No imported or refresh-tracked files yet.',
+            style: TextStyle(fontSize: 13, color: Colors.white38),
+          )
+        else
+          ...visibleRows.map(
+            (row) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(row.icon, size: 15, color: Colors.white38),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          row.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        Text(
+                          row.detail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white38,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        if (hiddenCount > 0)
+          Text(
+            '+$hiddenCount more associated file(s)',
+            style: const TextStyle(fontSize: 11, color: Colors.white38),
+          ),
+      ],
+    );
+  }
+
+  IconData _sourceKindIcon(String sourceKind) {
+    return switch (sourceKind) {
+      'source_file' => Icons.code,
+      'media' => Icons.image_outlined,
+      'atlas_card' => Icons.style_outlined,
+      'document' => Icons.description_outlined,
+      _ => Icons.insert_drive_file_outlined,
+    };
+  }
+
+  IconData _mediaIcon(String mediaType) {
+    return switch (mediaType) {
+      'image' => Icons.image_outlined,
+      'video' => Icons.movie_outlined,
+      'audio' => Icons.audiotrack_outlined,
+      'folder' => Icons.folder_outlined,
+      _ => Icons.attach_file,
+    };
+  }
+
+  String _sourceKindLabel(String sourceKind) {
+    return switch (sourceKind) {
+      'source_file' => 'Source file',
+      'atlas_card' => 'Atlas card',
+      'project_meta' => 'Project metadata',
+      'work_item' => 'Work item',
+      _ => sourceKind.replaceAll('_', ' '),
+    };
+  }
+}
+
+class _AssociatedFileRow {
+  final IconData icon;
+  final String title;
+  final String detail;
+
+  const _AssociatedFileRow({
+    required this.icon,
+    required this.title,
+    required this.detail,
+  });
 }
 
 class _PeopleSection extends StatelessWidget {
@@ -2269,16 +4452,17 @@ class _ProjectWorkSection extends StatelessWidget {
   final String projectId;
   final List<WorkItem> items;
   final Future<void> Function() onChanged;
+  final Future<void> Function() onAddProjectTask;
 
   const _ProjectWorkSection({
     required this.projectId,
     required this.items,
     required this.onChanged,
+    required this.onAddProjectTask,
   });
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     final grouped = <String, List<WorkItem>>{
       for (final status in ['inbox', 'next', 'doing', 'waiting', 'done'])
         status: [],
@@ -2300,39 +4484,7 @@ class _ProjectWorkSection extends StatelessWidget {
               ),
             ),
             FilledButton.icon(
-              onPressed: () async {
-                final stages = await state.db.getStagesForProject(projectId);
-                if (stages.isEmpty) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'This project has no stage to attach a task to.',
-                        ),
-                      ),
-                    );
-                  }
-                  return;
-                }
-                if (!context.mounted) return;
-                final draft = await showCreateWorkItemDialog(context);
-                if (draft == null) return;
-                DateTime? dueAt;
-                final rawDate = draft['dueAt'];
-                if (rawDate != null && rawDate.isNotEmpty) {
-                  dueAt = DateTime.tryParse(rawDate);
-                }
-                await state.addWorkItem(
-                  stages.first.id,
-                  draft['title']!,
-                  description: draft['description'],
-                  owner: draft['owner'],
-                  status: normalizeStatusValue(draft['status']),
-                  priority: normalizePriorityValue(draft['priority']),
-                  dueAt: dueAt,
-                );
-                await onChanged();
-              },
+              onPressed: onAddProjectTask,
               icon: const Icon(Icons.add, size: 16),
               label: const Text('Add project task'),
             ),
@@ -2533,7 +4685,8 @@ class _MediaSection extends StatelessWidget {
                       label: const Text('Add image/file'),
                     ),
                     OutlinedButton.icon(
-                      onPressed: () => context.go('/library'),
+                      onPressed: () =>
+                          context.go(_libraryRouteForProject(projectId)),
                       icon: const Icon(Icons.library_books_outlined, size: 16),
                       label: const Text('Open Library'),
                     ),
@@ -2573,41 +4726,54 @@ class _MediaSection extends StatelessWidget {
                   ...docs.map(
                     (d) => Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.description_outlined,
-                            size: 16,
-                            color: _kPrimary,
+                      child: InkWell(
+                        onTap: () => context.go(
+                          _libraryRouteForProject(
+                            projectId,
+                            entryType: 'document',
+                            entryId: d.id,
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  d.title,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
-                                  ),
+                        ),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.description_outlined,
+                                size: 16,
+                                color: _kPrimary,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      d.title,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    Text(
+                                      d.originalFilename,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.white38,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                Text(
-                                  d.originalFilename,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.white38,
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                              const Icon(
+                                Icons.chevron_right,
+                                size: 16,
+                                color: Colors.white24,
+                              ),
+                            ],
                           ),
-                          const Icon(
-                            Icons.chevron_right,
-                            size: 16,
-                            color: Colors.white24,
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -2681,6 +4847,8 @@ class _MediaTile extends StatelessWidget {
                   : Icon(
                       isImage
                           ? Icons.broken_image_outlined
+                          : item.mediaType == 'folder'
+                          ? Icons.folder_outlined
                           : Icons.insert_drive_file_outlined,
                       color: Colors.white38,
                       size: 32,

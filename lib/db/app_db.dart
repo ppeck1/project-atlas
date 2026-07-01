@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../shared/models/project_metadata.dart';
 import 'document_extractor.dart';
 
 import 'db_open.dart';
@@ -34,6 +35,414 @@ typedef ProjectFull = Project;
 //   OutboxMessage      (from OutboxMessages — removes 's')
 typedef ProjectPerson = ProjectPeopleData;
 
+class ProjectUpdateAttribution {
+  final String projectId;
+  final DateTime updatedAt;
+  final String updatedBy;
+  final String source;
+  final String? contactName;
+
+  const ProjectUpdateAttribution({
+    required this.projectId,
+    required this.updatedAt,
+    required this.updatedBy,
+    required this.source,
+    this.contactName,
+  });
+}
+
+class ProjectGitRemoteStatus {
+  final String id;
+  final String projectId;
+  final String? registryId;
+  final String provider;
+  final String owner;
+  final String repo;
+  final String remoteUrl;
+  final String? htmlUrl;
+  final String? visibility;
+  final String? defaultBranch;
+  final String? onlineHeadSha;
+  final bool? isPrivate;
+  final bool? isFork;
+  final bool? isArchived;
+  final DateTime checkedAt;
+  final DateTime? remoteUpdatedAt;
+  final DateTime? remotePushedAt;
+  final String? error;
+  final String? rawJson;
+
+  const ProjectGitRemoteStatus({
+    required this.id,
+    required this.projectId,
+    this.registryId,
+    required this.provider,
+    required this.owner,
+    required this.repo,
+    required this.remoteUrl,
+    this.htmlUrl,
+    this.visibility,
+    this.defaultBranch,
+    this.onlineHeadSha,
+    this.isPrivate,
+    this.isFork,
+    this.isArchived,
+    required this.checkedAt,
+    this.remoteUpdatedAt,
+    this.remotePushedAt,
+    this.error,
+    this.rawJson,
+  });
+
+  String get fullName => '$owner/$repo';
+  bool get hasError => error != null && error!.trim().isNotEmpty;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'projectId': projectId,
+    'registryId': registryId,
+    'provider': provider,
+    'owner': owner,
+    'repo': repo,
+    'fullName': fullName,
+    'remoteUrl': remoteUrl,
+    'htmlUrl': htmlUrl,
+    'visibility': visibility,
+    'defaultBranch': defaultBranch,
+    'onlineHeadSha': onlineHeadSha,
+    'isPrivate': isPrivate,
+    'isFork': isFork,
+    'isArchived': isArchived,
+    'checkedAt': checkedAt.toIso8601String(),
+    'remoteUpdatedAt': remoteUpdatedAt?.toIso8601String(),
+    'remotePushedAt': remotePushedAt?.toIso8601String(),
+    'error': error,
+    'rawJson': rawJson,
+  };
+}
+
+class ProjectEnrichmentRun {
+  final String id;
+  final DateTime startedAt;
+  final DateTime? completedAt;
+  final String status;
+  final String scopeJson;
+  final int registryEntries;
+  final int linkedProjects;
+  final int refreshedProjects;
+  final int createdItems;
+  final int updatedItems;
+  final int unchangedItems;
+  final int skippedItems;
+  final int failedProjects;
+  final int summaryConsidered;
+  final int summaryRefreshed;
+  final int summarySkipped;
+  final int summaryFailed;
+  final int findings;
+  final int openFindings;
+  final String warningsJson;
+  final String outputJson;
+
+  const ProjectEnrichmentRun({
+    required this.id,
+    required this.startedAt,
+    this.completedAt,
+    required this.status,
+    required this.scopeJson,
+    required this.registryEntries,
+    required this.linkedProjects,
+    required this.refreshedProjects,
+    required this.createdItems,
+    required this.updatedItems,
+    required this.unchangedItems,
+    required this.skippedItems,
+    required this.failedProjects,
+    required this.summaryConsidered,
+    required this.summaryRefreshed,
+    required this.summarySkipped,
+    required this.summaryFailed,
+    required this.findings,
+    required this.openFindings,
+    required this.warningsJson,
+    required this.outputJson,
+  });
+
+  List<String> get warnings => _decodeStringList(warningsJson);
+  Map<String, Object?> get scope => _decodeObjectMap(scopeJson);
+  Map<String, Object?> get output => _decodeObjectMap(outputJson);
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'startedAt': startedAt.toIso8601String(),
+    'completedAt': completedAt?.toIso8601String(),
+    'status': status,
+    'scope': scope,
+    'registryEntries': registryEntries,
+    'linkedProjects': linkedProjects,
+    'refreshedProjects': refreshedProjects,
+    'createdItems': createdItems,
+    'updatedItems': updatedItems,
+    'unchangedItems': unchangedItems,
+    'skippedItems': skippedItems,
+    'failedProjects': failedProjects,
+    'summaryConsidered': summaryConsidered,
+    'summaryRefreshed': summaryRefreshed,
+    'summarySkipped': summarySkipped,
+    'summaryFailed': summaryFailed,
+    'findings': findings,
+    'openFindings': openFindings,
+    'warnings': warnings,
+    'output': output,
+  };
+}
+
+class ProjectEnrichmentFinding {
+  final String id;
+  final String runId;
+  final String? projectId;
+  final String? registryId;
+  final String severity;
+  final String category;
+  final String title;
+  final String? detail;
+  final String evidenceJson;
+  final String status;
+  final DateTime createdAt;
+
+  const ProjectEnrichmentFinding({
+    required this.id,
+    required this.runId,
+    this.projectId,
+    this.registryId,
+    required this.severity,
+    required this.category,
+    required this.title,
+    this.detail,
+    required this.evidenceJson,
+    required this.status,
+    required this.createdAt,
+  });
+
+  Map<String, Object?> get evidence => _decodeObjectMap(evidenceJson);
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'runId': runId,
+    'projectId': projectId,
+    'registryId': registryId,
+    'severity': severity,
+    'category': category,
+    'title': title,
+    'detail': detail,
+    'evidence': evidence,
+    'status': status,
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+class ProjectEnrichmentStep {
+  final String id;
+  final String runId;
+  final String worker;
+  final String title;
+  final String status;
+  final DateTime startedAt;
+  final DateTime? completedAt;
+  final int considered;
+  final int createdItems;
+  final int updatedItems;
+  final int skippedItems;
+  final int failedItems;
+  final int findings;
+  final int proposals;
+  final String warningsJson;
+  final String outputJson;
+
+  const ProjectEnrichmentStep({
+    required this.id,
+    required this.runId,
+    required this.worker,
+    required this.title,
+    required this.status,
+    required this.startedAt,
+    this.completedAt,
+    required this.considered,
+    required this.createdItems,
+    required this.updatedItems,
+    required this.skippedItems,
+    required this.failedItems,
+    required this.findings,
+    required this.proposals,
+    required this.warningsJson,
+    required this.outputJson,
+  });
+
+  List<String> get warnings => _decodeStringList(warningsJson);
+  Map<String, Object?> get output => _decodeObjectMap(outputJson);
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'runId': runId,
+    'worker': worker,
+    'title': title,
+    'status': status,
+    'startedAt': startedAt.toIso8601String(),
+    'completedAt': completedAt?.toIso8601String(),
+    'considered': considered,
+    'createdItems': createdItems,
+    'updatedItems': updatedItems,
+    'skippedItems': skippedItems,
+    'failedItems': failedItems,
+    'findings': findings,
+    'proposals': proposals,
+    'warnings': warnings,
+    'output': output,
+  };
+}
+
+class ProjectEnrichmentProposal {
+  final String id;
+  final String runId;
+  final String? projectId;
+  final String? registryId;
+  final String worker;
+  final String proposalType;
+  final String title;
+  final String? detail;
+  final String payloadJson;
+  final int confidence;
+  final String status;
+  final DateTime createdAt;
+  final DateTime? appliedAt;
+
+  const ProjectEnrichmentProposal({
+    required this.id,
+    required this.runId,
+    this.projectId,
+    this.registryId,
+    required this.worker,
+    required this.proposalType,
+    required this.title,
+    this.detail,
+    required this.payloadJson,
+    required this.confidence,
+    required this.status,
+    required this.createdAt,
+    this.appliedAt,
+  });
+
+  Map<String, Object?> get payload => _decodeObjectMap(payloadJson);
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'runId': runId,
+    'projectId': projectId,
+    'registryId': registryId,
+    'worker': worker,
+    'proposalType': proposalType,
+    'title': title,
+    'detail': detail,
+    'payload': payload,
+    'confidence': confidence,
+    'status': status,
+    'createdAt': createdAt.toIso8601String(),
+    'appliedAt': appliedAt?.toIso8601String(),
+  };
+}
+
+class LlmTaskQueueItem {
+  final String id;
+  final String projectId;
+  final String? workItemId;
+  final String title;
+  final String objective;
+  final String contextJson;
+  final String priority;
+  final String status;
+  final String createdBy;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final String? leasedBy;
+  final DateTime? leasedAt;
+  final DateTime? leaseExpiresAt;
+  final int attempts;
+  final String? resultJson;
+  final String? error;
+  final String? reviewDraftId;
+  final DateTime? completedAt;
+
+  const LlmTaskQueueItem({
+    required this.id,
+    required this.projectId,
+    this.workItemId,
+    required this.title,
+    required this.objective,
+    required this.contextJson,
+    required this.priority,
+    required this.status,
+    required this.createdBy,
+    required this.createdAt,
+    required this.updatedAt,
+    this.leasedBy,
+    this.leasedAt,
+    this.leaseExpiresAt,
+    required this.attempts,
+    this.resultJson,
+    this.error,
+    this.reviewDraftId,
+    this.completedAt,
+  });
+
+  Map<String, Object?> get context => _decodeObjectMap(contextJson);
+  Map<String, Object?> get result => _decodeObjectMap(resultJson);
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'projectId': projectId,
+    'workItemId': workItemId,
+    'title': title,
+    'objective': objective,
+    'context': context,
+    'priority': priority,
+    'status': status,
+    'createdBy': createdBy,
+    'createdAt': createdAt.toIso8601String(),
+    'updatedAt': updatedAt.toIso8601String(),
+    'leasedBy': leasedBy,
+    'leasedAt': leasedAt?.toIso8601String(),
+    'leaseExpiresAt': leaseExpiresAt?.toIso8601String(),
+    'attempts': attempts,
+    'result': resultJson == null ? null : result,
+    'error': error,
+    'reviewDraftId': reviewDraftId,
+    'completedAt': completedAt?.toIso8601String(),
+  };
+}
+
+List<String> _decodeStringList(String? rawJson) {
+  if (rawJson == null || rawJson.trim().isEmpty) return const <String>[];
+  try {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is List) {
+      return decoded.map((item) => item.toString()).toList(growable: false);
+    }
+  } catch (_) {}
+  return const <String>[];
+}
+
+Map<String, Object?> _decodeObjectMap(String? rawJson) {
+  if (rawJson == null || rawJson.trim().isEmpty)
+    return const <String, Object?>{};
+  try {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is Map) {
+      return decoded.map((key, value) => MapEntry(key.toString(), value));
+    }
+  } catch (_) {}
+  return const <String, Object?>{};
+}
+
 // ---------------------------------------------------------------------------
 // AppDb
 // ---------------------------------------------------------------------------
@@ -59,11 +468,22 @@ typedef ProjectPerson = ProjectPeopleData;
     Tags,
     ProjectTags,
     ProjectMedia,
+    MediaLinks,
+    ProjectRegistry,
+    ProjectObservations,
+    ProjectScanRuns,
+    LocalProjectRefreshItems,
   ],
 )
 class AppDb extends _$AppDb {
   AppDb() : super(openEncryptedExecutor());
   AppDb.withExecutor(QueryExecutor executor) : super(executor);
+
+  static const kGeneralTasksProjectId = 'atlas-general-tasks';
+  static const kGeneralTasksProjectDescription =
+      '__atlas_hidden_general_tasks_project__';
+
+  int _lastGeneratedIdMicros = 0;
 
   // ── AppMeta keys ──────────────────────────────────────────────────────────
   static const kActiveProjectId = 'active_project_id';
@@ -75,7 +495,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 18;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -99,7 +519,8 @@ class AppDb extends _$AppDb {
             await m.addColumn(workItems, col);
           } on SqliteException catch (e) {
             if (!e.message.toLowerCase().contains('already exists') &&
-                !e.message.toLowerCase().contains('duplicate column')) rethrow;
+                !e.message.toLowerCase().contains('duplicate column'))
+              rethrow;
           }
         }
         for (final fn in <Future<void> Function()>[
@@ -111,7 +532,8 @@ class AppDb extends _$AppDb {
             await fn();
           } on SqliteException catch (e) {
             if (!e.message.toLowerCase().contains('already exists') &&
-                !e.message.toLowerCase().contains('duplicate column')) rethrow;
+                !e.message.toLowerCase().contains('duplicate column'))
+              rethrow;
           }
         }
       }
@@ -192,9 +614,39 @@ class AppDb extends _$AppDb {
           'ON daily_reviews(review_date)',
         );
       }
+      if (from < 11) {
+        for (final fn in <Future<void> Function()>[
+          () => m.createTable(projectScanRuns),
+          () => m.createTable(projectRegistry),
+          () => m.createTable(projectObservations),
+        ]) {
+          try {
+            await fn();
+          } catch (_) {}
+        }
+      }
+      if (from < 12) {
+        try {
+          await m.createTable(localProjectRefreshItems);
+        } catch (_) {}
+      }
+      if (from < 18) {
+        try {
+          await m.addColumn(projects, projects.category);
+        } catch (_) {}
+        try {
+          await m.createTable(mediaLinks);
+        } catch (_) {}
+      }
     },
     beforeOpen: (_) async {
       await _ensureProjectCompatibilityColumns();
+      await _ensureWorkItemTagsTable();
+      await _ensureMediaLinksTable();
+      await _ensureProjectGitRemotesTable();
+      await _ensureProjectEnrichmentTables();
+      await _ensureLlmTaskQueueTable();
+      await recoverStaleProjectEnrichmentRuns();
     },
   );
 
@@ -209,6 +661,7 @@ class AppDb extends _$AppDb {
       'ALTER TABLE projects ADD COLUMN success_criteria TEXT NULL',
       // Use nullable here — we backfill below so the NOT NULL alias still holds.
       "ALTER TABLE projects ADD COLUMN status TEXT DEFAULT 'active'",
+      'ALTER TABLE projects ADD COLUMN category TEXT NULL',
       'ALTER TABLE projects ADD COLUMN deleted_at INTEGER NULL',
       'ALTER TABLE projects ADD COLUMN delete_reason TEXT NULL',
       // v6 lifecycle columns
@@ -303,6 +756,13 @@ class AppDb extends _$AppDb {
         metadata_json TEXT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
+      )''',
+      '''CREATE TABLE IF NOT EXISTS media_links (
+        id TEXT NOT NULL PRIMARY KEY,
+        media_id TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL
       )''',
     ];
 
@@ -421,11 +881,16 @@ class AppDb extends _$AppDb {
 
   // ── Projects ──────────────────────────────────────────────────────────────
 
+  bool _isVisibleProject(Project project) =>
+      project.deletedAt == null &&
+      project.status != 'deleted' &&
+      project.id != kGeneralTasksProjectId &&
+      project.description != kGeneralTasksProjectDescription;
+
   Stream<List<Project>> watchProjects() =>
-      (select(projects)
-            ..where((t) => t.deletedAt.isNull())
-            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
-          .watch();
+      (select(projects)..orderBy([(t) => OrderingTerm.asc(t.title)]))
+          .watch()
+          .map((rows) => rows.where(_isVisibleProject).toList(growable: false));
 
   Stream<Project?> watchProject(String id) =>
       (select(projects)..where((t) => t.id.equals(id))).watchSingleOrNull();
@@ -455,7 +920,7 @@ class AppDb extends _$AppDb {
     );
 
     // Auto-create a default stage so the Work screen is immediately usable
-    final stageId = '${DateTime.now().microsecondsSinceEpoch}_stage';
+    final stageId = _newMicrosId('stage');
     debugPrint(
       '[Atlas] createProject: creating default stage $stageId for project $id',
     );
@@ -520,7 +985,7 @@ class AppDb extends _$AppDb {
         '[Atlas] ensureDefaultStages: project "${p.title}" has ${existing.length} stage(s)',
       );
       if (existing.isEmpty) {
-        final stageId = '${DateTime.now().microsecondsSinceEpoch}_stage';
+        final stageId = _newMicrosId('stage');
         debugPrint(
           '[Atlas] ensureDefaultStages: creating default stage for project ${p.id}',
         );
@@ -550,6 +1015,7 @@ class AppDb extends _$AppDb {
       status: fields.containsKey('status')
           ? Value(fields['status'] as String? ?? 'active')
           : const Value.absent(),
+      category: _v<String>('category'),
       description: _v<String>('description'),
       desiredOutcome: _v<String>('desiredOutcome'),
       successCriteria: _v<String>('successCriteria'),
@@ -577,10 +1043,24 @@ class AppDb extends _$AppDb {
   Stream<List<ProjectFull>> watchProjectsFull() => watchProjects();
 
   Future<List<ProjectFull>> getProjectsFull() =>
-      (select(projects)..where((t) => t.status.equals('active'))).get();
+      (select(
+        projects,
+      )..orderBy([(t) => OrderingTerm.asc(t.title)])).get().then(
+        (rows) => rows.where(_isVisibleProject).toList(growable: false),
+      );
+
+  Future<List<Project>> getVisibleProjects() => getProjectsFull();
 
   Future<ProjectFull?> getProjectFull(String id) =>
       (select(projects)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<List<Project>> getSummaryEligibleProjects() => getProjectsFull().then(
+    (rows) => rows
+        .where(
+          (project) => summaryEligibleProjectStatuses.contains(project.status),
+        )
+        .toList(growable: false),
+  );
 
   // ── Stages ────────────────────────────────────────────────────────────────
 
@@ -638,19 +1118,21 @@ class AppDb extends _$AppDb {
   }
 
   Future<void> addStage(String projectId, String title) async {
-    final existing = await (select(stages)
-      ..where((t) => t.projectId.equals(projectId)))
-      .get();
+    final existing = await (select(
+      stages,
+    )..where((t) => t.projectId.equals(projectId))).get();
     final nextPos = existing.isEmpty
         ? 0
         : existing.map((s) => s.position).reduce((a, b) => a > b ? a : b) + 1;
-    await into(stages).insert(StagesCompanion.insert(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      projectId: projectId,
-      title: title,
-      position: nextPos,
-      createdAt: DateTime.now(),
-    ));
+    await into(stages).insert(
+      StagesCompanion.insert(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        projectId: projectId,
+        title: title,
+        position: nextPos,
+        createdAt: DateTime.now(),
+      ),
+    );
   }
 
   Future<void> updateStageTitle(String stageId, String title) async {
@@ -732,7 +1214,7 @@ class AppDb extends _$AppDb {
     return (select(workItems)..where((t) => t.stageId.isIn(ids))).get();
   }
 
-  Future<void> addWorkItem({
+  Future<String> addWorkItem({
     required String stageId,
     required String title,
     String? description,
@@ -741,8 +1223,9 @@ class AppDb extends _$AppDb {
     String priority = 'normal',
     DateTime? dueAt,
     String? source,
+    String? blockedReason,
   }) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     final now = DateTime.now();
     await into(workItems).insert(
       WorkItemsCompanion(
@@ -757,8 +1240,10 @@ class AppDb extends _$AppDb {
         createdAt: Value(now),
         updatedAt: Value(now),
         source: Value(source),
+        blockedReason: Value(blockedReason),
       ),
     );
+    return id;
   }
 
   Future<void> updateWorkItem({
@@ -839,7 +1324,7 @@ class AppDb extends _$AppDb {
     drafts,
   )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
 
-  Future<void> saveDraft({
+  Future<String> saveDraft({
     required String kind,
     required String title,
     required String body,
@@ -847,7 +1332,7 @@ class AppDb extends _$AppDb {
     String? projectId,
     String? workItemId,
   }) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     final now = DateTime.now();
     await into(drafts).insert(
       DraftsCompanion(
@@ -862,6 +1347,26 @@ class AppDb extends _$AppDb {
         updatedAt: Value(now),
       ),
     );
+    return id;
+  }
+
+  Future<Draft?> getDraft(String id) =>
+      (select(drafts)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<void> updateDraftReview({
+    required String id,
+    required bool accepted,
+    String? inputJson,
+    String? body,
+  }) async {
+    await (update(drafts)..where((t) => t.id.equals(id))).write(
+      DraftsCompanion(
+        accepted: Value(accepted),
+        inputJson: inputJson != null ? Value(inputJson) : const Value.absent(),
+        body: body != null ? Value(body) : const Value.absent(),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
   }
 
   Future<void> deleteDraft(String id) =>
@@ -869,12 +1374,11 @@ class AppDb extends _$AppDb {
 
   /// Delete all project_summary drafts for [projectId] before saving a fresh one.
   Future<void> deleteProjectSummaryDrafts(String projectId) =>
-      (delete(drafts)
-            ..where(
-              (t) =>
-                  t.projectId.equals(projectId) &
-                  t.kind.equals('project_summary'),
-            ))
+      (delete(drafts)..where(
+            (t) =>
+                t.projectId.equals(projectId) &
+                t.kind.equals('project_summary'),
+          ))
           .go();
 
   /// Latest cached AI project summary draft for [projectId], or null.
@@ -893,15 +1397,16 @@ class AppDb extends _$AppDb {
   Future<bool> hasTodayProjectSummaryDraft(String projectId) async {
     final today = DateTime.now();
     final startOfDay = DateTime(today.year, today.month, today.day);
-    final rows = await (select(drafts)
-          ..where(
-            (t) =>
-                t.projectId.equals(projectId) &
-                t.kind.equals('project_summary') &
-                t.createdAt.isBiggerOrEqualValue(startOfDay),
-          )
-          ..limit(1))
-        .get();
+    final rows =
+        await (select(drafts)
+              ..where(
+                (t) =>
+                    t.projectId.equals(projectId) &
+                    t.kind.equals('project_summary') &
+                    t.createdAt.isBiggerOrEqualValue(startOfDay),
+              )
+              ..limit(1))
+            .get();
     return rows.isNotEmpty;
   }
 
@@ -909,9 +1414,9 @@ class AppDb extends _$AppDb {
   Future<Map<String, String?>> getDocumentPathsForProject(
     String projectId,
   ) async {
-    final docs = await (select(documents)
-          ..where((t) => t.projectId.equals(projectId)))
-        .get();
+    final docs = await (select(
+      documents,
+    )..where((t) => t.projectId.equals(projectId))).get();
     return {for (final d in docs) d.id: d.storedPath};
   }
 
@@ -943,7 +1448,7 @@ class AppDb extends _$AppDb {
       throw ArgumentError('Contact name is required.');
     }
     final now = DateTime.now();
-    final contactId = id ?? now.microsecondsSinceEpoch.toString();
+    final contactId = id ?? _newMicrosId('contact');
     final existing = await getContact(contactId);
     await into(contacts).insertOnConflictUpdate(
       ContactsCompanion(
@@ -1010,7 +1515,7 @@ class AppDb extends _$AppDb {
     String? role,
     String? authority,
   ) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     await into(projectPeople).insert(
       ProjectPeopleCompanion(
         id: Value(id),
@@ -1047,13 +1552,13 @@ class AppDb extends _$AppDb {
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .get();
 
-  Future<void> addProjectRisk(
+  Future<String> addProjectRisk(
     String projectId,
     String title,
     String? desc,
     String severity,
   ) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     final now = DateTime.now();
     try {
       await into(projectRisks).insert(
@@ -1077,6 +1582,7 @@ class AppDb extends _$AppDb {
         [id, projectId, title, desc, severity, ms, ms],
       );
     }
+    return id;
   }
 
   Future<void> deleteProjectRisk(String riskId) =>
@@ -1088,13 +1594,13 @@ class AppDb extends _$AppDb {
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .get();
 
-  Future<void> addProjectDecision(
+  Future<String> addProjectDecision(
     String projectId,
     String title,
     String? ctx,
     String? decider,
   ) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     final now = DateTime.now();
     try {
       await into(projectDecisions).insert(
@@ -1120,6 +1626,7 @@ class AppDb extends _$AppDb {
         [id, projectId, title, ctx, decider, ms, ms],
       );
     }
+    return id;
   }
 
   Future<void> deleteProjectDecision(String decisionId) =>
@@ -1154,7 +1661,7 @@ class AppDb extends _$AppDb {
       throw ArgumentError('Tag name is required.');
     }
     final now = DateTime.now();
-    final tagId = id ?? now.microsecondsSinceEpoch.toString();
+    final tagId = id ?? _newMicrosId('tag');
     final existing = await getTag(tagId);
     await into(tags).insertOnConflictUpdate(
       TagsCompanion(
@@ -1349,7 +1856,7 @@ class AppDb extends _$AppDb {
       throw ArgumentError('Media title is required.');
     }
     final now = DateTime.now();
-    final mediaId = id ?? now.microsecondsSinceEpoch.toString();
+    final mediaId = id ?? _newMicrosId('media');
     final existing = await getProjectMediaItem(mediaId);
     await into(projectMedia).insertOnConflictUpdate(
       ProjectMediaCompanion(
@@ -1434,8 +1941,113 @@ class AppDb extends _$AppDb {
     );
   }
 
-  Future<void> deleteProjectMedia(String id) =>
-      (delete(projectMedia)..where((t) => t.id.equals(id))).go();
+  Future<void> deleteProjectMedia(String id) async {
+    await transaction(() async {
+      await (delete(mediaLinks)..where((t) => t.mediaId.equals(id))).go();
+      await (delete(projectMedia)..where((t) => t.id.equals(id))).go();
+    });
+  }
+
+  Future<void> linkProjectMediaToEntity({
+    required String mediaId,
+    required String entityType,
+    required String entityId,
+  }) async {
+    await _ensureMediaLinksTable();
+    final cleanMediaId = mediaId.trim();
+    final cleanEntityType = entityType.trim();
+    final cleanEntityId = entityId.trim();
+    if (cleanMediaId.isEmpty ||
+        cleanEntityType.isEmpty ||
+        cleanEntityId.isEmpty) {
+      throw ArgumentError('Media link requires mediaId, entityType, entityId.');
+    }
+    final existing =
+        await (select(mediaLinks)..where(
+              (t) =>
+                  t.mediaId.equals(cleanMediaId) &
+                  t.entityType.equals(cleanEntityType) &
+                  t.entityId.equals(cleanEntityId),
+            ))
+            .getSingleOrNull();
+    if (existing != null) return;
+    await into(mediaLinks).insert(
+      MediaLinksCompanion(
+        id: Value(
+          [
+            cleanMediaId,
+            cleanEntityType,
+            cleanEntityId,
+          ].map(_safeIdSegment).join('_'),
+        ),
+        mediaId: Value(cleanMediaId),
+        entityType: Value(cleanEntityType),
+        entityId: Value(cleanEntityId),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> unlinkProjectMediaFromEntity({
+    required String mediaId,
+    required String entityType,
+    required String entityId,
+  }) async {
+    await _ensureMediaLinksTable();
+    await (delete(mediaLinks)..where(
+          (t) =>
+              t.mediaId.equals(mediaId) &
+              t.entityType.equals(entityType) &
+              t.entityId.equals(entityId),
+        ))
+        .go();
+  }
+
+  Stream<List<ProjectMediaItem>> watchProjectMediaForEntity({
+    required String entityType,
+    required String entityId,
+  }) {
+    final query =
+        select(projectMedia).join([
+            innerJoin(
+              mediaLinks,
+              mediaLinks.mediaId.equalsExp(projectMedia.id),
+            ),
+          ])
+          ..where(
+            mediaLinks.entityType.equals(entityType) &
+                mediaLinks.entityId.equals(entityId),
+          )
+          ..orderBy([OrderingTerm.desc(mediaLinks.createdAt)]);
+    return query.watch().map(
+      (rows) => rows
+          .map((row) => row.readTable(projectMedia))
+          .toList(growable: false),
+    );
+  }
+
+  Future<List<ProjectMediaItem>> getProjectMediaForEntity({
+    required String entityType,
+    required String entityId,
+  }) {
+    final query =
+        select(projectMedia).join([
+            innerJoin(
+              mediaLinks,
+              mediaLinks.mediaId.equalsExp(projectMedia.id),
+            ),
+          ])
+          ..where(
+            mediaLinks.entityType.equals(entityType) &
+                mediaLinks.entityId.equals(entityId),
+          )
+          ..orderBy([OrderingTerm.desc(mediaLinks.createdAt)]);
+    return query.get().then(
+      (rows) => rows
+          .map((row) => row.readTable(projectMedia))
+          .toList(growable: false),
+    );
+  }
 
   Future<void> setProjectCoverMedia(String projectId, String mediaId) async {
     await transaction(() async {
@@ -1476,7 +2088,14 @@ class AppDb extends _$AppDb {
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .watch();
 
-  Future<void> importDocumentFromPath(String path, {String? projectId}) async {
+  Future<String> importDocumentFromPath(
+    String path, {
+    String? projectId,
+    String? title,
+    String? displayTitle,
+    String? source,
+    String? metadataJson,
+  }) async {
     final file = File(path);
     if (!file.existsSync()) {
       throw FileSystemException('File not found', path);
@@ -1484,7 +2103,7 @@ class AppDb extends _$AppDb {
     final name = p.basename(path);
     final rawExt = p.extension(name).replaceFirst('.', '').toLowerCase();
     final ext = rawExt.isEmpty ? null : rawExt;
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     final now = DateTime.now();
 
     final appDocDir = await getApplicationDocumentsDirectory();
@@ -1503,10 +2122,6 @@ class AppDb extends _$AppDb {
     String? extractedTextValue;
     String? renderedMarkdownValue;
     const _maxExtractBytes = 10 * 1024 * 1024;
-    const _textTypes = {
-      'txt', 'csv', 'json', 'log', 'xml', 'yaml', 'yml',
-      'ini', 'toml', 'rst', 'rtf', 'svg',
-    };
     try {
       if (ext != null) {
         final destFile = File(destPath);
@@ -1521,9 +2136,9 @@ class AppDb extends _$AppDb {
             }
           }
 
-          if (_textTypes.contains(ext)) {
+          if (shouldExtractAsPlainText(ext)) {
             extractedTextValue = await readText();
-          } else if (ext == 'md') {
+          } else if (ext == 'md' || ext == 'mdx') {
             renderedMarkdownValue = await readText();
           } else if (ext == 'docx') {
             extractedTextValue = extractDocxText(destPath);
@@ -1547,13 +2162,21 @@ class AppDb extends _$AppDb {
       await into(documents).insert(
         DocumentsCompanion(
           id: Value(id),
-          title: Value(name),
+          title: Value(
+            displayTitle?.trim().isNotEmpty == true
+                ? displayTitle!.trim()
+                : title?.trim().isNotEmpty == true
+                ? title!.trim()
+                : name,
+          ),
           originalFilename: Value(name),
           storedPath: Value(destPath),
           extension: Value(ext),
           mimeType: Value(mimeTypeForExtension(ext)),
           projectId: Value(projectId),
           status: const Value('imported'),
+          source: Value(source),
+          metadataJson: Value(metadataJson),
           extractedText: Value(extractedTextValue),
           renderedMarkdown: Value(renderedMarkdownValue),
           createdAt: Value(now),
@@ -1568,10 +2191,98 @@ class AppDb extends _$AppDb {
       } catch (_) {}
       rethrow;
     }
+    return id;
   }
 
+  Future<List<Document>> getDocumentsForProject(String projectId) =>
+      (select(documents)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .get();
+
+  Future<Document?> getProjectDocumentBySource(
+    String projectId,
+    String source,
+  ) =>
+      (select(documents)
+            ..where(
+              (t) => t.projectId.equals(projectId) & t.source.equals(source),
+            )
+            ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<Document?> getProjectDocumentByOriginalFilename(
+    String projectId,
+    String originalFilename,
+  ) =>
+      (select(documents)
+            ..where(
+              (t) =>
+                  t.projectId.equals(projectId) &
+                  t.originalFilename.equals(originalFilename),
+            )
+            ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<bool> documentExists(String id) async =>
+      (await (select(
+        documents,
+      )..where((t) => t.id.equals(id))).getSingleOrNull()) !=
+      null;
+
+  Future<String> importGeneratedDocument({
+    required String title,
+    required String originalFilename,
+    required String body,
+    String? projectId,
+    String? extension,
+    String? source,
+    String? metadataJson,
+  }) async {
+    final id = _newMicrosId();
+    final now = DateTime.now();
+    final ext = extension == null || extension.trim().isEmpty
+        ? null
+        : extension.trim().replaceFirst('.', '').toLowerCase();
+    await into(documents).insert(
+      DocumentsCompanion(
+        id: Value(id),
+        title: Value(title),
+        originalFilename: Value(originalFilename),
+        storedPath: const Value(null),
+        extension: Value(ext),
+        mimeType: Value(mimeTypeForExtension(ext)),
+        projectId: Value(projectId),
+        source: Value(source),
+        status: const Value('imported'),
+        metadataJson: Value(metadataJson),
+        extractedText: Value(body),
+        renderedMarkdown: ext == 'md' ? Value(body) : const Value.absent(),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+    );
+    return id;
+  }
+
+  Future<ProjectMediaItem?> getProjectMediaBySource(
+    String projectId,
+    String source,
+  ) =>
+      (select(projectMedia)
+            ..where(
+              (t) => t.projectId.equals(projectId) & t.source.equals(source),
+            )
+            ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
+            ..limit(1))
+          .getSingleOrNull();
+
   Future<void> deleteDocument(String id) async {
-    final doc = await (select(documents)..where((d) => d.id.equals(id))).getSingleOrNull();
+    final doc = await (select(
+      documents,
+    )..where((d) => d.id.equals(id))).getSingleOrNull();
     if (doc == null) return;
     await (delete(documentLinks)..where((l) => l.documentId.equals(id))).go();
     await (delete(documents)..where((d) => d.id.equals(id))).go();
@@ -1668,7 +2379,7 @@ class AppDb extends _$AppDb {
     final now = DateTime.now();
     await into(workItemNotes).insert(
       WorkItemNotesCompanion(
-        id: Value(now.microsecondsSinceEpoch.toString()),
+        id: Value(_newMicrosId('work_item_note')),
         workItemId: Value(workItemId),
         body: Value(body),
         createdAt: Value(now),
@@ -1703,7 +2414,7 @@ class AppDb extends _$AppDb {
   }) async {
     await into(workItemAnalyses).insert(
       WorkItemAnalysesCompanion(
-        id: Value(DateTime.now().microsecondsSinceEpoch.toString()),
+        id: Value(_newMicrosId('work_item_analysis')),
         workItemId: Value(workItemId),
         prompt: Value(prompt),
         output: Value(output),
@@ -1724,7 +2435,7 @@ class AppDb extends _$AppDb {
     String? correlationId,
     String? error,
   }) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     await into(eventLog).insert(
       EventLogCompanion(
         id: Value(id),
@@ -1750,7 +2461,7 @@ class AppDb extends _$AppDb {
     String? entityId,
     String? entityType,
   }) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     await into(eventLog).insert(
       EventLogCompanion(
         id: Value(id),
@@ -1788,33 +2499,40 @@ class AppDb extends _$AppDb {
     final today = DateTime(now.year, now.month, now.day);
     final tomorrow = today.add(const Duration(days: 1));
     // Delete existing review for today (upsert by date)
-    await (delete(dailyReviews)
-      ..where((t) => t.reviewDate.isBiggerOrEqualValue(today) &
-                     t.reviewDate.isSmallerThanValue(tomorrow)))
-      .go();
-    await into(dailyReviews).insert(DailyReviewsCompanion.insert(
-      id: now.millisecondsSinceEpoch.toString(),
-      reviewDate: today,
-      summary: summary,
-      createdAt: now,
-    ));
+    await (delete(dailyReviews)..where(
+          (t) =>
+              t.reviewDate.isBiggerOrEqualValue(today) &
+              t.reviewDate.isSmallerThanValue(tomorrow),
+        ))
+        .go();
+    await into(dailyReviews).insert(
+      DailyReviewsCompanion.insert(
+        id: now.millisecondsSinceEpoch.toString(),
+        reviewDate: today,
+        summary: summary,
+        createdAt: now,
+      ),
+    );
   }
 
   Future<DailyReview?> getDailyReviewForDate(DateTime date) async {
     final start = DateTime(date.year, date.month, date.day);
     final end = start.add(const Duration(days: 1));
     return (select(dailyReviews)
-      ..where((t) => t.reviewDate.isBiggerOrEqualValue(start) &
-                     t.reviewDate.isSmallerThanValue(end))
-      ..limit(1))
-      .getSingleOrNull();
+          ..where(
+            (t) =>
+                t.reviewDate.isBiggerOrEqualValue(start) &
+                t.reviewDate.isSmallerThanValue(end),
+          )
+          ..limit(1))
+        .getSingleOrNull();
   }
 
   Stream<List<DailyReview>> watchRecentDailyReviews({int limit = 30}) =>
       (select(dailyReviews)
-        ..orderBy([(t) => OrderingTerm.desc(t.reviewDate)])
-        ..limit(limit))
-      .watch();
+            ..orderBy([(t) => OrderingTerm.desc(t.reviewDate)])
+            ..limit(limit))
+          .watch();
 
   // ── Outbox ────────────────────────────────────────────────────────────────
 
@@ -1823,7 +2541,7 @@ class AppDb extends _$AppDb {
     required String title,
     required String body,
   }) async {
-    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final id = _newMicrosId();
     await into(outboxMessages).insert(
       OutboxMessagesCompanion(
         id: Value(id),
@@ -1860,4 +2578,1677 @@ class AppDb extends _$AppDb {
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
             ..limit(50))
           .watch();
+  // ---------------------------------------------------------------------------
+  // Compatibility helpers and local operations stores
+  // ---------------------------------------------------------------------------
+
+  String _newMicrosId([String suffix = '']) {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    final next = now <= _lastGeneratedIdMicros
+        ? _lastGeneratedIdMicros + 1
+        : now;
+    _lastGeneratedIdMicros = next;
+    return suffix.isEmpty ? next.toString() : '${next}_$suffix';
+  }
+
+  DateTime _dateFromSqlValue(Object? value) {
+    if (value is DateTime) return value;
+    if (value is int) return _dateFromSqlInt(value);
+    if (value is String) {
+      final parsedInt = int.tryParse(value);
+      if (parsedInt != null) return _dateFromSqlInt(parsedInt);
+      return DateTime.tryParse(value) ?? DateTime.fromMillisecondsSinceEpoch(0);
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  DateTime? _nullableDateFromSqlValue(Object? value) {
+    if (value == null) return null;
+    final parsed = _dateFromSqlValue(value);
+    if (parsed.millisecondsSinceEpoch == 0) return null;
+    return parsed;
+  }
+
+  DateTime _dateFromSqlInt(int value) {
+    final abs = value.abs();
+    if (abs >= 100000000000000) {
+      return DateTime.fromMicrosecondsSinceEpoch(value);
+    }
+    if (abs < 100000000000) {
+      return DateTime.fromMillisecondsSinceEpoch(value * 1000);
+    }
+    return DateTime.fromMillisecondsSinceEpoch(value);
+  }
+
+  int? _boolToSql(bool? value) => value == null ? null : (value ? 1 : 0);
+
+  bool? _boolFromSql(Object? value) {
+    if (value == null) return null;
+    if (value is bool) return value;
+    if (value is int) return value != 0;
+    final text = value.toString().toLowerCase();
+    if (text == 'true' || text == '1') return true;
+    if (text == 'false' || text == '0') return false;
+    return null;
+  }
+
+  int _intFromSql(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  String _safeIdSegment(String value) => value
+      .trim()
+      .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
+      .replaceAll(RegExp(r'_+'), '_')
+      .replaceAll(RegExp(r'^_|_$'), '');
+
+  Future<void> _ensureWorkItemTagsTable() async {
+    await customStatement('''CREATE TABLE IF NOT EXISTS work_item_tags (
+      work_item_id TEXT NOT NULL,
+      tag_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (work_item_id, tag_id)
+    )''');
+  }
+
+  Future<void> _ensureMediaLinksTable() async {
+    await customStatement('''CREATE TABLE IF NOT EXISTS media_links (
+      id TEXT NOT NULL PRIMARY KEY,
+      media_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )''');
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_media_links_entity '
+      'ON media_links(entity_type, entity_id, created_at DESC)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_media_links_media ON media_links(media_id)',
+    );
+  }
+
+  Future<void> _ensureProjectGitRemotesTable() async {
+    await customStatement('''CREATE TABLE IF NOT EXISTS project_git_remotes (
+      id TEXT NOT NULL PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      registry_id TEXT NULL,
+      provider TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      repo TEXT NOT NULL,
+      remote_url TEXT NOT NULL,
+      html_url TEXT NULL,
+      visibility TEXT NULL,
+      default_branch TEXT NULL,
+      online_head_sha TEXT NULL,
+      is_private INTEGER NULL,
+      is_fork INTEGER NULL,
+      is_archived INTEGER NULL,
+      checked_at INTEGER NOT NULL,
+      remote_updated_at INTEGER NULL,
+      remote_pushed_at INTEGER NULL,
+      error TEXT NULL,
+      raw_json TEXT NULL
+    )''');
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_project_git_remotes_project '
+      'ON project_git_remotes(project_id, checked_at DESC)',
+    );
+  }
+
+  Future<void> _ensureProjectEnrichmentTables() async {
+    await customStatement(
+      '''CREATE TABLE IF NOT EXISTS project_enrichment_runs (
+      id TEXT NOT NULL PRIMARY KEY,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER NULL,
+      status TEXT NOT NULL,
+      scope_json TEXT NOT NULL,
+      registry_entries INTEGER NOT NULL DEFAULT 0,
+      linked_projects INTEGER NOT NULL DEFAULT 0,
+      refreshed_projects INTEGER NOT NULL DEFAULT 0,
+      created_items INTEGER NOT NULL DEFAULT 0,
+      updated_items INTEGER NOT NULL DEFAULT 0,
+      unchanged_items INTEGER NOT NULL DEFAULT 0,
+      skipped_items INTEGER NOT NULL DEFAULT 0,
+      failed_projects INTEGER NOT NULL DEFAULT 0,
+      summary_considered INTEGER NOT NULL DEFAULT 0,
+      summary_refreshed INTEGER NOT NULL DEFAULT 0,
+      summary_skipped INTEGER NOT NULL DEFAULT 0,
+      summary_failed INTEGER NOT NULL DEFAULT 0,
+      findings INTEGER NOT NULL DEFAULT 0,
+      open_findings INTEGER NOT NULL DEFAULT 0,
+      warnings_json TEXT NOT NULL,
+      output_json TEXT NOT NULL
+    )''',
+    );
+    await customStatement(
+      '''CREATE TABLE IF NOT EXISTS project_enrichment_findings (
+      id TEXT NOT NULL PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      project_id TEXT NULL,
+      registry_id TEXT NULL,
+      severity TEXT NOT NULL,
+      category TEXT NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT NULL,
+      evidence_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )''',
+    );
+    await customStatement(
+      '''CREATE TABLE IF NOT EXISTS project_enrichment_steps (
+      id TEXT NOT NULL PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      worker TEXT NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER NULL,
+      considered INTEGER NOT NULL DEFAULT 0,
+      created_items INTEGER NOT NULL DEFAULT 0,
+      updated_items INTEGER NOT NULL DEFAULT 0,
+      skipped_items INTEGER NOT NULL DEFAULT 0,
+      failed_items INTEGER NOT NULL DEFAULT 0,
+      findings INTEGER NOT NULL DEFAULT 0,
+      proposals INTEGER NOT NULL DEFAULT 0,
+      warnings_json TEXT NOT NULL,
+      output_json TEXT NOT NULL
+    )''',
+    );
+    await customStatement(
+      '''CREATE TABLE IF NOT EXISTS project_enrichment_proposals (
+      id TEXT NOT NULL PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      project_id TEXT NULL,
+      registry_id TEXT NULL,
+      worker TEXT NOT NULL,
+      proposal_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      detail TEXT NULL,
+      payload_json TEXT NOT NULL,
+      confidence INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      applied_at INTEGER NULL
+    )''',
+    );
+    for (final stmt in <String>[
+      'CREATE INDEX IF NOT EXISTS idx_project_enrichment_runs_started ON project_enrichment_runs(started_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_project_enrichment_findings_run ON project_enrichment_findings(run_id, severity, category)',
+      'CREATE INDEX IF NOT EXISTS idx_project_enrichment_findings_project ON project_enrichment_findings(project_id, status)',
+      'CREATE INDEX IF NOT EXISTS idx_project_enrichment_steps_run ON project_enrichment_steps(run_id, started_at)',
+      'CREATE INDEX IF NOT EXISTS idx_project_enrichment_proposals_run ON project_enrichment_proposals(run_id, status)',
+      'CREATE INDEX IF NOT EXISTS idx_project_enrichment_proposals_project ON project_enrichment_proposals(project_id, status)',
+    ]) {
+      await customStatement(stmt);
+    }
+  }
+
+  Future<void> _ensureLlmTaskQueueTable() async {
+    await customStatement('''CREATE TABLE IF NOT EXISTS llm_task_queue (
+      id TEXT NOT NULL PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      work_item_id TEXT NULL,
+      title TEXT NOT NULL,
+      objective TEXT NOT NULL,
+      context_json TEXT NOT NULL,
+      priority TEXT NOT NULL DEFAULT 'normal',
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_by TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      leased_by TEXT NULL,
+      leased_at INTEGER NULL,
+      lease_expires_at INTEGER NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      result_json TEXT NULL,
+      error TEXT NULL,
+      review_draft_id TEXT NULL,
+      completed_at INTEGER NULL
+    )''');
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_llm_task_queue_project_status '
+      'ON llm_task_queue(project_id, status, updated_at DESC)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_llm_task_queue_claim '
+      'ON llm_task_queue(status, priority, created_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_llm_task_queue_work_item '
+      'ON llm_task_queue(work_item_id)',
+    );
+  }
+
+  Future<String> ensureGeneralTaskStage() async {
+    final existingProject =
+        await (select(projects)
+              ..where(
+                (t) =>
+                    t.id.equals(kGeneralTasksProjectId) |
+                    t.description.equals(kGeneralTasksProjectDescription),
+              )
+              ..limit(1))
+            .getSingleOrNull();
+    final projectId = existingProject?.id ?? kGeneralTasksProjectId;
+    if (existingProject == null) {
+      final now = DateTime.now();
+      await into(projects).insert(
+        ProjectsCompanion(
+          id: Value(projectId),
+          title: const Value('General Tasks'),
+          description: const Value(kGeneralTasksProjectDescription),
+          status: const Value('active'),
+          createdAt: Value(now),
+        ),
+      );
+    } else if (existingProject.description != kGeneralTasksProjectDescription) {
+      await updateProjectMeta(projectId, {
+        'description': kGeneralTasksProjectDescription,
+      });
+    }
+    final existingStage =
+        await (select(stages)
+              ..where((t) => t.projectId.equals(projectId))
+              ..orderBy([(t) => OrderingTerm.asc(t.position)])
+              ..limit(1))
+            .getSingleOrNull();
+    if (existingStage != null) return existingStage.id;
+    final stageId = _newMicrosId('general_stage');
+    await into(stages).insert(
+      StagesCompanion(
+        id: Value(stageId),
+        projectId: Value(projectId),
+        title: const Value('General'),
+        position: const Value(0),
+        createdAt: Value(DateTime.now()),
+      ),
+    );
+    return stageId;
+  }
+
+  Stream<List<WorkItem>> watchAllActiveWorkItems() =>
+      (select(workItems)
+            ..where((t) => t.status.isNotIn(['done', 'archived']))
+            ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
+          .watch();
+
+  Future<bool> workItemExists(String id) async =>
+      (await getWorkItem(id)) != null;
+
+  Future<Project?> getProjectForWorkItem(String workItemId) async {
+    final item = await getWorkItem(workItemId);
+    if (item == null) return null;
+    final stage = await (select(
+      stages,
+    )..where((t) => t.id.equals(item.stageId))).getSingleOrNull();
+    if (stage == null) return null;
+    final project = await getProjectFull(stage.projectId);
+    if (project == null || !_isVisibleProject(project)) return null;
+    return project;
+  }
+
+  Future<ProjectRisk?> getProjectRisk(String id) =>
+      (select(projectRisks)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<void> updateProjectRisk(
+    String id, {
+    String? title,
+    String? desc,
+    String? severity,
+  }) async {
+    await (update(projectRisks)..where((t) => t.id.equals(id))).write(
+      ProjectRisksCompanion(
+        title: title != null ? Value(title) : const Value.absent(),
+        desc: desc != null ? Value(desc) : const Value.absent(),
+        severity: severity != null ? Value(severity) : const Value.absent(),
+      ),
+    );
+  }
+
+  Future<ProjectDecision?> getProjectDecision(String id) => (select(
+    projectDecisions,
+  )..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<void> updateProjectDecision(
+    String id, {
+    String? title,
+    String? ctx,
+    String? decider,
+  }) async {
+    await (update(projectDecisions)..where((t) => t.id.equals(id))).write(
+      ProjectDecisionsCompanion(
+        title: title != null ? Value(title) : const Value.absent(),
+        ctx: ctx != null ? Value(ctx) : const Value.absent(),
+        decider: decider != null ? Value(decider) : const Value.absent(),
+      ),
+    );
+  }
+
+  Future<void> assignTagToWorkItem(String workItemId, String tagId) async {
+    await customStatement(
+      'INSERT OR REPLACE INTO work_item_tags '
+      '(work_item_id, tag_id, created_at) VALUES (?, ?, ?)',
+      [workItemId, tagId, DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  Future<void> setWorkItemTags(
+    String workItemId,
+    Iterable<String> tagIds,
+  ) async {
+    final uniqueIds = tagIds.where((id) => id.trim().isNotEmpty).toSet();
+    await transaction(() async {
+      await customStatement(
+        'DELETE FROM work_item_tags WHERE work_item_id = ?',
+        [workItemId],
+      );
+      for (final tagId in uniqueIds) {
+        await assignTagToWorkItem(workItemId, tagId);
+      }
+    });
+  }
+
+  Tag _tagFromRow(QueryRow row) => Tag(
+    id: row.data['id'] as String,
+    name: row.data['name'] as String,
+    color: row.data['color'] as String?,
+    createdAt: _dateFromSqlValue(row.data['created_at']),
+    updatedAt: _dateFromSqlValue(row.data['updated_at']),
+  );
+
+  Future<List<Tag>> getTagsForWorkItem(String workItemId) async {
+    final rows = await customSelect(
+      '''SELECT t.id, t.name, t.color, t.created_at, t.updated_at
+         FROM tags t
+         INNER JOIN work_item_tags wt ON wt.tag_id = t.id
+         WHERE wt.work_item_id = ?
+         ORDER BY LOWER(t.name) ASC''',
+      variables: [Variable<String>(workItemId)],
+      readsFrom: {tags},
+    ).get();
+    return rows.map(_tagFromRow).toList(growable: false);
+  }
+
+  Future<Map<String, List<Tag>>> getTagsForWorkItems(
+    Iterable<String> workItemIds,
+  ) async {
+    final ids = workItemIds.where((id) => id.trim().isNotEmpty).toSet();
+    if (ids.isEmpty) return const <String, List<Tag>>{};
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final rows = await customSelect(
+      '''SELECT wt.work_item_id, t.id, t.name, t.color, t.created_at, t.updated_at
+         FROM work_item_tags wt
+         INNER JOIN tags t ON wt.tag_id = t.id
+         WHERE wt.work_item_id IN ($placeholders)
+         ORDER BY LOWER(t.name) ASC''',
+      variables: ids.map((id) => Variable<String>(id)).toList(growable: false),
+      readsFrom: {tags},
+    ).get();
+    final result = <String, List<Tag>>{for (final id in ids) id: <Tag>[]};
+    for (final row in rows) {
+      final workItemId = row.data['work_item_id'] as String;
+      result.putIfAbsent(workItemId, () => <Tag>[]).add(_tagFromRow(row));
+    }
+    return result;
+  }
+
+  Future<Map<String, int>> mergeProjects({
+    required String sourceProjectId,
+    required String targetProjectId,
+  }) async {
+    if (sourceProjectId == targetProjectId) {
+      throw ArgumentError('Choose two different projects to merge.');
+    }
+    final source = await getProjectFull(sourceProjectId);
+    final target = await getProjectFull(targetProjectId);
+    if (source == null) throw StateError('Source project not found.');
+    if (target == null) throw StateError('Target project not found.');
+    final moved = <String, int>{
+      'stages': 0,
+      'workItems': 0,
+      'media': 0,
+      'documents': 0,
+      'people': 0,
+      'risks': 0,
+      'decisions': 0,
+      'tags': 0,
+      'drafts': 0,
+      'registry': 0,
+    };
+    await transaction(() async {
+      final sourceStages = await getStagesForProject(sourceProjectId);
+      final sourceStageIds = sourceStages.map((stage) => stage.id).toSet();
+      for (final stage in sourceStages) {
+        await (update(stages)..where((t) => t.id.equals(stage.id))).write(
+          StagesCompanion(projectId: Value(targetProjectId)),
+        );
+      }
+      moved['stages'] = sourceStages.length;
+      final targetWork = await getWorkItemsForProject(targetProjectId);
+      moved['workItems'] = targetWork
+          .where((item) => sourceStageIds.contains(item.stageId))
+          .length;
+      moved['documents'] =
+          await (update(documents)
+                ..where((t) => t.projectId.equals(sourceProjectId)))
+              .write(DocumentsCompanion(projectId: Value(targetProjectId)));
+      moved['media'] =
+          await (update(projectMedia)
+                ..where((t) => t.projectId.equals(sourceProjectId)))
+              .write(ProjectMediaCompanion(projectId: Value(targetProjectId)));
+      moved['people'] =
+          await (update(projectPeople)
+                ..where((t) => t.projectId.equals(sourceProjectId)))
+              .write(ProjectPeopleCompanion(projectId: Value(targetProjectId)));
+      moved['risks'] =
+          await (update(projectRisks)
+                ..where((t) => t.projectId.equals(sourceProjectId)))
+              .write(ProjectRisksCompanion(projectId: Value(targetProjectId)));
+      moved['decisions'] =
+          await (update(
+            projectDecisions,
+          )..where((t) => t.projectId.equals(sourceProjectId))).write(
+            ProjectDecisionsCompanion(projectId: Value(targetProjectId)),
+          );
+      final sourceTagAssignments = await getProjectTagAssignments(
+        sourceProjectId,
+      );
+      for (final assignment in sourceTagAssignments) {
+        await assignTagToProject(targetProjectId, assignment.tagId);
+      }
+      await (delete(
+        projectTags,
+      )..where((t) => t.projectId.equals(sourceProjectId))).go();
+      moved['tags'] = sourceTagAssignments.length;
+      moved['drafts'] =
+          await (update(drafts)
+                ..where((t) => t.projectId.equals(sourceProjectId)))
+              .write(DraftsCompanion(projectId: Value(targetProjectId)));
+      moved['registry'] =
+          await (update(
+            projectRegistry,
+          )..where((t) => t.atlasProjectId.equals(sourceProjectId))).write(
+            ProjectRegistryCompanion(atlasProjectId: Value(targetProjectId)),
+          );
+      await (update(
+        projects,
+      )..where((t) => t.id.equals(sourceProjectId))).write(
+        ProjectsCompanion(
+          status: const Value('deleted'),
+          deletedAt: Value(DateTime.now()),
+          deleteReason: Value('Merged into ${target.title} (${target.id})'),
+        ),
+      );
+    });
+    return moved;
+  }
+
+  Future<Map<String, ProjectUpdateAttribution>>
+  getProjectUpdateAttributions() async {
+    final rows = await customSelect('''SELECT p.id AS project_id,
+                p.created_at AS updated_at,
+                'created' AS source,
+                p.owner AS contact_name,
+                NULL AS output_json
+         FROM projects p
+         UNION ALL
+         SELECT e.entity_id AS project_id,
+                e.timestamp AS updated_at,
+                'event_log' AS source,
+                p.owner AS contact_name,
+                e.output_json AS output_json
+         FROM event_log e
+         LEFT JOIN projects p ON p.id = e.entity_id
+         WHERE e.entity_type = 'project' AND e.entity_id IS NOT NULL
+         UNION ALL
+         SELECT d.project_id AS project_id,
+                d.updated_at AS updated_at,
+                'draft' AS source,
+                p.owner AS contact_name,
+                NULL AS output_json
+         FROM drafts d
+         LEFT JOIN projects p ON p.id = d.project_id
+         WHERE d.project_id IS NOT NULL
+         UNION ALL
+         SELECT doc.project_id AS project_id,
+                doc.updated_at AS updated_at,
+                'document' AS source,
+                p.owner AS contact_name,
+                NULL AS output_json
+         FROM documents doc
+         LEFT JOIN projects p ON p.id = doc.project_id
+         WHERE doc.project_id IS NOT NULL
+         UNION ALL
+         SELECT pm.project_id AS project_id,
+                pm.updated_at AS updated_at,
+                'media' AS source,
+                p.owner AS contact_name,
+                NULL AS output_json
+         FROM project_media pm
+         LEFT JOIN projects p ON p.id = pm.project_id''').get();
+    final result = <String, ProjectUpdateAttribution>{};
+    for (final row in rows) {
+      final projectId = row.data['project_id']?.toString();
+      if (projectId == null || projectId.isEmpty) continue;
+      final updatedAt = _dateFromSqlValue(row.data['updated_at']);
+      final existing = result[projectId];
+      if (existing != null && !updatedAt.isAfter(existing.updatedAt)) continue;
+      result[projectId] = ProjectUpdateAttribution(
+        projectId: projectId,
+        updatedAt: updatedAt,
+        updatedBy: _actorFromAttributionOutput(
+          row.data['output_json'] as String?,
+        ),
+        source: row.data['source']?.toString() ?? 'unknown',
+        contactName: row.data['contact_name']?.toString(),
+      );
+    }
+    return result;
+  }
+
+  Stream<Map<String, ProjectUpdateAttribution>>
+  watchProjectUpdateAttributions() => Stream<void>.periodic(
+    const Duration(seconds: 30),
+  ).asyncMap((_) => getProjectUpdateAttributions()).asBroadcastStream();
+
+  String _actorFromAttributionOutput(String? outputJson) {
+    final output = _decodeObjectMap(outputJson);
+    final agent = output['agent']?.toString().toLowerCase();
+    if (agent == 'codex') return 'Codex';
+    if (agent != null && agent.isNotEmpty) return agent;
+    return 'Atlas';
+  }
+
+  Stream<List<ProjectScanRun>> watchProjectScanRuns({int limit = 50}) =>
+      (select(projectScanRuns)
+            ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
+            ..limit(limit))
+          .watch();
+
+  Future<ProjectScanRun?> getProjectScanRun(String id) => (select(
+    projectScanRuns,
+  )..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<String> startProjectScanRun({
+    required String rootsJson,
+    required DateTime startedAt,
+  }) async {
+    final id = _newMicrosId('scan');
+    await into(projectScanRuns).insert(
+      ProjectScanRunsCompanion(
+        id: Value(id),
+        rootsJson: Value(rootsJson),
+        startedAt: Value(startedAt),
+        status: const Value('running'),
+        warningsJson: const Value('[]'),
+      ),
+    );
+    return id;
+  }
+
+  Future<void> finishProjectScanRun({
+    required String id,
+    required DateTime completedAt,
+    required String status,
+    required int totalSeen,
+    required int candidates,
+    required int ignored,
+    required String warningsJson,
+  }) async {
+    await (update(projectScanRuns)..where((t) => t.id.equals(id))).write(
+      ProjectScanRunsCompanion(
+        completedAt: Value(completedAt),
+        status: Value(status),
+        totalSeen: Value(totalSeen),
+        candidates: Value(candidates),
+        ignored: Value(ignored),
+        warningsJson: Value(warningsJson),
+      ),
+    );
+  }
+
+  Future<void> addProjectObservation({
+    required String id,
+    String? registryId,
+    required String scanRunId,
+    required String observedPath,
+    required String classificationGuess,
+    required int confidence,
+    String? branch,
+    String? headSha,
+    int? dirtyCount,
+    String? remoteUrl,
+    required String markerFilesJson,
+    required String warningsJson,
+    required String rawJson,
+    required DateTime observedAt,
+  }) async {
+    await into(projectObservations).insert(
+      ProjectObservationsCompanion(
+        id: Value(id),
+        registryId: Value(registryId),
+        scanRunId: Value(scanRunId),
+        observedPath: Value(observedPath),
+        classificationGuess: Value(classificationGuess),
+        confidence: Value(confidence),
+        branch: Value(branch),
+        headSha: Value(headSha),
+        dirtyCount: Value(dirtyCount),
+        remoteUrl: Value(remoteUrl),
+        markerFilesJson: Value(markerFilesJson),
+        warningsJson: Value(warningsJson),
+        rawJson: Value(rawJson),
+        observedAt: Value(observedAt),
+      ),
+    );
+  }
+
+  Future<List<ProjectObservation>> getProjectObservationsForScanRun(
+    String scanRunId,
+  ) =>
+      (select(projectObservations)
+            ..where((t) => t.scanRunId.equals(scanRunId))
+            ..orderBy([(t) => OrderingTerm.desc(t.observedAt)]))
+          .get();
+
+  Stream<List<ProjectObservation>> watchRecentProjectObservations({
+    int limit = 100,
+  }) =>
+      (select(projectObservations)
+            ..orderBy([(t) => OrderingTerm.desc(t.observedAt)])
+            ..limit(limit))
+          .watch();
+
+  Future<List<ProjectRegistryEntry>> getProjectRegistry() => (select(
+    projectRegistry,
+  )..orderBy([(t) => OrderingTerm.asc(t.displayName)])).get();
+
+  Stream<List<ProjectRegistryEntry>> watchProjectRegistry() => (select(
+    projectRegistry,
+  )..orderBy([(t) => OrderingTerm.asc(t.displayName)])).watch();
+
+  Future<ProjectRegistryEntry?> getProjectRegistryEntry(String id) => (select(
+    projectRegistry,
+  )..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<ProjectRegistryEntry?> getProjectRegistryByPath(String path) =>
+      (select(projectRegistry)
+            ..where((t) => t.localPath.lower().equals(path.toLowerCase()))
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<ProjectRegistryEntry?> getProjectRegistryByAtlasProjectId(
+    String atlasProjectId,
+  ) =>
+      (select(projectRegistry)
+            ..where((t) => t.atlasProjectId.equals(atlasProjectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<List<ProjectRegistryEntry>> getProjectRegistryEntriesByAtlasProjectId(
+    String atlasProjectId,
+  ) =>
+      (select(projectRegistry)
+            ..where((t) => t.atlasProjectId.equals(atlasProjectId))
+            ..orderBy([(t) => OrderingTerm.asc(t.displayName)]))
+          .get();
+
+  Future<void> unlinkProjectRegistryEntriesForAtlasProject({
+    required String atlasProjectId,
+    String? exceptRegistryId,
+  }) async {
+    final rows = await getProjectRegistryEntriesByAtlasProjectId(
+      atlasProjectId,
+    );
+    for (final row in rows) {
+      if (exceptRegistryId != null && row.id == exceptRegistryId) continue;
+      await (update(projectRegistry)..where((t) => t.id.equals(row.id))).write(
+        ProjectRegistryCompanion(
+          atlasProjectId: const Value(null),
+          reviewState: const Value('accepted'),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+    }
+  }
+
+  Future<void> linkProjectRegistryEntryToAtlasProject({
+    required String registryId,
+    required String atlasProjectId,
+  }) async {
+    await (update(
+      projectRegistry,
+    )..where((t) => t.id.equals(registryId))).write(
+      ProjectRegistryCompanion(
+        atlasProjectId: Value(atlasProjectId),
+        reviewState: const Value('linked'),
+        updatedAt: Value(DateTime.now()),
+        lastReviewedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<ProjectObservation?> getLatestProjectObservationForPath(
+    String localPath,
+  ) =>
+      (select(projectObservations)
+            ..where(
+              (t) => t.observedPath.lower().equals(localPath.toLowerCase()),
+            )
+            ..orderBy([(t) => OrderingTerm.desc(t.observedAt)])
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<String> reviewProjectObservation({
+    required String observationId,
+    required String reviewState,
+    String? atlasProjectId,
+    String? notes,
+  }) async {
+    final observation = await (select(
+      projectObservations,
+    )..where((t) => t.id.equals(observationId))).getSingleOrNull();
+    if (observation == null) {
+      throw StateError('Project observation not found: $observationId');
+    }
+    final existing = observation.registryId == null
+        ? await getProjectRegistryByPath(observation.observedPath)
+        : await getProjectRegistryEntry(observation.registryId!);
+    final raw = _decodeObjectMap(observation.rawJson);
+    final now = DateTime.now();
+    final registryId = existing?.id ?? _newMicrosId('registry');
+    await into(projectRegistry).insertOnConflictUpdate(
+      ProjectRegistryCompanion(
+        id: Value(registryId),
+        atlasProjectId: reviewState == 'ignored'
+            ? const Value(null)
+            : Value(atlasProjectId ?? existing?.atlasProjectId),
+        displayName: Value(
+          raw['displayName']?.toString().trim().isNotEmpty == true
+              ? raw['displayName'].toString()
+              : p.basename(observation.observedPath),
+        ),
+        localPath: Value(observation.observedPath),
+        gitRoot: Value(raw['gitRoot']?.toString()),
+        classification: Value(observation.classificationGuess),
+        reviewState: Value(reviewState),
+        notes: Value(notes ?? existing?.notes),
+        createdAt: Value(existing?.createdAt ?? now),
+        updatedAt: Value(now),
+        lastReviewedAt: Value(now),
+      ),
+    );
+    await (update(projectObservations)
+          ..where((t) => t.id.equals(observationId)))
+        .write(ProjectObservationsCompanion(registryId: Value(registryId)));
+    return registryId;
+  }
+
+  Future<LocalProjectRefreshItem?> getLocalProjectRefreshItem({
+    required String registryId,
+    required String sourceKind,
+    required String sourceKey,
+  }) =>
+      (select(localProjectRefreshItems)
+            ..where(
+              (t) =>
+                  t.registryId.equals(registryId) &
+                  t.sourceKind.equals(sourceKind) &
+                  t.sourceKey.equals(sourceKey),
+            )
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<LocalProjectRefreshItem?> upsertLocalProjectRefreshItem({
+    required String registryId,
+    required String sourceKind,
+    required String sourceKey,
+    required String targetType,
+    required String targetId,
+    required String sourceFingerprint,
+    required DateTime lastImportedAt,
+  }) async {
+    final existing = await getLocalProjectRefreshItem(
+      registryId: registryId,
+      sourceKind: sourceKind,
+      sourceKey: sourceKey,
+    );
+    final id = existing?.id ?? _newMicrosId('refresh');
+    await into(localProjectRefreshItems).insertOnConflictUpdate(
+      LocalProjectRefreshItemsCompanion(
+        id: Value(id),
+        registryId: Value(registryId),
+        sourceKind: Value(sourceKind),
+        sourceKey: Value(sourceKey),
+        targetType: Value(targetType),
+        targetId: Value(targetId),
+        sourceFingerprint: Value(sourceFingerprint),
+        lastImportedAt: Value(lastImportedAt),
+      ),
+    );
+    return (select(
+      localProjectRefreshItems,
+    )..where((t) => t.id.equals(id))).getSingleOrNull();
+  }
+
+  Future<List<LocalProjectRefreshItem>> getLocalProjectRefreshItemsForRegistry(
+    String registryId,
+  ) =>
+      (select(localProjectRefreshItems)
+            ..where((t) => t.registryId.equals(registryId))
+            ..orderBy([
+              (t) => OrderingTerm.asc(t.sourceKind),
+              (t) => OrderingTerm.asc(t.sourceKey),
+            ]))
+          .get();
+
+  ProjectGitRemoteStatus _projectGitRemoteStatusFromRow(QueryRow row) =>
+      ProjectGitRemoteStatus(
+        id: row.data['id'] as String,
+        projectId: row.data['project_id'] as String,
+        registryId: row.data['registry_id'] as String?,
+        provider: row.data['provider'] as String,
+        owner: row.data['owner'] as String,
+        repo: row.data['repo'] as String,
+        remoteUrl: row.data['remote_url'] as String,
+        htmlUrl: row.data['html_url'] as String?,
+        visibility: row.data['visibility'] as String?,
+        defaultBranch: row.data['default_branch'] as String?,
+        onlineHeadSha: row.data['online_head_sha'] as String?,
+        isPrivate: _boolFromSql(row.data['is_private']),
+        isFork: _boolFromSql(row.data['is_fork']),
+        isArchived: _boolFromSql(row.data['is_archived']),
+        checkedAt: _dateFromSqlValue(row.data['checked_at']),
+        remoteUpdatedAt: _nullableDateFromSqlValue(
+          row.data['remote_updated_at'],
+        ),
+        remotePushedAt: _nullableDateFromSqlValue(row.data['remote_pushed_at']),
+        error: row.data['error'] as String?,
+        rawJson: row.data['raw_json'] as String?,
+      );
+
+  Future<ProjectGitRemoteStatus?> getLatestProjectGitRemoteStatus(
+    String projectId,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM project_git_remotes WHERE project_id = ? ORDER BY checked_at DESC LIMIT 1',
+      variables: [Variable<String>(projectId)],
+    ).get();
+    return rows.isEmpty ? null : _projectGitRemoteStatusFromRow(rows.single);
+  }
+
+  Future<List<ProjectGitRemoteStatus>> getProjectGitRemoteStatuses(
+    String projectId,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM project_git_remotes WHERE project_id = ? ORDER BY checked_at DESC',
+      variables: [Variable<String>(projectId)],
+    ).get();
+    return rows.map(_projectGitRemoteStatusFromRow).toList(growable: false);
+  }
+
+  Future<ProjectGitRemoteStatus> upsertProjectGitRemoteStatus({
+    required String projectId,
+    String? registryId,
+    required String provider,
+    required String owner,
+    required String repo,
+    required String remoteUrl,
+    String? htmlUrl,
+    String? visibility,
+    String? defaultBranch,
+    String? onlineHeadSha,
+    bool? isPrivate,
+    bool? isFork,
+    bool? isArchived,
+    required DateTime checkedAt,
+    DateTime? remoteUpdatedAt,
+    DateTime? remotePushedAt,
+    String? error,
+    String? rawJson,
+  }) async {
+    await _ensureProjectGitRemotesTable();
+    final id =
+        'github_${_safeIdSegment(projectId)}_${_safeIdSegment(owner)}_${_safeIdSegment(repo)}';
+    await customStatement(
+      '''INSERT OR REPLACE INTO project_git_remotes (
+        id, project_id, registry_id, provider, owner, repo, remote_url, html_url,
+        visibility, default_branch, online_head_sha, is_private, is_fork,
+        is_archived, checked_at, remote_updated_at, remote_pushed_at, error, raw_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+      [
+        id,
+        projectId,
+        registryId,
+        provider,
+        owner,
+        repo,
+        remoteUrl,
+        htmlUrl,
+        visibility,
+        defaultBranch,
+        onlineHeadSha,
+        _boolToSql(isPrivate),
+        _boolToSql(isFork),
+        _boolToSql(isArchived),
+        checkedAt.millisecondsSinceEpoch,
+        remoteUpdatedAt?.millisecondsSinceEpoch,
+        remotePushedAt?.millisecondsSinceEpoch,
+        error,
+        rawJson,
+      ],
+    );
+    final status = await getLatestProjectGitRemoteStatus(projectId);
+    if (status == null)
+      throw StateError('Failed to save GitHub remote status.');
+    return status;
+  }
+
+  ProjectEnrichmentRun _projectEnrichmentRunFromRow(QueryRow row) =>
+      ProjectEnrichmentRun(
+        id: row.data['id'] as String,
+        startedAt: _dateFromSqlValue(row.data['started_at']),
+        completedAt: _nullableDateFromSqlValue(row.data['completed_at']),
+        status: row.data['status'] as String,
+        scopeJson: row.data['scope_json'] as String,
+        registryEntries: _intFromSql(row.data['registry_entries']),
+        linkedProjects: _intFromSql(row.data['linked_projects']),
+        refreshedProjects: _intFromSql(row.data['refreshed_projects']),
+        createdItems: _intFromSql(row.data['created_items']),
+        updatedItems: _intFromSql(row.data['updated_items']),
+        unchangedItems: _intFromSql(row.data['unchanged_items']),
+        skippedItems: _intFromSql(row.data['skipped_items']),
+        failedProjects: _intFromSql(row.data['failed_projects']),
+        summaryConsidered: _intFromSql(row.data['summary_considered']),
+        summaryRefreshed: _intFromSql(row.data['summary_refreshed']),
+        summarySkipped: _intFromSql(row.data['summary_skipped']),
+        summaryFailed: _intFromSql(row.data['summary_failed']),
+        findings: _intFromSql(row.data['findings']),
+        openFindings: _intFromSql(row.data['open_findings']),
+        warningsJson: row.data['warnings_json'] as String,
+        outputJson: row.data['output_json'] as String,
+      );
+
+  ProjectEnrichmentFinding _projectEnrichmentFindingFromRow(QueryRow row) =>
+      ProjectEnrichmentFinding(
+        id: row.data['id'] as String,
+        runId: row.data['run_id'] as String,
+        projectId: row.data['project_id'] as String?,
+        registryId: row.data['registry_id'] as String?,
+        severity: row.data['severity'] as String,
+        category: row.data['category'] as String,
+        title: row.data['title'] as String,
+        detail: row.data['detail'] as String?,
+        evidenceJson: row.data['evidence_json'] as String,
+        status: row.data['status'] as String,
+        createdAt: _dateFromSqlValue(row.data['created_at']),
+      );
+
+  ProjectEnrichmentStep _projectEnrichmentStepFromRow(QueryRow row) =>
+      ProjectEnrichmentStep(
+        id: row.data['id'] as String,
+        runId: row.data['run_id'] as String,
+        worker: row.data['worker'] as String,
+        title: row.data['title'] as String,
+        status: row.data['status'] as String,
+        startedAt: _dateFromSqlValue(row.data['started_at']),
+        completedAt: _nullableDateFromSqlValue(row.data['completed_at']),
+        considered: _intFromSql(row.data['considered']),
+        createdItems: _intFromSql(row.data['created_items']),
+        updatedItems: _intFromSql(row.data['updated_items']),
+        skippedItems: _intFromSql(row.data['skipped_items']),
+        failedItems: _intFromSql(row.data['failed_items']),
+        findings: _intFromSql(row.data['findings']),
+        proposals: _intFromSql(row.data['proposals']),
+        warningsJson: row.data['warnings_json'] as String,
+        outputJson: row.data['output_json'] as String,
+      );
+
+  ProjectEnrichmentProposal _projectEnrichmentProposalFromRow(QueryRow row) =>
+      ProjectEnrichmentProposal(
+        id: row.data['id'] as String,
+        runId: row.data['run_id'] as String,
+        projectId: row.data['project_id'] as String?,
+        registryId: row.data['registry_id'] as String?,
+        worker: row.data['worker'] as String,
+        proposalType: row.data['proposal_type'] as String,
+        title: row.data['title'] as String,
+        detail: row.data['detail'] as String?,
+        payloadJson: row.data['payload_json'] as String,
+        confidence: _intFromSql(row.data['confidence']),
+        status: row.data['status'] as String,
+        createdAt: _dateFromSqlValue(row.data['created_at']),
+        appliedAt: _nullableDateFromSqlValue(row.data['applied_at']),
+      );
+
+  Stream<List<ProjectEnrichmentRun>> watchProjectEnrichmentRuns({
+    int limit = 50,
+  }) =>
+      customSelect(
+        'SELECT * FROM project_enrichment_runs ORDER BY started_at DESC LIMIT ?',
+        variables: [Variable<int>(limit)],
+      ).watch().map(
+        (rows) =>
+            rows.map(_projectEnrichmentRunFromRow).toList(growable: false),
+      );
+
+  Future<List<ProjectEnrichmentRun>> getProjectEnrichmentRuns({
+    int limit = 50,
+  }) async {
+    final rows = await customSelect(
+      'SELECT * FROM project_enrichment_runs ORDER BY started_at DESC LIMIT ?',
+      variables: [Variable<int>(limit)],
+    ).get();
+    return rows.map(_projectEnrichmentRunFromRow).toList(growable: false);
+  }
+
+  Future<ProjectEnrichmentRun?> getProjectEnrichmentRun(String id) async {
+    final rows = await customSelect(
+      'SELECT * FROM project_enrichment_runs WHERE id = ? LIMIT 1',
+      variables: [Variable<String>(id)],
+    ).get();
+    return rows.isEmpty ? null : _projectEnrichmentRunFromRow(rows.single);
+  }
+
+  Future<String> startProjectEnrichmentRun({
+    required DateTime startedAt,
+    required String scopeJson,
+  }) async {
+    await _ensureProjectEnrichmentTables();
+    final id = _newMicrosId('enrichment');
+    await customStatement(
+      '''INSERT INTO project_enrichment_runs (
+        id, started_at, status, scope_json, warnings_json, output_json
+      ) VALUES (?, ?, ?, ?, ?, ?)''',
+      [id, startedAt.millisecondsSinceEpoch, 'running', scopeJson, '[]', '{}'],
+    );
+    return id;
+  }
+
+  Future<void> finishProjectEnrichmentRun({
+    required String id,
+    required DateTime completedAt,
+    required String status,
+    required int registryEntries,
+    required int linkedProjects,
+    required int refreshedProjects,
+    required int createdItems,
+    required int updatedItems,
+    required int unchangedItems,
+    required int skippedItems,
+    required int failedProjects,
+    required int summaryConsidered,
+    required int summaryRefreshed,
+    required int summarySkipped,
+    required int summaryFailed,
+    required int findings,
+    required int openFindings,
+    required String warningsJson,
+    required String outputJson,
+  }) async {
+    await customStatement(
+      '''UPDATE project_enrichment_runs SET
+        completed_at = ?, status = ?, registry_entries = ?, linked_projects = ?,
+        refreshed_projects = ?, created_items = ?, updated_items = ?,
+        unchanged_items = ?, skipped_items = ?, failed_projects = ?,
+        summary_considered = ?, summary_refreshed = ?, summary_skipped = ?,
+        summary_failed = ?, findings = ?, open_findings = ?, warnings_json = ?,
+        output_json = ? WHERE id = ?''',
+      [
+        completedAt.millisecondsSinceEpoch,
+        status,
+        registryEntries,
+        linkedProjects,
+        refreshedProjects,
+        createdItems,
+        updatedItems,
+        unchangedItems,
+        skippedItems,
+        failedProjects,
+        summaryConsidered,
+        summaryRefreshed,
+        summarySkipped,
+        summaryFailed,
+        findings,
+        openFindings,
+        warningsJson,
+        outputJson,
+        id,
+      ],
+    );
+  }
+
+  Future<void> recoverStaleProjectEnrichmentRuns({
+    DateTime? recoveredAt,
+  }) async {
+    await _ensureProjectEnrichmentTables();
+    final completedAt = recoveredAt ?? DateTime.now();
+    await customStatement(
+      '''UPDATE project_enrichment_steps
+         SET status = 'interrupted', completed_at = ?, failed_items = CASE WHEN failed_items = 0 THEN 1 ELSE failed_items END
+         WHERE status = 'running' AND completed_at IS NULL''',
+      [completedAt.millisecondsSinceEpoch],
+    );
+    await customStatement(
+      '''UPDATE project_enrichment_runs
+         SET status = 'interrupted', completed_at = ?, warnings_json = ?
+         WHERE status = 'running' AND completed_at IS NULL''',
+      [
+        completedAt.millisecondsSinceEpoch,
+        jsonEncode(['Recovered interrupted enrichment run.']),
+      ],
+    );
+  }
+
+  Future<void> failRunningProjectEnrichmentStepsForRun({
+    required String runId,
+    required DateTime completedAt,
+    required String warningsJson,
+    required String outputJson,
+  }) async {
+    await customStatement(
+      '''UPDATE project_enrichment_steps
+         SET status = 'failed', completed_at = ?, failed_items = CASE WHEN failed_items = 0 THEN 1 ELSE failed_items END,
+             warnings_json = ?, output_json = ?
+         WHERE run_id = ? AND status = 'running' AND completed_at IS NULL''',
+      [completedAt.millisecondsSinceEpoch, warningsJson, outputJson, runId],
+    );
+  }
+
+  Future<void> addProjectEnrichmentFinding({
+    required String id,
+    required String runId,
+    String? projectId,
+    String? registryId,
+    required String severity,
+    required String category,
+    required String title,
+    String? detail,
+    required String evidenceJson,
+    String status = 'open',
+    required DateTime createdAt,
+  }) async {
+    await customStatement(
+      '''INSERT OR REPLACE INTO project_enrichment_findings (
+        id, run_id, project_id, registry_id, severity, category, title, detail,
+        evidence_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+      [
+        id,
+        runId,
+        projectId,
+        registryId,
+        severity,
+        category,
+        title,
+        detail,
+        evidenceJson,
+        status,
+        createdAt.millisecondsSinceEpoch,
+      ],
+    );
+  }
+
+  Future<List<ProjectEnrichmentFinding>> getProjectEnrichmentFindingsForRun(
+    String runId,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM project_enrichment_findings WHERE run_id = ? ORDER BY created_at ASC',
+      variables: [Variable<String>(runId)],
+    ).get();
+    return rows.map(_projectEnrichmentFindingFromRow).toList(growable: false);
+  }
+
+  Stream<List<ProjectEnrichmentFinding>> watchProjectEnrichmentFindingsForRun(
+    String runId,
+  ) =>
+      customSelect(
+        'SELECT * FROM project_enrichment_findings WHERE run_id = ? ORDER BY created_at ASC',
+        variables: [Variable<String>(runId)],
+      ).watch().map(
+        (rows) =>
+            rows.map(_projectEnrichmentFindingFromRow).toList(growable: false),
+      );
+
+  Future<List<ProjectEnrichmentFinding>> getOpenProjectEnrichmentFindings({
+    String? projectId,
+    int limit = 100,
+  }) async {
+    final rows = await customSelect(
+      projectId == null
+          ? 'SELECT * FROM project_enrichment_findings WHERE status = ? ORDER BY created_at DESC LIMIT ?'
+          : 'SELECT * FROM project_enrichment_findings WHERE status = ? AND project_id = ? ORDER BY created_at DESC LIMIT ?',
+      variables: projectId == null
+          ? [Variable<String>('open'), Variable<int>(limit)]
+          : [
+              Variable<String>('open'),
+              Variable<String>(projectId),
+              Variable<int>(limit),
+            ],
+    ).get();
+    return rows.map(_projectEnrichmentFindingFromRow).toList(growable: false);
+  }
+
+  Future<String> startProjectEnrichmentStep({
+    required String runId,
+    required String worker,
+    required String title,
+    required DateTime startedAt,
+  }) async {
+    final id = _newMicrosId('step');
+    await customStatement(
+      '''INSERT INTO project_enrichment_steps (
+        id, run_id, worker, title, status, started_at, warnings_json, output_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+      [
+        id,
+        runId,
+        worker,
+        title,
+        'running',
+        startedAt.millisecondsSinceEpoch,
+        '[]',
+        '{}',
+      ],
+    );
+    return id;
+  }
+
+  Future<void> finishProjectEnrichmentStep({
+    required String id,
+    required DateTime completedAt,
+    required String status,
+    required int considered,
+    required int createdItems,
+    required int updatedItems,
+    required int skippedItems,
+    required int failedItems,
+    required int findings,
+    required int proposals,
+    required String warningsJson,
+    required String outputJson,
+  }) async {
+    await customStatement(
+      '''UPDATE project_enrichment_steps SET
+        completed_at = ?, status = ?, considered = ?, created_items = ?,
+        updated_items = ?, skipped_items = ?, failed_items = ?, findings = ?,
+        proposals = ?, warnings_json = ?, output_json = ? WHERE id = ?''',
+      [
+        completedAt.millisecondsSinceEpoch,
+        status,
+        considered,
+        createdItems,
+        updatedItems,
+        skippedItems,
+        failedItems,
+        findings,
+        proposals,
+        warningsJson,
+        outputJson,
+        id,
+      ],
+    );
+  }
+
+  Future<List<ProjectEnrichmentStep>> getProjectEnrichmentStepsForRun(
+    String runId,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM project_enrichment_steps WHERE run_id = ? ORDER BY started_at ASC',
+      variables: [Variable<String>(runId)],
+    ).get();
+    return rows.map(_projectEnrichmentStepFromRow).toList(growable: false);
+  }
+
+  Stream<List<ProjectEnrichmentStep>> watchProjectEnrichmentStepsForRun(
+    String runId,
+  ) =>
+      customSelect(
+        'SELECT * FROM project_enrichment_steps WHERE run_id = ? ORDER BY started_at ASC',
+        variables: [Variable<String>(runId)],
+      ).watch().map(
+        (rows) =>
+            rows.map(_projectEnrichmentStepFromRow).toList(growable: false),
+      );
+
+  Future<void> addProjectEnrichmentProposal({
+    required String id,
+    required String runId,
+    String? projectId,
+    String? registryId,
+    required String worker,
+    required String proposalType,
+    required String title,
+    String? detail,
+    required String payloadJson,
+    required int confidence,
+    String status = 'proposed',
+    required DateTime createdAt,
+  }) async {
+    await customStatement(
+      '''INSERT OR REPLACE INTO project_enrichment_proposals (
+        id, run_id, project_id, registry_id, worker, proposal_type, title,
+        detail, payload_json, confidence, status, created_at, applied_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)''',
+      [
+        id,
+        runId,
+        projectId,
+        registryId,
+        worker,
+        proposalType,
+        title,
+        detail,
+        payloadJson,
+        confidence,
+        status,
+        createdAt.millisecondsSinceEpoch,
+      ],
+    );
+  }
+
+  Future<List<ProjectEnrichmentProposal>> getProjectEnrichmentProposalsForRun(
+    String runId,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM project_enrichment_proposals WHERE run_id = ? ORDER BY created_at ASC',
+      variables: [Variable<String>(runId)],
+    ).get();
+    return rows.map(_projectEnrichmentProposalFromRow).toList(growable: false);
+  }
+
+  Stream<List<ProjectEnrichmentProposal>> watchProjectEnrichmentProposalsForRun(
+    String runId,
+  ) =>
+      customSelect(
+        'SELECT * FROM project_enrichment_proposals WHERE run_id = ? ORDER BY created_at ASC',
+        variables: [Variable<String>(runId)],
+      ).watch().map(
+        (rows) =>
+            rows.map(_projectEnrichmentProposalFromRow).toList(growable: false),
+      );
+
+  LlmTaskQueueItem _llmTaskQueueItemFromRow(QueryRow row) => LlmTaskQueueItem(
+    id: row.data['id'] as String,
+    projectId: row.data['project_id'] as String,
+    workItemId: row.data['work_item_id'] as String?,
+    title: row.data['title'] as String,
+    objective: row.data['objective'] as String,
+    contextJson: row.data['context_json'] as String,
+    priority: row.data['priority'] as String,
+    status: row.data['status'] as String,
+    createdBy: row.data['created_by'] as String,
+    createdAt: _dateFromSqlValue(row.data['created_at']),
+    updatedAt: _dateFromSqlValue(row.data['updated_at']),
+    leasedBy: row.data['leased_by'] as String?,
+    leasedAt: _nullableDateFromSqlValue(row.data['leased_at']),
+    leaseExpiresAt: _nullableDateFromSqlValue(row.data['lease_expires_at']),
+    attempts: _intFromSql(row.data['attempts']),
+    resultJson: row.data['result_json'] as String?,
+    error: row.data['error'] as String?,
+    reviewDraftId: row.data['review_draft_id'] as String?,
+    completedAt: _nullableDateFromSqlValue(row.data['completed_at']),
+  );
+
+  Future<String> enqueueLlmTask({
+    required String projectId,
+    String? workItemId,
+    required String title,
+    required String objective,
+    required String contextJson,
+    String priority = 'normal',
+    String createdBy = 'ui',
+    DateTime? createdAt,
+  }) async {
+    await _ensureLlmTaskQueueTable();
+    final now = createdAt ?? DateTime.now();
+    final id = _newMicrosId('llm_task');
+    await customStatement(
+      '''INSERT INTO llm_task_queue (
+        id, project_id, work_item_id, title, objective, context_json, priority,
+        status, created_by, created_at, updated_at, attempts
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+      [
+        id,
+        projectId,
+        workItemId,
+        title,
+        objective,
+        contextJson,
+        priority,
+        'pending',
+        createdBy,
+        now.millisecondsSinceEpoch,
+        now.millisecondsSinceEpoch,
+        0,
+      ],
+    );
+    return id;
+  }
+
+  Future<List<LlmTaskQueueItem>> getLlmTasks({
+    String? projectId,
+    String? status,
+    int limit = 50,
+  }) async {
+    await _ensureLlmTaskQueueTable();
+    final clauses = <String>[];
+    final variables = <Variable>[];
+    if (projectId != null) {
+      clauses.add('project_id = ?');
+      variables.add(Variable<String>(projectId));
+    }
+    if (status != null) {
+      clauses.add('status = ?');
+      variables.add(Variable<String>(status));
+    }
+    variables.add(Variable<int>(limit));
+    final where = clauses.isEmpty ? '' : 'WHERE ${clauses.join(' AND ')}';
+    final rows = await customSelect('''SELECT * FROM llm_task_queue $where
+         ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'leased' THEN 1 WHEN 'failed' THEN 2 WHEN 'cancelled' THEN 3 ELSE 4 END,
+                  CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+                  created_at ASC
+         LIMIT ?''', variables: variables).get();
+    return rows.map(_llmTaskQueueItemFromRow).toList(growable: false);
+  }
+
+  Future<List<LlmTaskQueueItem>> getLlmTasksForProject(
+    String projectId, {
+    int limit = 50,
+  }) => getLlmTasks(projectId: projectId, limit: limit);
+
+  Future<LlmTaskQueueItem?> getLlmTask(String id) async {
+    await _ensureLlmTaskQueueTable();
+    final rows = await customSelect(
+      'SELECT * FROM llm_task_queue WHERE id = ? LIMIT 1',
+      variables: [Variable<String>(id)],
+    ).get();
+    return rows.isEmpty ? null : _llmTaskQueueItemFromRow(rows.single);
+  }
+
+  Future<LlmTaskQueueItem?> updateLlmTask({
+    required String id,
+    required String projectId,
+    String? workItemId,
+    required String title,
+    required String objective,
+    required String contextJson,
+    required String priority,
+    DateTime? updatedAt,
+  }) async {
+    await _ensureLlmTaskQueueTable();
+    final existing = await getLlmTask(id);
+    if (existing == null) return null;
+    if (existing.status == 'completed') return existing;
+    final now = updatedAt ?? DateTime.now();
+    final editedLeasedTask = existing.status == 'leased';
+    await customStatement(
+      '''UPDATE llm_task_queue
+         SET project_id = ?, work_item_id = ?, title = ?, objective = ?,
+             context_json = ?, priority = ?, status = ?, updated_at = ?,
+             leased_by = ?, leased_at = ?, lease_expires_at = ?
+         WHERE id = ? AND status != 'completed' ''',
+      [
+        projectId,
+        workItemId,
+        title,
+        objective,
+        contextJson,
+        priority,
+        editedLeasedTask ? 'pending' : existing.status,
+        now.millisecondsSinceEpoch,
+        editedLeasedTask ? null : existing.leasedBy,
+        editedLeasedTask ? null : existing.leasedAt?.millisecondsSinceEpoch,
+        editedLeasedTask
+            ? null
+            : existing.leaseExpiresAt?.millisecondsSinceEpoch,
+        id,
+      ],
+    );
+    return getLlmTask(id);
+  }
+
+  Future<LlmTaskQueueItem?> cancelLlmTask({
+    required String id,
+    String? reason,
+    DateTime? cancelledAt,
+  }) async {
+    await _ensureLlmTaskQueueTable();
+    final existing = await getLlmTask(id);
+    if (existing == null) return null;
+    if (existing.status == 'completed') return existing;
+    final doneAt = cancelledAt ?? DateTime.now();
+    await customStatement(
+      '''UPDATE llm_task_queue
+         SET status = 'cancelled', error = ?, completed_at = ?, updated_at = ?,
+             leased_by = NULL, leased_at = NULL, lease_expires_at = NULL
+         WHERE id = ? AND status != 'completed' ''',
+      [
+        reason,
+        doneAt.millisecondsSinceEpoch,
+        doneAt.millisecondsSinceEpoch,
+        id,
+      ],
+    );
+    return getLlmTask(id);
+  }
+
+  Future<LlmTaskQueueItem?> requeueLlmTask({
+    required String id,
+    DateTime? updatedAt,
+  }) async {
+    await _ensureLlmTaskQueueTable();
+    final existing = await getLlmTask(id);
+    if (existing == null) return null;
+    if (!{'failed', 'cancelled'}.contains(existing.status)) return existing;
+    final now = updatedAt ?? DateTime.now();
+    await customStatement(
+      '''UPDATE llm_task_queue
+         SET status = 'pending', updated_at = ?, leased_by = NULL,
+             leased_at = NULL, lease_expires_at = NULL, result_json = NULL,
+             error = NULL, review_draft_id = NULL, completed_at = NULL
+         WHERE id = ? AND status IN ('failed', 'cancelled')''',
+      [now.millisecondsSinceEpoch, id],
+    );
+    return getLlmTask(id);
+  }
+
+  Future<LlmTaskQueueItem?> claimLlmTask({
+    String? taskId,
+    required String leasedBy,
+    DateTime? now,
+    Duration leaseDuration = const Duration(hours: 1),
+  }) async {
+    await _ensureLlmTaskQueueTable();
+    final claimedAt = now ?? DateTime.now();
+    final rows = await customSelect(
+      taskId == null
+          ? '''SELECT * FROM llm_task_queue
+               WHERE status = 'pending' OR (status = 'leased' AND lease_expires_at < ?)
+               ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+                        created_at ASC
+               LIMIT 1'''
+          : '''SELECT * FROM llm_task_queue
+               WHERE id = ? AND (status = 'pending' OR (status = 'leased' AND lease_expires_at < ?))
+               LIMIT 1''',
+      variables: taskId == null
+          ? [Variable<int>(claimedAt.millisecondsSinceEpoch)]
+          : [
+              Variable<String>(taskId),
+              Variable<int>(claimedAt.millisecondsSinceEpoch),
+            ],
+    ).get();
+    if (rows.isEmpty) return null;
+    final task = _llmTaskQueueItemFromRow(rows.single);
+    final expiresAt = claimedAt.add(leaseDuration);
+    await customStatement(
+      '''UPDATE llm_task_queue SET status = 'leased', leased_by = ?, leased_at = ?,
+         lease_expires_at = ?, attempts = attempts + 1, updated_at = ?, error = NULL
+         WHERE id = ?''',
+      [
+        leasedBy,
+        claimedAt.millisecondsSinceEpoch,
+        expiresAt.millisecondsSinceEpoch,
+        claimedAt.millisecondsSinceEpoch,
+        task.id,
+      ],
+    );
+    return getLlmTask(task.id);
+  }
+
+  Future<LlmTaskQueueItem?> completeLlmTask({
+    required String id,
+    required String resultJson,
+    String? reviewDraftId,
+    DateTime? completedAt,
+  }) async {
+    final existing = await getLlmTask(id);
+    if (existing == null) return null;
+    if (existing.status != 'leased') return existing;
+    final doneAt = completedAt ?? DateTime.now();
+    await customStatement(
+      '''UPDATE llm_task_queue SET status = 'completed', result_json = ?, review_draft_id = ?,
+         completed_at = ?, updated_at = ?, lease_expires_at = NULL
+         WHERE id = ? AND status = 'leased' ''',
+      [
+        resultJson,
+        reviewDraftId,
+        doneAt.millisecondsSinceEpoch,
+        doneAt.millisecondsSinceEpoch,
+        id,
+      ],
+    );
+    return getLlmTask(id);
+  }
+
+  Future<LlmTaskQueueItem?> failLlmTask({
+    required String id,
+    required String error,
+    String? resultJson,
+    DateTime? completedAt,
+  }) async {
+    final existing = await getLlmTask(id);
+    if (existing == null) return null;
+    if (existing.status != 'leased') return existing;
+    final failedAt = completedAt ?? DateTime.now();
+    await customStatement(
+      '''UPDATE llm_task_queue SET status = 'failed', error = ?, result_json = ?,
+         completed_at = ?, updated_at = ?, lease_expires_at = NULL
+         WHERE id = ? AND status = 'leased' ''',
+      [
+        error,
+        resultJson,
+        failedAt.millisecondsSinceEpoch,
+        failedAt.millisecondsSinceEpoch,
+        id,
+      ],
+    );
+    return getLlmTask(id);
+  }
 }

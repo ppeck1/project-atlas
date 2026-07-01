@@ -1,6 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_atlas/db/app_db.dart';
+import 'package:project_atlas/shared/models/app_state.dart';
 
 void main() {
   group('smoke tests', () {
@@ -14,14 +15,73 @@ void main() {
       await db.close();
     });
 
-    test('AppState basic initialization: watchProjects emits created project',
-        () async {
-      await db.createProject('proj-1', 'My Project', DateTime(2026, 1, 1));
+    test(
+      'AppState basic initialization: watchProjects emits created project',
+      () async {
+        await db.createProject('proj-1', 'My Project', DateTime(2026, 1, 1));
 
-      final projects = await db.watchProjects().first;
-      expect(projects, isNotEmpty);
-      expect(projects.any((p) => p.id == 'proj-1'), isTrue);
-      expect(projects.firstWhere((p) => p.id == 'proj-1').title, 'My Project');
+        final projects = await db.watchProjects().first;
+        expect(projects, isNotEmpty);
+        expect(projects.any((p) => p.id == 'proj-1'), isTrue);
+        expect(
+          projects.firstWhere((p) => p.id == 'proj-1').title,
+          'My Project',
+        );
+      },
+    );
+
+    test(
+      'project listings are alphabetical and hide general tasks project',
+      () async {
+        await db.createProject('bravo', 'Bravo', DateTime(2026, 1, 1));
+        await db.createProject('alpha', 'Alpha', DateTime(2026, 1, 2));
+        await db.createProject('charlie', 'Charlie', DateTime(2026, 1, 3));
+        await db.createProject(
+          'legacy-general-tasks',
+          'General Tasks',
+          DateTime(2026, 1, 4),
+        );
+        await db.updateProjectMeta('legacy-general-tasks', {
+          'description': AppDb.kGeneralTasksProjectDescription,
+        });
+        await db.ensureGeneralTaskStage();
+
+        final watched = await db.watchProjects().first;
+        final full = await db.getProjectsFull();
+
+        expect(watched.map((project) => project.title), [
+          'Alpha',
+          'Bravo',
+          'Charlie',
+        ]);
+        expect(full.map((project) => project.title), [
+          'Alpha',
+          'Bravo',
+          'Charlie',
+        ]);
+        expect(
+          watched.map((project) => project.id),
+          isNot(contains(AppDb.kGeneralTasksProjectId)),
+        );
+        expect(
+          watched.map((project) => project.id),
+          isNot(contains('legacy-general-tasks')),
+        );
+      },
+    );
+
+    test('general task has no visible project association', () async {
+      final state = AppState(db, enableBackgroundSummaryRefresh: false);
+      addTearDown(state.dispose);
+
+      final workItemId = await state.addGeneralWorkItem('General follow-up');
+      final project = await state.getProjectForWorkItem(workItemId);
+      final activeItems = await db.getAllActiveWorkItems();
+      final projects = await db.getProjectsFull();
+
+      expect(project, isNull);
+      expect(activeItems.map((item) => item.id), contains(workItemId));
+      expect(projects, isEmpty);
     });
 
     test('Today items stream: work item with status doing appears', () async {
@@ -73,22 +133,14 @@ void main() {
 
       // Rename
       await db.updateStageTitle(myStage.id, 'Renamed Stage');
-      final stagesAfterRename =
-          await db.watchStagesForProject('proj-3').first;
-      expect(
-        stagesAfterRename.any((s) => s.title == 'Renamed Stage'),
-        isTrue,
-      );
+      final stagesAfterRename = await db.watchStagesForProject('proj-3').first;
+      expect(stagesAfterRename.any((s) => s.title == 'Renamed Stage'), isTrue);
       expect(stagesAfterRename.any((s) => s.title == 'My Stage'), isFalse);
 
       // Delete
       await db.deleteStage(myStage.id);
-      final stagesAfterDelete =
-          await db.watchStagesForProject('proj-3').first;
-      expect(
-        stagesAfterDelete.any((s) => s.id == myStage.id),
-        isFalse,
-      );
+      final stagesAfterDelete = await db.watchStagesForProject('proj-3').first;
+      expect(stagesAfterDelete.any((s) => s.id == myStage.id), isFalse);
     });
   });
 }

@@ -17,16 +17,16 @@ class AppLogger {
     StackTrace? stackTrace,
     String? correlationId,
   }) => db.logEvent(
-        level: level,
-        area: area,
-        action: action,
-        entityType: entityType,
-        entityId: entityId,
-        inputJson: inputJson,
-        outputJson: outputJson,
-        error: error,
-        correlationId: correlationId,
-      );
+    level: level,
+    area: area,
+    action: action,
+    entityType: entityType,
+    entityId: entityId,
+    inputJson: inputJson,
+    outputJson: outputJson,
+    error: error,
+    correlationId: correlationId,
+  );
 
   Future<void> error({
     required String area,
@@ -37,12 +37,12 @@ class AppLogger {
     StackTrace? stackTrace,
     String? inputJson,
   }) => db.logError(
-        area: area,
-        action: action,
-        entityType: entityType,
-        entityId: entityId,
-        error: error,
-        stackTrace: stackTrace,
-        inputJson: inputJson,
-      );
+    area: area,
+    action: action,
+    entityType: entityType,
+    entityId: entityId,
+    error: error,
+    stackTrace: stackTrace,
+    inputJson: inputJson,
+  );
 }

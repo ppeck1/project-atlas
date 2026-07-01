@@ -4,12 +4,40 @@ import 'package:project_atlas/db/document_extractor.dart';
 void main() {
   group('shouldLoadDocumentText', () {
     const textExts = {
-      'txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml',
-      'ini', 'toml', 'rst', 'html', 'htm', 'eml',
+      'txt',
+      'md',
+      'json',
+      'csv',
+      'log',
+      'xml',
+      'yaml',
+      'yml',
+      'ini',
+      'toml',
+      'rst',
+      'html',
+      'htm',
+      'eml',
+      'dart',
+      'js',
+      'ts',
+      'py',
+      'sh',
+      'ps1',
+      'sql',
+      'css',
     };
     const binaryExts = {
-      'pdf', 'doc', 'docx', 'rtf', 'svg',
-      'jpg', 'png', 'gif', 'webp', 'bmp',
+      'pdf',
+      'doc',
+      'docx',
+      'rtf',
+      'svg',
+      'jpg',
+      'png',
+      'gif',
+      'webp',
+      'bmp',
     };
 
     test('returns true for all text-format extensions', () {

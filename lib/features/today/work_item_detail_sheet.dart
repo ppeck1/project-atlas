@@ -328,15 +328,43 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Document imported. Use Link existing document to attach it.'),
+            content: Text(
+              'Document imported. Use Link existing document to attach it.',
+            ),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
+      }
+    }
+  }
+
+  Future<void> _importMedia() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      allowMultiple: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    try {
+      for (final file in result.files) {
+        final path = file.path;
+        if (path == null || path.trim().isEmpty) continue;
+        await _state.importWorkItemMediaFromPath(widget.itemId, path);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Media attached.')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Media import failed: $e')));
       }
     }
   }
@@ -688,6 +716,11 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
                           icon: const Icon(Icons.upload_file),
                           label: const Text('Import document'),
                         ),
+                        OutlinedButton.icon(
+                          onPressed: _importMedia,
+                          icon: const Icon(Icons.perm_media_outlined),
+                          label: const Text('Attach media'),
+                        ),
                       ],
                     ),
                   ),
@@ -724,6 +757,87 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
                               );
                             },
                           ),
+                  ),
+                  const Divider(height: 1),
+                  SizedBox(
+                    height: 210,
+                    child: StreamBuilder<List<ProjectMediaItem>>(
+                      stream: _state.watchMediaForWorkItem(widget.itemId),
+                      builder: (context, mediaSnap) {
+                        final media =
+                            mediaSnap.data ?? const <ProjectMediaItem>[];
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const Padding(
+                              padding: EdgeInsets.fromLTRB(12, 10, 12, 4),
+                              child: Text(
+                                'Attached media',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: media.isEmpty
+                                  ? const Center(
+                                      child: Text('No media attached.'),
+                                    )
+                                  : ListView.builder(
+                                      itemCount: media.length,
+                                      itemBuilder: (context, index) {
+                                        final item = media[index];
+                                        return ListTile(
+                                          dense: true,
+                                          leading: Icon(
+                                            _mediaIcon(item.mediaType),
+                                            size: 18,
+                                          ),
+                                          title: Text(
+                                            item.title,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          subtitle: Text(
+                                            item.originalFilename,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          trailing: Wrap(
+                                            spacing: 4,
+                                            children: [
+                                              IconButton(
+                                                tooltip: 'Open original',
+                                                icon: const Icon(
+                                                  Icons.open_in_new,
+                                                  size: 18,
+                                                ),
+                                                onPressed: () => Process.start(
+                                                  'explorer.exe',
+                                                  [item.storedPath],
+                                                ),
+                                              ),
+                                              IconButton(
+                                                tooltip: 'Unlink media',
+                                                icon: const Icon(
+                                                  Icons.link_off,
+                                                  size: 18,
+                                                ),
+                                                onPressed: () => _state
+                                                    .unlinkProjectMediaFromWorkItem(
+                                                      widget.itemId,
+                                                      item.id,
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                   ),
                 ],
               ),
@@ -999,4 +1113,14 @@ class _OllamaDraftDialog extends StatelessWidget {
       ],
     );
   }
+}
+
+IconData _mediaIcon(String mediaType) {
+  return switch (mediaType) {
+    'image' => Icons.image_outlined,
+    'video' => Icons.movie_outlined,
+    'audio' => Icons.audiotrack_outlined,
+    'folder' => Icons.folder_outlined,
+    _ => Icons.perm_media_outlined,
+  };
 }

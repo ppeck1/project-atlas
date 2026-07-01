@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../db/app_db.dart';
+import '../../db/document_extractor.dart';
+import '../../services/atlas_agent_service.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/widgets/document_preview.dart';
 
@@ -35,6 +37,7 @@ class _LibraryEntry {
   final String? mediaType;
   final String? caption;
   final Document? document;
+  final Draft? draft;
 
   const _LibraryEntry({
     required this.id,
@@ -50,11 +53,17 @@ class _LibraryEntry {
     this.mediaType,
     this.caption,
     this.document,
+    this.draft,
   });
 
-  static const _imageExts = {
-    'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
-  };
+  bool get isAgentProposal =>
+      draft?.kind == AtlasAgentService.proposalDraftKind;
+
+  AtlasProposalDraft? get proposal => isAgentProposal && draft != null
+      ? AtlasProposalDraft.fromDraft(draft!)
+      : null;
+
+  static const _imageExts = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'};
 
   static _LibraryEntry fromDocument(Document d) {
     final isImage = _imageExts.contains(d.extension?.toLowerCase());
@@ -95,6 +104,7 @@ class _LibraryEntry {
     content: d.body,
     createdAt: d.createdAt,
     kind: d.kind,
+    draft: d,
   );
 }
 
@@ -106,8 +116,14 @@ class LibraryScreen extends StatefulWidget {
   /// When provided (e.g. from a deep link), the matching entry is pre-selected.
   final String? initialEntryId;
   final String? initialEntryType;
+  final String? initialProjectId;
 
-  const LibraryScreen({super.key, this.initialEntryId, this.initialEntryType});
+  const LibraryScreen({
+    super.key,
+    this.initialEntryId,
+    this.initialEntryType,
+    this.initialProjectId,
+  });
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -127,6 +143,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (widget.initialEntryId != null) {
       _selectedId = widget.initialEntryId;
       _selectedIsDraft = widget.initialEntryType == 'draft';
+    }
+    final projectId = widget.initialProjectId?.trim();
+    if (projectId != null && projectId.isNotEmpty) {
+      _filterProjectId = projectId;
     }
   }
 
@@ -148,7 +168,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } else if (_filterType == 'images') {
       list = list.where((e) => e.mediaType == 'image').toList();
     } else if (_filterType == 'drafts') {
-      list = list.where((e) => e.isDraft).toList();
+      list = list.where((e) => e.isDraft && !e.isAgentProposal).toList();
+    } else if (_filterType == 'agent_proposals') {
+      list = list.where((e) => e.isAgentProposal).toList();
     }
     final q = _searchQuery.toLowerCase().trim();
     if (q.isNotEmpty) {
@@ -167,12 +189,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
       allowMultiple: false,
       type: FileType.custom,
       allowedExtensions: [
-        'txt', 'md', 'json', 'csv',
-        'log', 'xml', 'yaml', 'yml', 'ini', 'toml', 'rst', 'rtf',
-        'pdf', 'docx', 'doc',
-        'html', 'htm', 'eml',
-        'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
-        'svg',
+        ...textDocumentExtensions,
+        ...codeDocumentExtensions,
+        'pdf',
+        'docx',
+        'doc',
+        'jpg',
+        'jpeg',
+        'png',
+        'gif',
+        'webp',
+        'bmp',
       ],
     );
     final path = result?.files.single.path;
@@ -205,6 +232,91 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  Future<void> _approveProposal(_LibraryEntry entry) async {
+    final proposal = entry.proposal;
+    if (proposal == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: const Text('Approve proposal?'),
+        content: Text('This will apply `${proposal.type}` to Atlas.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Approve'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final result = await AtlasAgentService(
+        AppStateScope.of(context),
+      ).approveAgentProposal(entry.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Approval failed: $error')));
+    }
+  }
+
+  Future<void> _rejectProposal(_LibraryEntry entry) async {
+    final proposal = entry.proposal;
+    if (proposal == null) return;
+    final reasonCtrl = TextEditingController();
+    final reason = await showDialog<String?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: const Text('Reject proposal?'),
+        content: TextField(
+          controller: reasonCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Reason'),
+          minLines: 1,
+          maxLines: 3,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, reasonCtrl.text),
+            child: const Text('Reject'),
+          ),
+        ],
+      ),
+    );
+    reasonCtrl.dispose();
+    if (reason == null || !mounted) return;
+    try {
+      final result = await AtlasAgentService(
+        AppStateScope.of(context),
+      ).rejectAgentProposal(entry.id, reason: reason);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Reject failed: $error')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
@@ -212,6 +324,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return StreamBuilder<List<Project>>(
       stream: state.watchProjects(),
       builder: (context, projectSnap) {
+        final loadError = projectSnap.error;
+        if (projectSnap.hasError) {
+          return _LibraryLoadError(error: loadError);
+        }
         final projects = projectSnap.data ?? const <Project>[];
 
         return StreamBuilder<List<Document>>(
@@ -223,6 +339,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 return StreamBuilder<List<ProjectMediaItem>>(
                   stream: state.watchAllProjectMedia(),
                   builder: (context, mediaSnap) {
+                    final loadError =
+                        docSnap.error ?? draftSnap.error ?? mediaSnap.error;
+                    if (docSnap.hasError ||
+                        draftSnap.hasError ||
+                        mediaSnap.hasError) {
+                      return _LibraryLoadError(error: loadError);
+                    }
                     final docs = docSnap.data ?? const <Document>[];
                     final drafts = draftSnap.data ?? const <Draft>[];
                     final media = mediaSnap.data ?? const <ProjectMediaItem>[];
@@ -378,7 +501,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                                   }
                                                 }
                                               : null,
-                                          onDeleteDoc: selected.document != null && !selected.isDraft
+                                          onApproveProposal:
+                                              selected.proposal?.isPending ==
+                                                  true
+                                              ? () => _approveProposal(selected)
+                                              : null,
+                                          onRejectProposal:
+                                              selected.proposal?.isPending ==
+                                                  true
+                                              ? () => _rejectProposal(selected)
+                                              : null,
+                                          onDeleteDoc:
+                                              selected.document != null &&
+                                                  !selected.isDraft
                                               ? () async {
                                                   final ok = await showDialog<bool>(
                                                     context: context,
@@ -452,6 +587,44 @@ class _LibraryScreenState extends State<LibraryScreen> {
 // Header bar
 // ─────────────────────────────────────────────────────────────────────────────
 
+class _LibraryLoadError extends StatelessWidget {
+  final Object? error;
+  const _LibraryLoadError({required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.error_outline,
+                size: 44,
+                color: Colors.orangeAccent,
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Library failed to load.',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '$error',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white54),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Header extends StatelessWidget {
   final List<Project> projects;
   final String? filterProjectId;
@@ -479,6 +652,9 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasSelectedProject =
+        filterProjectId == null ||
+        projects.any((project) => project.id == filterProjectId);
     return Container(
       color: _panel,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -522,6 +698,11 @@ class _Header extends StatelessWidget {
             value: filterProjectId,
             items: [
               const DropdownMenuItem(value: null, child: Text('All projects')),
+              if (!hasSelectedProject)
+                DropdownMenuItem(
+                  value: filterProjectId,
+                  child: Text('Current project'),
+                ),
               ...projects.map(
                 (p) => DropdownMenuItem(
                   value: p.id,
@@ -541,11 +722,15 @@ class _Header extends StatelessWidget {
               DropdownMenuItem(value: 'media', child: Text('Media')),
               DropdownMenuItem(value: 'images', child: Text('Images')),
               DropdownMenuItem(value: 'drafts', child: Text('AI Drafts')),
+              DropdownMenuItem(
+                value: 'agent_proposals',
+                child: Text('Agent Proposals'),
+              ),
             ],
             onChanged: (v) {
               if (v != null) onTypeFilter(v);
             },
-            width: 130,
+            width: 165,
           ),
           const SizedBox(width: 12),
           filteredCount != totalCount
@@ -648,6 +833,7 @@ class _EntryTile extends StatelessWidget {
   });
 
   IconData _icon() {
+    if (entry.isAgentProposal) return Icons.rule_folder_outlined;
     if (entry.isDraft) return Icons.auto_awesome;
     if (entry.mediaType == 'image') return Icons.image_outlined;
     if (entry.isMedia) return Icons.perm_media_outlined;
@@ -685,7 +871,11 @@ class _EntryTile extends StatelessWidget {
               child: Icon(
                 _icon(),
                 size: 18,
-                color: entry.isDraft ? _green : _text54,
+                color: entry.isAgentProposal
+                    ? _primary
+                    : entry.isDraft
+                    ? _green
+                    : _text54,
               ),
             ),
             const SizedBox(width: 10),
@@ -707,7 +897,13 @@ class _EntryTile extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (entry.isDraft) ...[
+                      if (entry.isAgentProposal) ...[
+                        const SizedBox(width: 6),
+                        _TinyChip(
+                          label: entry.proposal?.reviewStatus ?? 'proposal',
+                          color: _proposalStatusColor(entry.proposal),
+                        ),
+                      ] else if (entry.isDraft) ...[
                         const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -789,6 +985,41 @@ class _EntryTile extends StatelessWidget {
   }
 }
 
+Color _proposalStatusColor(AtlasProposalDraft? proposal) {
+  return switch (proposal?.reviewStatus) {
+    AtlasAgentService.reviewStatusApproved => _green,
+    AtlasAgentService.reviewStatusRejected => Colors.redAccent,
+    _ => _primary,
+  };
+}
+
+class _TinyChip extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _TinyChip({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withAlpha(35),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withAlpha(90)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 9,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry viewer (right pane)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -799,6 +1030,8 @@ class _EntryViewer extends StatelessWidget {
   final VoidCallback? onOpenFile;
   final VoidCallback? onDeleteDraft;
   final VoidCallback? onDeleteDoc;
+  final VoidCallback? onApproveProposal;
+  final VoidCallback? onRejectProposal;
 
   const _EntryViewer({
     required this.entry,
@@ -806,6 +1039,8 @@ class _EntryViewer extends StatelessWidget {
     this.onOpenFile,
     this.onDeleteDraft,
     this.onDeleteDoc,
+    this.onApproveProposal,
+    this.onRejectProposal,
   });
 
   String _formatDate(DateTime dt) {
@@ -831,6 +1066,7 @@ class _EntryViewer extends StatelessWidget {
   Widget build(BuildContext context) {
     final project = projects.where((p) => p.id == entry.projectId).firstOrNull;
     final content = entry.content;
+    final proposal = entry.proposal;
     final imageFile = entry.mediaType == 'image' && entry.storedPath != null
         ? File(entry.storedPath!)
         : null;
@@ -848,7 +1084,30 @@ class _EntryViewer extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (entry.isDraft)
+                    if (entry.isAgentProposal && proposal != null)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _proposalStatusColor(proposal).withAlpha(35),
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(
+                            color: _proposalStatusColor(proposal).withAlpha(90),
+                          ),
+                        ),
+                        child: Text(
+                          'Agent Proposal · ${proposal.type} · ${proposal.reviewStatus}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _proposalStatusColor(proposal),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      )
+                    else if (entry.isDraft)
                       Container(
                         margin: const EdgeInsets.only(bottom: 6),
                         padding: const EdgeInsets.symmetric(
@@ -948,6 +1207,19 @@ class _EntryViewer extends StatelessWidget {
                         );
                       },
                     ),
+                  if (onApproveProposal != null)
+                    _ActionBtn(
+                      icon: Icons.check_circle_outline,
+                      label: 'Approve',
+                      onTap: onApproveProposal!,
+                    ),
+                  if (onRejectProposal != null)
+                    _ActionBtn(
+                      icon: Icons.block,
+                      label: 'Reject',
+                      onTap: onRejectProposal!,
+                      danger: true,
+                    ),
                   if (onDeleteDraft != null)
                     _ActionBtn(
                       icon: Icons.delete_outline,
@@ -967,6 +1239,10 @@ class _EntryViewer extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
+          if (proposal != null) ...[
+            _ProposalSummary(proposal: proposal),
+            const SizedBox(height: 12),
+          ],
           const Divider(color: _line),
           const SizedBox(height: 12),
           Expanded(
@@ -1019,6 +1295,71 @@ class _EntryViewer extends StatelessWidget {
                     ),
                   ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProposalSummary extends StatelessWidget {
+  final AtlasProposalDraft proposal;
+
+  const _ProposalSummary({required this.proposal});
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = _proposalStatusColor(proposal);
+    final payloadLines = proposal.payload.entries
+        .take(5)
+        .map((entry) => '${entry.key}: ${entry.value}')
+        .toList();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _TinyChip(label: proposal.reviewStatus, color: statusColor),
+              _TinyChip(label: proposal.type, color: _primary),
+              if (proposal.projectId != null)
+                _TinyChip(label: proposal.projectId!, color: _text54),
+            ],
+          ),
+          if (proposal.reviewMessage != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              proposal.reviewMessage!,
+              style: const TextStyle(color: _text87, fontSize: 12),
+            ),
+          ],
+          if (proposal.warnings.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            for (final warning in proposal.warnings)
+              Text(
+                warning,
+                style: const TextStyle(color: Colors.amber, fontSize: 12),
+              ),
+          ],
+          if (payloadLines.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            for (final line in payloadLines)
+              Text(
+                line,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: _text54, fontSize: 12),
+              ),
+          ],
         ],
       ),
     );

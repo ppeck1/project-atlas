@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import '../../db/app_db.dart';
 import '../../shared/models/app_state_scope.dart';
@@ -18,7 +18,9 @@ class GovernanceScreen extends StatelessWidget {
         final projects = snap.data ?? const <Project>[];
 
         if (projects.isEmpty) {
-          return const Center(child: Text('No projects yet. Create one in Projects.'));
+          return const Center(
+            child: Text('No projects yet. Create one in Projects.'),
+          );
         }
 
         return ListView.builder(
@@ -81,10 +83,7 @@ class _StageWorkSection extends StatelessWidget {
   final Project project;
   final Stage stage;
 
-  const _StageWorkSection({
-    required this.project,
-    required this.stage,
-  });
+  const _StageWorkSection({required this.project, required this.stage});
 
   @override
   Widget build(BuildContext context) {

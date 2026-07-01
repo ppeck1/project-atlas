@@ -15,6 +15,7 @@ class Projects extends Table {
   TextColumn get desiredOutcome => text().nullable()();
   TextColumn get successCriteria => text().nullable()();
   TextColumn get status => text().withDefault(const Constant('active'))();
+  TextColumn get category => text().nullable()();
   DateTimeColumn get deletedAt => dateTime().nullable()();
   TextColumn get deleteReason => text().nullable()();
 
@@ -325,4 +326,116 @@ class ProjectMedia extends Table {
 
   @override
   Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+}
+
+@DataClassName('MediaLink')
+class MediaLinks extends Table {
+  TextColumn get id => text()();
+  TextColumn get mediaId => text().references(ProjectMedia, #id)();
+  TextColumn get entityType => text()();
+  TextColumn get entityId => text()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+}
+
+// ---------------------------------------------------------------------------
+// Local Operations Registry (v11)
+// ---------------------------------------------------------------------------
+
+@DataClassName('ProjectRegistryEntry')
+class ProjectRegistry extends Table {
+  @override
+  String get tableName => 'project_registry';
+
+  TextColumn get id => text()();
+  TextColumn get atlasProjectId =>
+      text().nullable().references(Projects, #id)();
+  TextColumn get displayName => text()();
+  TextColumn get localPath => text()();
+  TextColumn get gitRoot => text().nullable()();
+  TextColumn get classification => text()();
+  TextColumn get reviewState => text()();
+  TextColumn get notes => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+  DateTimeColumn get lastReviewedAt => dateTime().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+
+  @override
+  List<String> get customConstraints => ['UNIQUE(local_path)'];
+}
+
+@DataClassName('ProjectObservation')
+class ProjectObservations extends Table {
+  @override
+  String get tableName => 'project_observations';
+
+  TextColumn get id => text()();
+  TextColumn get registryId =>
+      text().nullable().references(ProjectRegistry, #id)();
+  TextColumn get scanRunId => text().references(ProjectScanRuns, #id)();
+  TextColumn get observedPath => text()();
+  TextColumn get classificationGuess => text()();
+  IntColumn get confidence => integer()();
+  TextColumn get branch => text().nullable()();
+  TextColumn get headSha => text().nullable()();
+  IntColumn get dirtyCount => integer().nullable()();
+  TextColumn get remoteUrl => text().nullable()();
+  TextColumn get markerFilesJson => text()();
+  TextColumn get warningsJson => text()();
+  TextColumn get rawJson => text()();
+  DateTimeColumn get observedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+}
+
+@DataClassName('ProjectScanRun')
+class ProjectScanRuns extends Table {
+  @override
+  String get tableName => 'project_scan_runs';
+
+  TextColumn get id => text()();
+  TextColumn get rootsJson => text()();
+  DateTimeColumn get startedAt => dateTime()();
+  DateTimeColumn get completedAt => dateTime().nullable()();
+  TextColumn get status => text()();
+  IntColumn get totalSeen => integer().withDefault(const Constant(0))();
+  IntColumn get candidates => integer().withDefault(const Constant(0))();
+  IntColumn get ignored => integer().withDefault(const Constant(0))();
+  TextColumn get warningsJson => text()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+}
+
+// ---------------------------------------------------------------------------
+// Local Project Refresh Profiles (v12)
+// ---------------------------------------------------------------------------
+
+@DataClassName('LocalProjectRefreshItem')
+class LocalProjectRefreshItems extends Table {
+  @override
+  String get tableName => 'local_project_refresh_items';
+
+  TextColumn get id => text()();
+  TextColumn get registryId => text().references(ProjectRegistry, #id)();
+  TextColumn get sourceKind => text()();
+  TextColumn get sourceKey => text()();
+  TextColumn get targetType => text()();
+  TextColumn get targetId => text()();
+  TextColumn get sourceFingerprint => text()();
+  DateTimeColumn get lastImportedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+
+  @override
+  List<String> get customConstraints => [
+    'UNIQUE(registry_id, source_kind, source_key)',
+  ];
 }

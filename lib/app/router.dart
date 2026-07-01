@@ -4,6 +4,7 @@ import '../shared/widgets/atlas_shell.dart';
 import '../features/today/today_screen.dart';
 import '../features/projects/projects_screen.dart';
 import '../features/projects/project_detail_screen.dart';
+import '../features/operations/operations_screen.dart';
 import '../features/library/library_screen.dart';
 import '../features/settings/settings_screen.dart';
 // Legacy screens kept accessible via deep links
@@ -32,10 +33,15 @@ GoRouter buildRouter() {
                 ProjectDetailScreen(projectId: state.pathParameters['id']!),
           ),
           GoRoute(
+            path: '/operations',
+            builder: (_, __) => const OperationsScreen(),
+          ),
+          GoRoute(
             path: '/library',
             builder: (_, state) => LibraryScreen(
               initialEntryId: state.uri.queryParameters['entryId'],
               initialEntryType: state.uri.queryParameters['entryType'],
+              initialProjectId: state.uri.queryParameters['projectId'],
             ),
           ),
           GoRoute(

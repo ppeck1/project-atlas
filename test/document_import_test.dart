@@ -29,7 +29,8 @@ class _FakePathProvider extends Fake
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 List<int> _buildDocx(String text) {
-  final xml = '''<?xml version="1.0" encoding="UTF-8"?>
+  final xml =
+      '''<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body><w:p><w:r><w:t>$text</w:t></w:r></w:p></w:body>
 </w:document>''';
@@ -132,6 +133,41 @@ void main() {
       expect(docs.first.title, equals('summary.csv'));
     });
 
+    test(
+      'stores source metadata display title and extracts Dart code',
+      () async {
+        await db.createProject(
+          'project-doc-source',
+          'Project document source',
+          DateTime.now(),
+        );
+        final src = File(p.join(tempDir.path, 'main.dart'))
+          ..writeAsStringSync('void main() {\n  print("atlas");\n}\n');
+
+        final id = await db.importDocumentFromPath(
+          src.path,
+          projectId: 'project-doc-source',
+          source: 'local_refresh:lib/main.dart',
+          metadataJson: '{"relativePath":"lib/main.dart"}',
+          title: 'main.dart',
+          displayTitle: 'Application entrypoint',
+        );
+
+        final doc = await db.getProjectDocumentBySource(
+          'project-doc-source',
+          'local_refresh:lib/main.dart',
+        );
+        expect(doc, isNotNull);
+        expect(doc!.id, equals(id));
+        expect(doc.title, equals('Application entrypoint'));
+        expect(doc.originalFilename, equals('main.dart'));
+        expect(doc.source, equals('local_refresh:lib/main.dart'));
+        expect(doc.metadataJson, equals('{"relativePath":"lib/main.dart"}'));
+        expect(doc.extension, equals('dart'));
+        expect(doc.extractedText, contains('void main()'));
+      },
+    );
+
     test('moving original file does not affect stored copy', () async {
       final src = File(p.join(tempDir.path, 'orig.txt'))
         ..writeAsStringSync('Stable content');
@@ -172,14 +208,16 @@ void main() {
       expect(docs.first.mimeType, equals('image/png'));
     });
 
-    test('extractedText is null for PDF (no text extraction for binary types)',
-        () async {
-      final src = File(p.join(tempDir.path, 'file.pdf'))
-        ..writeAsBytesSync([0x25, 0x50, 0x44, 0x46]);
-      await db.importDocumentFromPath(src.path);
-      final docs = await db.watchDocuments().first;
-      expect(docs.first.extractedText, isNull);
-    });
+    test(
+      'extractedText is null for PDF (no text extraction for binary types)',
+      () async {
+        final src = File(p.join(tempDir.path, 'file.pdf'))
+          ..writeAsBytesSync([0x25, 0x50, 0x44, 0x46]);
+        await db.importDocumentFromPath(src.path);
+        final docs = await db.watchDocuments().first;
+        expect(docs.first.extractedText, isNull);
+      },
+    );
 
     test('HTML import stores raw HTML in renderedMarkdown', () async {
       final src = File(p.join(tempDir.path, 'page.html'))
@@ -199,15 +237,17 @@ void main() {
       expect(docs.first.extractedText, isNot(contains('<')));
     });
 
-    test('HTML import: both renderedMarkdown and extractedText are non-null',
-        () async {
-      final src = File(p.join(tempDir.path, 'both.html'))
-        ..writeAsStringSync('<p>Hello</p>');
-      await db.importDocumentFromPath(src.path);
-      final doc = (await db.watchDocuments().first).first;
-      expect(doc.renderedMarkdown, isNotNull);
-      expect(doc.extractedText, isNotNull);
-    });
+    test(
+      'HTML import: both renderedMarkdown and extractedText are non-null',
+      () async {
+        final src = File(p.join(tempDir.path, 'both.html'))
+          ..writeAsStringSync('<p>Hello</p>');
+        await db.importDocumentFromPath(src.path);
+        final doc = (await db.watchDocuments().first).first;
+        expect(doc.renderedMarkdown, isNotNull);
+        expect(doc.extractedText, isNotNull);
+      },
+    );
 
     test('EML import stores body only in extractedText', () async {
       const emlContent = '''From: alice@example.com
@@ -233,16 +273,18 @@ This is the email body.''';
       expect(doc.renderedMarkdown, isNull);
     });
 
-    test('file over 10 MB is imported without exception and extractedText is null',
-        () async {
-      final bigBytes = List.filled(11 * 1024 * 1024, 0x41);
-      final src = File(p.join(tempDir.path, 'large.txt'))
-        ..writeAsBytesSync(bigBytes);
-      await db.importDocumentFromPath(src.path);
-      final docs = await db.watchDocuments().first;
-      expect(docs, hasLength(1));
-      expect(docs.first.extractedText, isNull);
-    });
+    test(
+      'file over 10 MB is imported without exception and extractedText is null',
+      () async {
+        final bigBytes = List.filled(11 * 1024 * 1024, 0x41);
+        final src = File(p.join(tempDir.path, 'large.txt'))
+          ..writeAsBytesSync(bigBytes);
+        await db.importDocumentFromPath(src.path);
+        final docs = await db.watchDocuments().first;
+        expect(docs, hasLength(1));
+        expect(docs.first.extractedText, isNull);
+      },
+    );
   });
 
   group('deleteDocument', () {
@@ -264,10 +306,7 @@ This is the email body.''';
     });
 
     test('deleting a non-existent ID does not throw', () async {
-      await expectLater(
-        db.deleteDocument('non_existent_id_xyz'),
-        completes,
-      );
+      await expectLater(db.deleteDocument('non_existent_id_xyz'), completes);
     });
 
     test('deleteDocument also removes associated documentLinks rows', () async {
@@ -276,15 +315,17 @@ This is the email body.''';
       await db.importDocumentFromPath(src.path);
       final doc = (await db.watchDocuments().first).first;
 
-      await db.into(db.documentLinks).insert(
-        DocumentLinksCompanion(
-          id: const Value('test_link_1'),
-          documentId: Value(doc.id),
-          entityType: const Value('work_item'),
-          entityId: const Value('fake_work_item_id'),
-          createdAt: Value(DateTime.now()),
-        ),
-      );
+      await db
+          .into(db.documentLinks)
+          .insert(
+            DocumentLinksCompanion(
+              id: const Value('test_link_1'),
+              documentId: Value(doc.id),
+              entityType: const Value('work_item'),
+              entityId: const Value('fake_work_item_id'),
+              createdAt: Value(DateTime.now()),
+            ),
+          );
 
       final linksBefore = await db.select(db.documentLinks).get();
       expect(linksBefore, hasLength(1));
@@ -294,6 +335,38 @@ This is the email body.''';
       final linksAfter = await db.select(db.documentLinks).get();
       expect(linksAfter, isEmpty);
     });
+  });
+
+  group('project media attachments', () {
+    test(
+      'work item media import is visible as project media for Library',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        await db.createProject('project-a', 'Alpha', DateTime(2026, 1, 1));
+        final stage = (await db.getStagesForProject('project-a')).single;
+        final workItemId = await db.addWorkItem(
+          stageId: stage.id,
+          title: 'Review screenshot',
+        );
+        final src = File(p.join(tempDir.path, 'task-shot.png'))
+          ..writeAsBytesSync([1, 2, 3, 4]);
+
+        final mediaId = await state.importWorkItemMediaFromPath(
+          workItemId,
+          src.path,
+        );
+
+        final libraryMedia = await state.watchAllProjectMedia().first;
+        final linkedMedia = await state.getMediaForWorkItem(workItemId);
+        final imported = libraryMedia.singleWhere((item) => item.id == mediaId);
+
+        expect(imported.projectId, 'project-a');
+        expect(imported.mediaType, 'image');
+        expect(linkedMedia.map((item) => item.id), [mediaId]);
+      },
+    );
   });
 
   group('exportOperationalBackupToJson', () {
@@ -316,9 +389,9 @@ This is the email body.''';
       expect(entryNames, anyElement(startsWith('documents/')));
 
       final jsonEntry = archive.findFile('backup.json')!;
-      final payload = jsonDecode(
-        utf8.decode(jsonEntry.content as List<int>),
-      ) as Map<String, dynamic>;
+      final payload =
+          jsonDecode(utf8.decode(jsonEntry.content as List<int>))
+              as Map<String, dynamic>;
       expect(payload.containsKey('documents'), isTrue);
       expect(payload.containsKey('projects'), isTrue);
     });

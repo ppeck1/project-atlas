@@ -7,7 +7,8 @@ import 'package:project_atlas/db/document_extractor.dart';
 
 // Builds a minimal in-memory .docx (ZIP) with a word/document.xml containing [text].
 List<int> _buildDocx(String text) {
-  final xml = '''<?xml version="1.0" encoding="UTF-8"?>
+  final xml =
+      '''<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
     <w:p><w:r><w:t>$text</w:t></w:r></w:p>

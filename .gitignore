@@ -15,6 +15,8 @@ lib/db/app_db.g.dart
 *.orig
 .DS_Store
 Thumbs.db
+.atlas_backups/
+.claude/
 
 # Platform build outputs
 android/.gradle/
@@ -35,6 +37,12 @@ telegram_token.txt
 
 # Local demo/runtime scratch
 .demo_appdata/
+
+# Project Ops Capsule local evidence/outboxes
+.project/runs/
+.project/atlas_outbox/
+.project/boh_outbox/
+.project/verification/
 
 # Installer output (built artifacts, not source)
 dist/

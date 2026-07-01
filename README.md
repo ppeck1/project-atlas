@@ -8,20 +8,26 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 
 - Version: `1.3.0+1`
 - Platform target: Flutter desktop, currently Windows-oriented
-- Storage: local SQLite via Drift, schema version `10`
-- Primary navigation: Today, Projects, Library, Settings
+- Storage: local SQLite via Drift, schema version `18`
+- Primary navigation: Today, Projects, Operations, Library, Settings
 - Legacy deep links still available: Dashboard, Work, Review, Export, Governance, Backend Log
 - Optional local AI: Ollama structured project summaries, prose summaries, drafts, and work-item analysis — always human-in-the-loop
-- AI summary caching: structured summaries are stored as drafts and loaded instantly on Project Detail open; background job pre-generates summaries for all active projects 10 seconds after startup (once per day per project)
+- AI summary caching: structured summaries are stored as drafts and loaded instantly on Project Detail open; a background job refreshes missing summaries for operational project statuses 10 seconds after startup and every 6 hours after that (once per day per project unless manually forced)
 - Optional phone handoff: outbound Telegram task-list sending with outbox logging
 - Contacts / workforce directory with JSON and CSV import/export
 - Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
 - Owner pickers on work items, project owners, and governance stages — all linked to the contact directory
-- Project organization: tag assignment and project filters for context, status, phase, and priority
+- Project organization: category grouping, pinned categories/projects, category and project sorting, tag assignment, project filters for context/status/phase/priority, and project merge
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
 - Project governance: people roster, risk register, decision log
-- Project media: app-owned image/file gallery with cover-image selection
+- Project media: app-owned image/file gallery with cover-image selection; media can be attached to work items and queued LLM tasks; local refresh imports discovered image, video, and audio files from linked project folders
 - Document library: native file picker, app-owned copies, in-app preview, and AI analysis integration
+- Local Operations Registry: manual shallow scans of operator-selected local project folders, selectable additional folders, append-only observations, queue filters, bulk candidate review, reviewed registry records, candidate accept/link/ignore/needs-review actions, create/update existing Project actions, first-import local refresh for docs/media/source/card/native project rows, Atlas-only enrichment runs with open findings, scan JSON copy/export, project bundle preview/export, and app-owned scan artifact storage
+- Agent boundary: `AtlasAgentService` exposes read-heavy project status/brief/summary operations, Atlas-only enrichment runs/findings, an operator-editable persisted LLM task queue with media attachment context, and proposal-first writes stored as reviewable drafts (`kind='atlas_agent_proposal'`) for the future Atlas MCP and local LLM harness
+
+## Project Ops Capsule Audit
+
+Project Ops Capsule v0.2 is installed as repo-local metadata under `.project/` with public-repo raw evidence and outboxes kept local-only by `.gitignore`. The capsule records launch, test, build, documentation, Atlas outbox, BOH outbox, and git closeout evidence; it is not the Atlas Operations scanner, a BOH promotion mechanism, a GitHub sync engine, or authority to bypass proposal review.
 
 ## Screenshots
 
@@ -70,8 +76,9 @@ After changing Drift tables or database code, rerun build runner before launchin
 | Screen | Current role |
 | --- | --- |
 | Today | Focus list for doing, overdue, due today, phone queue, blocked, and high-priority work |
-| Projects | Project list, active project switching, lifecycle metadata, tag/status/phase/priority filters, detail entry point |
-| Project Detail | Identity, scope, lifecycle fields, people roster, risk register, decision log, structured AI summary panel (7 sections, instant cached load, age badge), media gallery, tag assignment |
+| Projects | Category-grouped project list with pinned category/project ordering, active project switching, lifecycle metadata, tag/status/phase/priority filters, project merge, all-project AI summary refresh, project bundle export, detail entry point |
+| Project Detail | Collapsible task header with project tasks and editable/movable LLM queue items with media attachments, identity, scope, lifecycle fields, local repo refresh preview/apply for docs/media/native rows, read-only git visibility inspection, project bundle preview/export, people roster, risk register, decision log, structured AI summary panel (7 sections, instant cached load, age badge), media gallery, tag assignment |
+| Operations | Manual local project scans, reviewable observations, local registry records, create/update existing Project bridge, enrichment run dashboard/findings, warnings, scan JSON copy/export, warnings JSON save, and app scan-folder access |
 | Library | Documents, project media, and AI drafts with search, project/type filters, native file picker import, copy, preview, and file-open actions |
 | Settings | Integrations, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
 | Work | Legacy stage/task list with editable work items |
@@ -111,9 +118,11 @@ MIME type is detected at import and saved to the `mime_type` column. Image docum
 | Images | Media or documents with `mediaType = 'image'` |
 | AI Drafts | Ollama-generated drafts |
 
-### Linking documents to work items
+### Linking documents and media to work items
 
 Documents can be linked to work items in the Work Item Detail sheet. Linked documents are included in Ollama work-item analysis and project structured summaries (up to 3 000 chars per document, 16 000 char total cap).
+
+Project media can also be attached from the Work Item Detail sheet. These attachments keep visual/audio/file context beside the task without feeding binary content into Ollama prompts.
 
 ## Contacts / Workforce
 
@@ -161,11 +170,21 @@ When Ollama is reachable, the model field becomes a **dropdown** populated with 
 
 AI actions available:
 - **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
-- **Structured project summary** — produces a 7-section JSON-parsed summary for a project using `format:"json"` Ollama output mode (Project Detail); sections are Goal, Current State, Ownership/Active Work, Relevant Library Docs, Blockers/Risks, Next Practical Actions, and Confidence/Gaps. The summary is cached as a draft (`kind='project_summary'`) and loads instantly on next open. An age badge in the panel header shows when the cached summary was generated. Relevant Library Docs entries include "Open in Library" (navigates to the document) and "Show in Explorer" (opens Windows Explorer with the file selected) actions.
+- **Structured project summary** — produces a 7-section JSON-parsed summary for a project using `format:"json"` Ollama output mode (Project Detail); sections are Goal, Current State, Ownership/Active Work, Relevant Library Docs, Blockers/Risks, Next Practical Actions, and Confidence/Gaps. The summary is cached as a draft (`kind='project_summary'`) and loads instantly on next open. A background refresh fills missing daily summaries for active, stale, needs-update, needs-review, local-only, public-mismatch, and blocked projects after startup and every 6 hours, and the Projects toolbar can force a refresh for those project statuses. An age badge in the panel header shows when the cached summary was generated. Relevant Library Docs entries include "Open in Library" (navigates to the document) and "Show in Explorer" (opens Windows Explorer with the file selected) actions.
 - **Project summary (prose)** — legacy prose summary; still available via `summarizeProject()` in OllamaService
 - **Email draft** — drafts an email for a specific work item (Work Item Detail)
 - **Task extract** — extracts tasks from free-form note text (Work Item Detail)
 - **Work item analysis** — read-only advisory analysis including linked documents (Work Item Detail)
+
+## Agent / MCP Boundary
+
+`lib/services/atlas_agent_service.dart` is the desktop-side contract intended for the future Atlas MCP and for a local LLM harness.
+
+- Read operations assemble stable project DTOs: alphabetical project list, status, brief, cached summary, stale/attention list, local refresh preview, git visibility inspection, enrichment run history/findings, and summary/local-refresh triggers.
+- Write-shaped operations are proposal-first. Status changes, task updates, manifest updates, validation runs, and handoffs are validated and saved as Library drafts with `kind='atlas_agent_proposal'`.
+- Library has an **Agent Proposals** filter with pending/approved/rejected status chips. Pending proposals can be approved or rejected from the detail pane; approved status/task/manifest proposals apply through `AppState`, validation proposals log the run, and handoff proposals create a `project_handoff` draft.
+- The MCP tool registry lives in `lib/mcp/atlas_mcp_server.dart`. It exposes reads, Atlas-only enrichment triggers, LLM queue lifecycle tools, and proposal-creation tools; approval/rejection stays in the desktop review queue. Project Detail lets the operator edit, move, cancel, requeue, and attach media to LLM tasks. MCP `get_llm_task` returns attached media metadata for harness context. Queue completion can attach a proposed handoff as a reviewable draft instead of directly mutating project state.
+- The service does not delete projects, overwrite manifests, push/fetch Git, or mutate discovered repositories. Human review remains the approval boundary.
 
 ## Telegram
 
@@ -181,8 +200,9 @@ All user text is HTML-escaped before sending. Send attempts are tracked in the l
 ## Database
 
 - Engine: SQLite via Drift `NativeDatabase`
-- Schema version: `10`
+- Schema version: `18`
 - Windows data path: `%APPDATA%\<company>\project_atlas\project_atlas.sqlite` — exact path depends on build; use **Settings → Admin → Open app data folder** to locate it
+- Operations scan artifacts: `<app support>\operations_scans\` with `runs`, `warnings`, and `logs` subfolders
 - Encryption: plaintext SQLite (no encryption library included; SQLCipher integration is planned for a future release)
 - Compatibility: startup repair/backfill handles partially migrated local databases
 
@@ -194,8 +214,9 @@ Do not commit local database files, secrets, app-data folders, `.dart_tool`, `bu
 lib/
   app/           App widget, router, theme
   db/            Drift tables, AppDb, database open path, document_extractor
-  services/      Ollama (OllamaService, project_summary_models.dart), Telegram, app logging
-  features/      today, projects, library, settings, work, review, export, governance, log
+  mcp/           Atlas MCP tool registry and JSON-safe dispatcher
+  services/      Ollama (OllamaService, project_summary_models.dart), Telegram, app logging, local project scan/refresh services, AtlasAgentService
+  features/      today, projects, operations, library, settings, work, review, export, governance, log
   shared/
     models/      AppState and scope
     widgets/     shell, dialogs, pickers, document_preview
@@ -235,7 +256,8 @@ Generated files and build products are intentionally ignored:
 - In-app PDF rendering (currently opens in system viewer)
 - Drafts screen as a first-class route
 - Inbound Telegram commands such as `/done`, `/snooze`, and `/add`
-- Project snapshots and decision-log export
+- Atlas MCP wrapper over `AtlasAgentService`
+- Restore/import flow for project bundles and operational backups
 - Restore/import flow for operational backup (ZIP)
 - SQLCipher encrypted storage path before broader distribution
 - Review history browser — `watchRecentDailyReviews()` exists in the DB layer; no history screen yet

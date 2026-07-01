@@ -49,14 +49,32 @@ class _ReviewScreenState extends State<ReviewScreen> {
       setState(() {
         _allActive = allItems;
         _blocked = allItems.where((i) => i.blockedReason != null).toList();
-        _overdue = allItems.where((i) => i.dueAt != null && i.dueAt!.isBefore(today)).toList();
-        _dueToday = allItems.where((i) => i.dueAt != null && !i.dueAt!.isBefore(today) && i.dueAt!.isBefore(tomorrow)).toList();
+        _overdue = allItems
+            .where((i) => i.dueAt != null && i.dueAt!.isBefore(today))
+            .toList();
+        _dueToday = allItems
+            .where(
+              (i) =>
+                  i.dueAt != null &&
+                  !i.dueAt!.isBefore(today) &&
+                  i.dueAt!.isBefore(tomorrow),
+            )
+            .toList();
       });
       final generated = _buildDeterministicSummary();
       state.saveDailyReview(generated); // persist to DailyReviews
-      await state.db.logEvent(area: 'ui', action: 'review_load_success', outputJson: '{"count":${allItems.length}}');
+      await state.db.logEvent(
+        area: 'ui',
+        action: 'review_load_success',
+        outputJson: '{"count":${allItems.length}}',
+      );
     } catch (e, st) {
-      await state.db.logError(area: 'ui', action: 'review_load_failed', error: e, stackTrace: st);
+      await state.db.logError(
+        area: 'ui',
+        action: 'review_load_failed',
+        error: e,
+        stackTrace: st,
+      );
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -66,12 +84,24 @@ class _ReviewScreenState extends State<ReviewScreen> {
   String _buildDeterministicSummary() {
     final now = DateTime.now();
     const months = [
-      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     final buf = StringBuffer();
     buf.writeln(
-        '# Daily Review ��������� ${months[now.month]} ${now.day}, ${now.year}');
+      '# Daily Review ��������� ${months[now.month]} ${now.day}, ${now.year}',
+    );
     buf.writeln();
     buf.writeln('**Active tasks:** ${_allActive.length}');
     buf.writeln('**Blocked:** ${_blocked.length}');
@@ -83,7 +113,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
       buf.writeln('## Blocked');
       for (final i in _blocked) {
         buf.writeln('- ${i.title}');
-        if (i.blockedReason != null) buf.writeln('  ��������� ${i.blockedReason}');
+        if (i.blockedReason != null)
+          buf.writeln('  ��������� ${i.blockedReason}');
       }
       buf.writeln();
     }
@@ -106,8 +137,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
       buf.writeln();
     }
 
-    final doing =
-        _allActive.where((i) => i.status == 'doing').toList();
+    final doing = _allActive.where((i) => i.status == 'doing').toList();
     if (doing.isNotEmpty) {
       buf.writeln('## In Progress');
       for (final i in doing) {
@@ -175,24 +205,35 @@ class _ReviewScreenState extends State<ReviewScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.error_outline, color: Colors.redAccent, size: 32),
-                        const SizedBox(height: 12),
-                        const Text('Review failed to load.', style: TextStyle(fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 8),
-                        SelectableText(_error!, textAlign: TextAlign.center),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Retry')),
-                      ],
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      color: Colors.redAccent,
+                      size: 32,
                     ),
-                  ),
-                )
-              : ListView(
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Review failed to load.',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    SelectableText(_error!, textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _load,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : ListView(
               padding: const EdgeInsets.all(16),
               children: [
                 // Stats
@@ -241,8 +282,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                           ClipboardData(text: _buildDeterministicSummary()),
                         );
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text('Copied to clipboard.')),
+                          const SnackBar(content: Text('Copied to clipboard.')),
                         );
                       },
                     ),
@@ -252,7 +292,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
 
                 if (_blocked.isNotEmpty) ...[
                   _SectionHeader('������������ Blocked', Colors.red),
-                  ..._blocked.map((i) => _ReviewTile(item: i, showBlocked: true)),
+                  ..._blocked.map(
+                    (i) => _ReviewTile(item: i, showBlocked: true),
+                  ),
                   const SizedBox(height: 16),
                 ],
 
@@ -331,8 +373,11 @@ class _StatCard extends StatelessWidget {
   final String label;
   final int value;
   final Color color;
-  const _StatCard(
-      {required this.label, required this.value, required this.color});
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -351,9 +396,10 @@ class _StatCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              Text(label,
-                  style: const TextStyle(
-                      fontSize: 12, color: Colors.white54)),
+              Text(
+                label,
+                style: const TextStyle(fontSize: 12, color: Colors.white54),
+              ),
             ],
           ),
         ),
@@ -367,8 +413,7 @@ Widget _SectionHeader(String label, Color color) {
     padding: const EdgeInsets.only(bottom: 8),
     child: Text(
       label,
-      style: TextStyle(
-          fontWeight: FontWeight.w700, color: color, fontSize: 13),
+      style: TextStyle(fontWeight: FontWeight.w700, color: color, fontSize: 13),
     ),
   );
 }
@@ -393,8 +438,10 @@ class _ReviewTile extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: Text(item.title,
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    child: Text(
+                      item.title,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
                   ),
                   statusChip(item.status),
                 ],
@@ -459,9 +506,9 @@ class _OllamaReviewDialog extends StatelessWidget {
           label: const Text('Copy'),
           onPressed: () {
             Clipboard.setData(ClipboardData(text: result.output ?? ''));
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Copied.')),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('Copied.')));
           },
         ),
         FilledButton(
@@ -474,9 +521,9 @@ class _OllamaReviewDialog extends StatelessWidget {
             );
             if (context.mounted) {
               Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Saved to Drafts.')),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('Saved to Drafts.')));
             }
           },
           child: const Text('Save Draft'),
@@ -499,14 +546,20 @@ class _DraftReviewSection extends StatelessWidget {
         if (drafts.isEmpty) {
           return const Padding(
             padding: EdgeInsets.only(top: 12),
-            child: Text('No AI drafts waiting for review.', style: TextStyle(color: Colors.white38, fontSize: 12)),
+            child: Text(
+              'No AI drafts waiting for review.',
+              style: TextStyle(color: Colors.white38, fontSize: 12),
+            ),
           );
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 12),
-            const Text('AI Draft Review', style: TextStyle(fontWeight: FontWeight.w700)),
+            const Text(
+              'AI Draft Review',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 8),
             for (final d in drafts.take(5))
               Card(
@@ -516,11 +569,23 @@ class _DraftReviewSection extends StatelessWidget {
                   childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   children: [
                     if (d.inputJson != null) ...[
-                      const Text('Input/context', style: TextStyle(fontWeight: FontWeight.w600)),
-                      SelectableText(d.inputJson!, style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                      const Text(
+                        'Input/context',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      SelectableText(
+                        d.inputJson!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white60,
+                        ),
+                      ),
                       const SizedBox(height: 8),
                     ],
-                    const Text('Draft output', style: TextStyle(fontWeight: FontWeight.w600)),
+                    const Text(
+                      'Draft output',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                     SelectableText(d.body),
                     const SizedBox(height: 8),
                     Wrap(
@@ -529,7 +594,9 @@ class _DraftReviewSection extends StatelessWidget {
                         OutlinedButton.icon(
                           onPressed: () {
                             Clipboard.setData(ClipboardData(text: d.body));
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied draft.')));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Copied draft.')),
+                            );
                           },
                           icon: const Icon(Icons.copy, size: 16),
                           label: const Text('Copy'),

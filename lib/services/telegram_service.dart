@@ -26,16 +26,19 @@ class TelegramService {
 
       if (res.statusCode == 200) return (true, null);
       final body = jsonDecode(res.body) as Map<String, dynamic>;
-      return (false, body['description'] as String? ?? 'HTTP ${res.statusCode}');
+      return (
+        false,
+        body['description'] as String? ?? 'HTTP ${res.statusCode}',
+      );
     } catch (e) {
       return (false, e.toString());
     }
   }
 
   Future<(bool, String?)> testConnection() => sendMessage(
-        '<b>Project Atlas</b> — connection test ✓\n'
-        'Your bot is configured correctly.',
-      );
+    '<b>Project Atlas</b> — connection test ✓\n'
+    'Your bot is configured correctly.',
+  );
 
   /// Escapes characters that are special in Telegram HTML mode.
   /// Must be applied to any user-supplied text inserted into the message.
@@ -47,41 +50,40 @@ class TelegramService {
   static String formatTodayList({
     required String date,
     required List<
-            ({
-              String title,
-              String project,
-              String stage,
-              String? dueDate,
-              String priority
-            })>
-        doingItems,
+      ({
+        String title,
+        String project,
+        String stage,
+        String? dueDate,
+        String priority,
+      })
+    >
+    doingItems,
     required List<
-            ({
-              String title,
-              String project,
-              String stage,
-              String? dueDate,
-              String priority
-            })>
-        overdueItems,
+      ({
+        String title,
+        String project,
+        String stage,
+        String? dueDate,
+        String priority,
+      })
+    >
+    overdueItems,
     required List<
-            ({
-              String title,
-              String project,
-              String stage,
-              String? dueDate,
-              String priority
-            })>
-        dueTodayItems,
+      ({
+        String title,
+        String project,
+        String stage,
+        String? dueDate,
+        String priority,
+      })
+    >
+    dueTodayItems,
     required List<({String title, String blockedReason})> blockedItems,
     required List<
-            ({
-              String title,
-              String project,
-              String stage,
-              String priority
-            })>
-        phoneQueueItems,
+      ({String title, String project, String stage, String priority})
+    >
+    phoneQueueItems,
   }) {
     final buf = StringBuffer();
     buf.writeln('<b>📋 Project Atlas — ${_esc(date)}</b>');
@@ -97,7 +99,9 @@ class TelegramService {
     section(
       '🔄 Doing',
       doingItems.map((t) {
-        final due = t.dueDate?.isNotEmpty == true ? ' · due ${_esc(t.dueDate!)}' : '';
+        final due = t.dueDate?.isNotEmpty == true
+            ? ' · due ${_esc(t.dueDate!)}'
+            : '';
         return '[ ] ${_esc(t.title)} — ${_esc(t.project)}$due';
       }).toList(),
     );
@@ -105,19 +109,25 @@ class TelegramService {
     section(
       '🔴 Overdue',
       overdueItems.map((t) {
-        final due = t.dueDate?.isNotEmpty == true ? ' (was ${_esc(t.dueDate!)})' : '';
+        final due = t.dueDate?.isNotEmpty == true
+            ? ' (was ${_esc(t.dueDate!)})'
+            : '';
         return '[ ] ${_esc(t.title)}$due — ${_esc(t.project)}';
       }).toList(),
     );
 
     section(
       '📅 Due Today',
-      dueTodayItems.map((t) => '[ ] ${_esc(t.title)} — ${_esc(t.project)}').toList(),
+      dueTodayItems
+          .map((t) => '[ ] ${_esc(t.title)} — ${_esc(t.project)}')
+          .toList(),
     );
 
     section(
       '📞 Phone / Follow-up',
-      phoneQueueItems.map((t) => '[ ] ${_esc(t.title)} — ${_esc(t.project)}').toList(),
+      phoneQueueItems
+          .map((t) => '[ ] ${_esc(t.title)} — ${_esc(t.project)}')
+          .toList(),
     );
 
     section(

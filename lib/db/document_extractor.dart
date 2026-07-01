@@ -40,14 +40,98 @@ String stripEmlBody(String raw) {
 /// Extensions that DocumentPreview will decode as text; all others show an
 /// external-viewer prompt or skip the file-read entirely.
 const textDocumentExtensions = {
-  'txt', 'md', 'json', 'csv', 'log', 'xml', 'yaml', 'yml',
-  'ini', 'toml', 'rst', 'html', 'htm', 'eml',
+  'txt',
+  'md',
+  'mdx',
+  'json',
+  'jsonc',
+  'csv',
+  'log',
+  'xml',
+  'yaml',
+  'yml',
+  'ini',
+  'toml',
+  'rst',
+  'html',
+  'htm',
+  'eml',
+};
+
+/// Source-code and project text formats that can be copied into the document
+/// library and previewed as monospace text.
+const codeDocumentExtensions = {
+  'astro',
+  'bat',
+  'bash',
+  'c',
+  'cc',
+  'cfg',
+  'cjs',
+  'clj',
+  'cljs',
+  'cmake',
+  'cmd',
+  'conf',
+  'cpp',
+  'cs',
+  'css',
+  'cxx',
+  'dart',
+  'dockerfile',
+  'erl',
+  'ex',
+  'exs',
+  'fs',
+  'fsx',
+  'go',
+  'gradle',
+  'h',
+  'hpp',
+  'hrl',
+  'hs',
+  'java',
+  'js',
+  'jsx',
+  'kt',
+  'kts',
+  'less',
+  'lua',
+  'mjs',
+  'php',
+  'properties',
+  'ps1',
+  'psm1',
+  'py',
+  'r',
+  'rb',
+  'rs',
+  'sass',
+  'scala',
+  'scss',
+  'sh',
+  'sql',
+  'svelte',
+  'swift',
+  'ts',
+  'tsx',
+  'vue',
+  'zsh',
 };
 
 /// Returns true when [extension] (lowercase, no dot) is a text format that
 /// can safely be decoded and displayed as a string.
 bool shouldLoadDocumentText(String extension) =>
-    textDocumentExtensions.contains(extension.toLowerCase());
+    textDocumentExtensions.contains(extension.toLowerCase()) ||
+    codeDocumentExtensions.contains(extension.toLowerCase());
+
+bool shouldExtractAsPlainText(String extension) =>
+    shouldLoadDocumentText(extension) &&
+    extension.toLowerCase() != 'md' &&
+    extension.toLowerCase() != 'mdx' &&
+    extension.toLowerCase() != 'html' &&
+    extension.toLowerCase() != 'htm' &&
+    extension.toLowerCase() != 'eml';
 
 /// Strips HTML tags from a file at [path], returning plain text.
 /// Returns null if the file cannot be read.
@@ -60,7 +144,10 @@ String? extractHtmlText(String path) {
     } catch (_) {
       raw = latin1.decode(bytes);
     }
-    return raw.replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r' {2,}'), ' ').trim();
+    return raw
+        .replaceAll(RegExp(r'<[^>]+>'), ' ')
+        .replaceAll(RegExp(r' {2,}'), ' ')
+        .trim();
   } catch (_) {
     return null;
   }
@@ -73,9 +160,7 @@ String? extractDocxTextFromBytes(List<int> bytes) {
     final archive = ZipDecoder().decodeBytes(bytes);
     final entry = archive.findFile('word/document.xml');
     if (entry == null) return null;
-    final xml = XmlDocument.parse(
-      utf8.decode(entry.content as List<int>),
-    );
+    final xml = XmlDocument.parse(utf8.decode(entry.content as List<int>));
     final buffer = StringBuffer();
     for (final node in xml.descendants.whereType<XmlElement>()) {
       if (node.localName == 't') {

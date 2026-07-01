@@ -39,7 +39,9 @@ class DocumentPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final parsed = document.renderedMarkdown ?? document.extractedText;
     return FutureBuilder<String?>(
-      future: (parsed == null || parsed.isEmpty) && _shouldLoadText ? _loadText() : null,
+      future: (parsed == null || parsed.isEmpty) && _shouldLoadText
+          ? _loadText()
+          : null,
       builder: (context, snapshot) {
         final body = parsed ?? snapshot.data ?? '';
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -52,7 +54,7 @@ class DocumentPreview extends StatelessWidget {
 
   Widget _renderBody(BuildContext context, String body) {
     final ext = _extension;
-    if (ext == 'md' || document.mimeType == 'text/markdown') {
+    if (ext == 'md' || ext == 'mdx' || document.mimeType == 'text/markdown') {
       return Markdown(
         data: body.isEmpty ? '_No markdown content available._' : body,
         selectable: true,
@@ -71,7 +73,9 @@ class DocumentPreview extends StatelessWidget {
     if (ext == 'html' || ext == 'htm') {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: Html(data: body.isEmpty ? '<p>No HTML content available.</p>' : body),
+        child: Html(
+          data: body.isEmpty ? '<p>No HTML content available.</p>' : body,
+        ),
       );
     }
 
@@ -108,7 +112,6 @@ class DocumentPreview extends StatelessWidget {
       empty: 'No preview is available for this document type yet.',
     );
   }
-
 
   String? _prettyJson(String raw) {
     if (raw.trim().isEmpty) return null;
