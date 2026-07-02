@@ -915,74 +915,34 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
 
   Future<void> _runEnrichment(BuildContext context) async {
     if (_running) return;
-    final options = await showDialog<_EnrichmentRunOptions>(
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) {
-        var refreshSummaries = false;
-        var forceSummaries = false;
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
-            title: const Text('Run project enrichment'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Atlas will refresh linked project records, import eligible documents/media/source files/cards, and record findings. Source repositories are not modified.',
-                ),
-                const SizedBox(height: 12),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: refreshSummaries,
-                  title: const Text('Refresh AI summaries'),
-                  subtitle: const Text('Slow; uses Ollama project by project.'),
-                  onChanged: (value) => setDialogState(() {
-                    refreshSummaries = value ?? false;
-                    if (!refreshSummaries) forceSummaries = false;
-                  }),
-                ),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: forceSummaries,
-                  enabled: refreshSummaries,
-                  title: const Text('Regenerate current summaries'),
-                  subtitle: const Text('Slower; skips today by default.'),
-                  onChanged: refreshSummaries
-                      ? (value) => setDialogState(
-                          () => forceSummaries = value ?? false,
-                        )
-                      : null,
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cancel'),
-              ),
-              FilledButton.icon(
-                onPressed: () => Navigator.of(ctx).pop(
-                  _EnrichmentRunOptions(
-                    refreshSummaries: refreshSummaries,
-                    forceSummaries: forceSummaries,
-                  ),
-                ),
-                icon: const Icon(Icons.auto_fix_high, size: 16),
-                label: const Text('Run'),
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('Run project enrichment'),
+        content: const Text(
+          'Atlas will refresh linked project records, import eligible documents/media/source files/cards, and record findings. Source repositories are not modified.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
           ),
-        );
-      },
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.auto_fix_high, size: 16),
+            label: const Text('Run'),
+          ),
+        ],
+      ),
     );
-    if (options == null || !context.mounted) return;
+    if (confirmed != true || !context.mounted) return;
     setState(() => _running = true);
     try {
       final result = await AppStateScope.of(context).runProjectEnrichment(
         refreshLinkedProjects: true,
         includeSourceDocuments: true,
-        refreshSummaries: options.refreshSummaries,
-        forceSummaries: options.forceSummaries,
+        refreshSummaries: false,
+        forceSummaries: false,
         betweenProjects: Duration.zero,
       );
       if (!context.mounted) return;
@@ -1055,16 +1015,6 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
       },
     );
   }
-}
-
-class _EnrichmentRunOptions {
-  final bool refreshSummaries;
-  final bool forceSummaries;
-
-  const _EnrichmentRunOptions({
-    required this.refreshSummaries,
-    required this.forceSummaries,
-  });
 }
 
 class _EnrichmentControlPanel extends StatelessWidget {
@@ -1177,8 +1127,6 @@ class _EnrichmentRunTile extends StatelessWidget {
               _Pill(label: '${run.createdItems} created'),
               _Pill(label: '${run.updatedItems} updated'),
               _Pill(label: '${run.openFindings} open findings'),
-              if (run.summaryRefreshed > 0)
-                _Pill(label: '${run.summaryRefreshed} summaries'),
               if (run.failedProjects > 0)
                 _Pill(label: '${run.failedProjects} failed'),
             ],
@@ -1422,7 +1370,11 @@ class _EnrichmentFindingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final groups = _groupOpenEnrichmentFindings(findings);
+    final visibleFindings = findings
+        .where((finding) => finding.category != 'ai_summary')
+        .toList(growable: false);
+    if (visibleFindings.isEmpty) return const SizedBox.shrink();
+    final groups = _groupOpenEnrichmentFindings(visibleFindings);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1449,13 +1401,13 @@ class _EnrichmentFindingsSection extends StatelessWidget {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 6),
-        for (final finding in findings.take(80))
+        for (final finding in visibleFindings.take(80))
           _EnrichmentFindingRow(finding: finding),
-        if (findings.length > 80)
+        if (visibleFindings.length > 80)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              '${findings.length - 80} more individual findings recorded.',
+              '${visibleFindings.length - 80} more individual findings recorded.',
               style: const TextStyle(color: _text54, fontSize: 12),
             ),
           ),
@@ -1606,7 +1558,9 @@ List<_EnrichmentFindingGroup> _groupOpenEnrichmentFindings(
   List<ProjectEnrichmentFinding> findings,
 ) {
   final grouped = <String, List<ProjectEnrichmentFinding>>{};
-  for (final finding in findings.where((row) => row.status == 'open')) {
+  for (final finding in findings.where(
+    (row) => row.status == 'open' && row.category != 'ai_summary',
+  )) {
     final key = jsonEncode([
       finding.severity,
       finding.category,
@@ -1703,14 +1657,11 @@ String _findingGroupActionHint(_EnrichmentFindingGroup group) {
   }
   if (category == 'library') {
     if (title.contains('no imported documents')) {
-      return 'Run linked project refresh or import project documents before summary refresh.';
+      return 'Run linked project refresh or import project documents.';
     }
     if (title.contains('no individual cards imported')) {
       return 'Run linked project refresh and review card parser or source coverage.';
     }
-  }
-  if (category == 'ai_summary' && title.contains('no cached ai summary')) {
-    return 'Run AI summary refresh after documents and media are imported.';
   }
   return group.detail ??
       'Review the grouped findings and address the repeated source.';

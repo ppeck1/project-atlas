@@ -170,11 +170,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       decisions = await state.getProjectDecisions(widget.projectId);
     } catch (_) {}
 
-    // Load cached summary draft so the AI panel shows instantly.
+    // Project AI summaries are dormant behind projectAiSummariesEnabled.
     Draft? cachedDraft;
-    try {
-      cachedDraft = await state.getLatestProjectSummaryDraft(widget.projectId);
-    } catch (_) {}
+    if (state.projectAiSummariesEnabled) {
+      try {
+        cachedDraft = await state.getLatestProjectSummaryDraft(
+          widget.projectId,
+        );
+      } catch (_) {}
+    }
 
     if (!mounted) return;
     setState(() {
@@ -974,20 +978,21 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
               ),
               const SizedBox(height: 8),
 
-              // AI assistant panel
-              _AiPanel(
-                projectId: widget.projectId,
-                expanded: _aiExpanded,
-                includeLibrary: _includeLibrary,
-                summaryLoading: _summaryLoading,
-                summaryText: _summaryText,
-                summaryOutcome: _summaryOutcome,
-                generatedAt: _summaryGeneratedAt,
-                onToggle: () => setState(() => _aiExpanded = !_aiExpanded),
-                onToggleLibrary: (v) => setState(() => _includeLibrary = v),
-                onGenerate: _generateSummary,
-              ),
-              const SizedBox(height: 8),
+              if (state.projectAiSummariesEnabled) ...[
+                _AiPanel(
+                  projectId: widget.projectId,
+                  expanded: _aiExpanded,
+                  includeLibrary: _includeLibrary,
+                  summaryLoading: _summaryLoading,
+                  summaryText: _summaryText,
+                  summaryOutcome: _summaryOutcome,
+                  generatedAt: _summaryGeneratedAt,
+                  onToggle: () => setState(() => _aiExpanded = !_aiExpanded),
+                  onToggleLibrary: (v) => setState(() => _includeLibrary = v),
+                  onGenerate: _generateSummary,
+                ),
+                const SizedBox(height: 8),
+              ],
 
               // Status quick bar + metric cards
               _QuickBar(

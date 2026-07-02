@@ -562,13 +562,13 @@ Atlas-owned refresh/audit run history for local project completeness.
 | `unchanged_items` | INTEGER | 0 | Ledger-matched unchanged refresh entries. |
 | `skipped_items` | INTEGER | 0 | Refresh entries skipped by selection/status. |
 | `failed_projects` | INTEGER | 0 | Linked project refresh failures. |
-| `summary_considered` | INTEGER | 0 | Projects considered by AI summary refresh. |
-| `summary_refreshed` | INTEGER | 0 | AI summaries generated. |
-| `summary_skipped` | INTEGER | 0 | AI summaries skipped. |
-| `summary_failed` | INTEGER | 0 | AI summary failures. |
+| `summary_considered` | INTEGER | 0 | Legacy counter retained while project AI summaries are disabled. |
+| `summary_refreshed` | INTEGER | 0 | Legacy counter retained while project AI summaries are disabled. |
+| `summary_skipped` | INTEGER | 0 | Legacy counter retained while project AI summaries are disabled. |
+| `summary_failed` | INTEGER | 0 | Legacy counter retained while project AI summaries are disabled. |
 | `findings` | INTEGER | 0 | Findings saved for this run. |
 | `open_findings` | INTEGER | 0 | Findings with `status='open'`. |
-| `warnings_json` | TEXT | `[]` | Run-level warnings, including AI unavailable messages. |
+| `warnings_json` | TEXT | `[]` | Run-level warnings. |
 | `output_json` | TEXT | `{}` | Coverage object and phase summaries. |
 
 **Written by:** `AppState.runProjectEnrichment()` through `AppDb.startProjectEnrichmentRun()` and `finishProjectEnrichmentRun()`
@@ -588,14 +588,14 @@ Open exception/completeness ledger emitted by enrichment runs.
 | `project_id` | TEXT? | null | Atlas project anchor when known. |
 | `registry_id` | TEXT? | null | Local registry anchor when known. |
 | `severity` | TEXT | | `info`, `warning`, or `error`. |
-| `category` | TEXT | | `registry`, `identity`, `library`, `media`, `people`, `workboard`, `governance`, `ai_summary`, or `repository`. |
+| `category` | TEXT | | `registry`, `identity`, `library`, `media`, `people`, `workboard`, `governance`, or `repository`. |
 | `title` | TEXT | | Human-readable finding. |
 | `detail` | TEXT? | null | Optional next-action detail. |
 | `evidence_json` | TEXT | `{}` | Project title, registry display name/path, remote URL, dirty count, or other evidence. |
 | `status` | TEXT | `open` | Reserved for future resolve/suppress workflow. |
 | `created_at` | INTEGER | | Milliseconds since epoch. |
 
-**Written by:** `AppState.runProjectEnrichment()` after the refresh/summary/audit pass.
+**Written by:** `AppState.runProjectEnrichment()` after the refresh/audit pass.
 **Read by:** `OperationsScreen` Enrichment tab; `getOpenProjectEnrichmentFindings()`; MCP `get_project_enrichment_run`
 **Quirks:** Findings are intentionally non-destructive. They document what Atlas could not fill, what needs linking/review, and which future workaround or source parser may be needed.
 
@@ -642,9 +642,7 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `activeProject` | `Project? getter` | Synchronous read from cache. May be stale for one frame after a project switch. |
 | `hasActiveProject` | `ValueNotifier<bool>` | Router uses this for nav gating. Updated on every active-project stream event. |
 
-**Background refresh:** The constructor schedules `Future.delayed(10s, _backgroundSummaryRefresh)` and a 6-hour periodic timer. On startup and each timer tick this quietly pre-generates structured summaries for summary-eligible operational projects that are missing today's summary (skips if Ollama is unavailable).
-
-**`_backgroundSummaryRefresh()`** — private async method; delegates to `refreshMissingProjectSummaries()` with default once-per-day behavior.
+**Background refresh:** Project AI summary refresh is disabled pending a separate work order. The constructor still schedules the linked-local project refresh timer when background refreshes are enabled.
 
 **AppState document methods:**
 
@@ -654,8 +652,8 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `deleteDocument(id)` | `Future<void>` | Calls `db.deleteDocument(id)` (removes document_links, documents row, and disk file), then `notifyListeners()`. |
 | `getLatestProjectSummaryDraft(projectId)` | `Future<Draft?>` | Delegate to `db.getLatestProjectSummaryDraft(projectId)`. |
 | `getDocumentPathsForProject(projectId)` | `Future<Map<String, String?>>` | Delegate to `db.getDocumentPathsForProject(projectId)`. |
-| `summarizeProjectFull(projectId)` | `Future<ProjectSummaryOutcome>` | Return type changed from `OllamaResult`. Now also fetches people, risks, decisions, and document excerpts (3000 chars/doc, 16000 total cap); auto-saves to Drafts on success. |
-| `refreshMissingProjectSummaries({force, includeLibrary, betweenProjects})` | `Future<ProjectSummaryRefreshResult>` | Checks Ollama availability, iterates summary-eligible operational project statuses, skips today's existing summary unless `force`, calls `summarizeProjectFull()`, logs completion, and prevents overlapping refresh runs. Used by the startup/periodic background job and the Projects toolbar force-refresh action. |
+| `summarizeProjectFull(projectId)` | `Future<ProjectSummaryOutcome>` | Dormant project AI summary generator. Currently throws while `projectAiSummariesEnabled == false`; retained for the separate summary redesign work order. |
+| `refreshMissingProjectSummaries({force, includeLibrary, betweenProjects})` | `Future<ProjectSummaryRefreshResult>` | Disabled while project AI summaries are out of scope. Returns a zero-count result with an explanatory error and does not call Ollama. |
 | `mergeProjects({sourceProjectId, targetProjectId})` | `Future<Map<String, int>>` | Delegates to `AppDb.mergeProjects()`, moves source-linked rows to the target, notifies listeners, and returns moved row counts. |
 | `exportOperationalBackupToJson(path)` | `Future<int>` | Exports a ZIP archive to `path` containing `backup.json` (all DB tables serialized) plus `documents/<id>.<ext>` and `media/<id>.<ext>` entries for all stored files. |
 | `previewProjectBundleExport(projectId, {includeFiles})` | `Future<ProjectBundleExportPreview>` | Builds the review summary for project bundle export: Atlas record counts, optional copied file counts, registry/observation/refresh-ledger counts, and missing-file warnings. Read-only. |
@@ -705,7 +703,7 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `applyLocalProjectRefresh(projectId, {selectedActionIds})` | `Future<LocalProjectRefreshApplyResult>` | Applies selected preview entries and writes `local_project_refresh_items` ledger rows so repeated refreshes skip unchanged source anchors. Handles documents, media, decisions, risks, work items, and project metadata. |
 | `applyLocalProjectRefreshForRegistryEntry(registryId, projectId, {selectedActionIds})` | `Future<LocalProjectRefreshApplyResult>` | Applies a local refresh for a specific registry row/project pair. Used by Operations registered-project refresh so duplicate linked paths refresh the intended registry source. |
 | `inspectLocalGitVisibility(projectId)` | `Future<LocalGitVisibilityReport>` | Read-only local git inspection for a linked project. Reports local tracked vs local remote-tracking ref paths, changed tracked paths, untracked paths, ignored paths, `.gitignore` patterns, and suggested ignore entries. Does not fetch, push, mutate repos, or call GitHub. |
-| `runProjectEnrichment({refreshLinkedProjects, includeSourceDocuments, refreshSummaries})` | `Future<ProjectEnrichmentRunResult>` | Runs the Atlas-only enrichment workflow: refreshes linked project artifacts, optionally refreshes AI summaries, audits completeness, writes `project_enrichment_runs` and `project_enrichment_findings`, and logs the run. Does not mutate source repositories. |
+| `runProjectEnrichment({refreshLinkedProjects, includeSourceDocuments})` | `Future<ProjectEnrichmentRunResult>` | Runs the Atlas-only enrichment workflow: refreshes linked project artifacts, audits completeness, writes `project_enrichment_runs` and `project_enrichment_findings`, and logs the run. Does not mutate source repositories. |
 | `getProjectEnrichmentRuns({limit})` | `Future<List<ProjectEnrichmentRun>>` | Recent enrichment run summaries. |
 | `getProjectEnrichmentFindingsForRun(runId)` | `Future<List<ProjectEnrichmentFinding>>` | Findings for one enrichment run. |
 | `getOpenProjectEnrichmentFindings({projectId, limit})` | `Future<List<ProjectEnrichmentFinding>>` | Open findings globally or for one project. |
@@ -756,12 +754,12 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 
 | Variable | Type | Notes |
 |----------|------|-------|
-| `_summaryOutcome` | `ProjectSummaryOutcome?` | Holds the current structured summary for the active project. |
-| `_summaryGeneratedAt` | `DateTime?` | When the summary was generated; used to render the age badge in the AI panel. |
+| `_summaryOutcome` | `ProjectSummaryOutcome?` | Dormant project AI summary state retained for the separate redesign work order. |
+| `_summaryGeneratedAt` | `DateTime?` | Dormant project AI summary timestamp retained for the separate redesign work order. |
 | `_taskHeaderExpanded` | `bool` | Controls the top collapsible Project Detail task header. Defaults expanded. |
 | `_llmQueueItems` | `List<LlmTaskQueueItem>` | Most recent queue items for the current project, rendered in the LLM queue subsection and manager dialog. Queue rows open an operator edit/move/cancel/requeue dialog with media attachment controls. |
 
-**`_loadAll()` behavior:** On startup, loads the cached summary from Drafts (via `getLatestProjectSummaryDraft`), current project LLM queue items (via `getLlmTasksForProject`), populates `_summaryOutcome`, `_summaryGeneratedAt`, and `_llmQueueItems`, and auto-expands the AI summary panel if a cached summary is found.
+**`_loadAll()` behavior:** On startup, loads current project LLM queue items (via `getLlmTasksForProject`) and populates `_llmQueueItems`. Cached project AI summary loading is gated off while `projectAiSummariesEnabled == false`.
 
 ---
 
@@ -794,12 +792,10 @@ Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `A
 |--------|---------|-------|
 | `listProjects({includeArchived})` | `Future<List<AtlasProjectStatus>>` | Alphabetical, non-deleted project list. Excludes the hidden General Tasks project. Includes category, active/blocked task counts, docs/media counts, risk/decision counts, registry presence, and attention flag. |
 | `getProjectStatus(projectId)` | `Future<AtlasProjectStatus?>` | Single-project status DTO. Null if missing, deleted, or hidden. |
-| `getProjectBrief(projectId)` | `Future<AtlasProjectBrief?>` | Aggregates lifecycle/category fields, tags, people, risks, decisions, open work items, cached summary, local registry, and latest local observation. |
-| `getProjectSummary(projectId)` | `Future<String?>` | Latest cached `project_summary` draft body. Does not generate a new summary. |
+| `getProjectBrief(projectId)` | `Future<AtlasProjectBrief?>` | Aggregates lifecycle/category fields, tags, people, risks, decisions, open work items, local registry, and latest local observation. |
 | `getStaleProjects()` | `Future<List<AtlasProjectStatus>>` | Returns projects whose status or blocked work indicates attention. |
-| `refreshProjectSummaries({force})` | `Future<ProjectSummaryRefreshResult>` | Delegates to `AppState.refreshMissingProjectSummaries()`. |
 | `refreshLinkedLocalProjects({includeSourceDocuments})` | `Future<LocalProjectBatchRefreshResult>` | Delegates to the existing linked-local refresh workflow. |
-| `runProjectEnrichment({refreshLinkedProjects, includeSourceDocuments, refreshSummaries})` | `Future<ProjectEnrichmentRunResult>` | Delegates to the Atlas-only enrichment workflow. Refreshes Atlas records and records findings; source repositories are not mutated. |
+| `runProjectEnrichment({refreshLinkedProjects, includeSourceDocuments})` | `Future<ProjectEnrichmentRunResult>` | Delegates to the Atlas-only enrichment workflow. Refreshes Atlas records and records findings; source repositories are not mutated. |
 | `listProjectEnrichmentRuns({limit})` | `Future<List<ProjectEnrichmentRun>>` | Recent enrichment run summaries for MCP/harness reads. |
 | `getProjectEnrichmentRun(runId)` | `Future<Map<String,Object?>?>` | One enrichment run plus findings as JSON-safe data. |
 | `enqueueLlmTask(...)` | `Future<LlmTaskQueueItem>` | Validates project/work item anchors, priority, and context, then stores a pending queue item. |
@@ -829,7 +825,7 @@ Transport-neutral MCP tool registry and JSON-safe dispatcher for `AtlasAgentServ
 | `listTools()` | `List<AtlasMcpTool>` | Exposes read and proposal-creation tools only. Destructive tools and approval/rejection tools are intentionally absent. |
 | `callTool(name, arguments)` | `Future<AtlasMcpCallResult>` | Dispatches MCP-style tool calls to `AtlasAgentService` and returns JSON-safe text content. Unknown tools return an error result. |
 
-**Tools exposed:** `list_projects`, `get_project_status`, `get_project_brief`, `get_project_summary`, `get_stale_projects`, `list_agent_proposals`, `preview_local_refresh`, `inspect_git_visibility`, `get_github_remote_status`, `refresh_github_remote_status`, `refresh_project_summaries`, `list_project_enrichment_runs`, `get_project_enrichment_run`, `run_project_enrichment`, `enqueue_llm_task`, `list_llm_tasks`, `get_llm_task`, `claim_llm_task`, `complete_llm_task`, `fail_llm_task`, `propose_status_change`, `propose_task_update`, `propose_manifest_update`, `record_validation_run`, and `record_handoff`.
+**Tools exposed:** `list_projects`, `get_project_status`, `get_project_brief`, `get_stale_projects`, `list_agent_proposals`, `preview_local_refresh`, `inspect_git_visibility`, `get_github_remote_status`, `refresh_github_remote_status`, `list_project_enrichment_runs`, `get_project_enrichment_run`, `run_project_enrichment`, `enqueue_llm_task`, `list_llm_tasks`, `get_llm_task`, `claim_llm_task`, `complete_llm_task`, `fail_llm_task`, `propose_status_change`, `propose_task_update`, `propose_manifest_update`, `record_validation_run`, and `record_handoff`.
 
 ### OllamaService (`lib/services/ollama_service.dart`)
 

@@ -37,6 +37,8 @@ void main() {
       expect(names, contains('complete_llm_task'));
       expect(names, contains('propose_status_change'));
       expect(names, contains('record_validation_run'));
+      expect(names, isNot(contains('get_project_summary')));
+      expect(names, isNot(contains('refresh_project_summaries')));
       expect(names, isNot(contains('delete_project')));
       expect(names, isNot(contains('push_to_github')));
     });

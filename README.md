@@ -11,8 +11,8 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Storage: local SQLite via Drift, schema version `18`
 - Primary navigation: Today, Projects, Operations, Library, Settings
 - Legacy deep links still available: Dashboard, Work, Review, Export, Governance, Backend Log
-- Optional local AI: Ollama structured project summaries, prose summaries, drafts, and work-item analysis — always human-in-the-loop
-- AI summary caching: structured summaries are stored as drafts and loaded instantly on Project Detail open; a background job refreshes missing summaries for operational project statuses 10 seconds after startup and every 6 hours after that (once per day per project unless manually forced)
+- Optional local AI: Ollama drafts, Today/Review summaries, and work-item analysis remain human-in-the-loop
+- Project AI summaries: disabled in the active workflow pending a separate template/work-order redesign
 - Optional phone handoff: outbound Telegram task-list sending with outbox logging
 - Contacts / workforce directory with JSON and CSV import/export
 - Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
@@ -76,8 +76,8 @@ After changing Drift tables or database code, rerun build runner before launchin
 | Screen | Current role |
 | --- | --- |
 | Today | Focus list for doing, overdue, due today, phone queue, blocked, and high-priority work |
-| Projects | Category-grouped project list with pinned category/project ordering, active project switching, lifecycle metadata, tag/status/phase/priority filters, project merge, all-project AI summary refresh, project bundle export, detail entry point |
-| Project Detail | Collapsible task header with project tasks and editable/movable LLM queue items with media attachments, identity, scope, lifecycle fields, local repo refresh preview/apply for docs/media/native rows, read-only git visibility inspection, project bundle preview/export, people roster, risk register, decision log, structured AI summary panel (7 sections, instant cached load, age badge), media gallery, tag assignment |
+| Projects | Category-grouped project list with pinned category/project ordering, active project switching, lifecycle metadata, tag/status/phase/priority filters, project merge, project bundle export, detail entry point |
+| Project Detail | Collapsible task header with project tasks and editable/movable LLM queue items with media attachments, identity, scope, lifecycle fields, local repo refresh preview/apply for docs/media/native rows, read-only git visibility inspection, project bundle preview/export, people roster, risk register, decision log, media gallery, tag assignment |
 | Operations | Manual local project scans, reviewable observations, local registry records, create/update existing Project bridge, enrichment run dashboard/findings, warnings, scan JSON copy/export, warnings JSON save, and app scan-folder access |
 | Library | Documents, project media, and AI drafts with search, project/type filters, native file picker import, copy, preview, and file-open actions |
 | Settings | Integrations, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
@@ -170,7 +170,7 @@ When Ollama is reachable, the model field becomes a **dropdown** populated with 
 
 AI actions available:
 - **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
-- **Structured project summary** — produces a 7-section JSON-parsed summary for a project using `format:"json"` Ollama output mode (Project Detail); sections are Goal, Current State, Ownership/Active Work, Relevant Library Docs, Blockers/Risks, Next Practical Actions, and Confidence/Gaps. The summary is cached as a draft (`kind='project_summary'`) and loads instantly on next open. A background refresh fills missing daily summaries for active, stale, needs-update, needs-review, local-only, public-mismatch, and blocked projects after startup and every 6 hours, and the Projects toolbar can force a refresh for those project statuses. An age badge in the panel header shows when the cached summary was generated. Relevant Library Docs entries include "Open in Library" (navigates to the document) and "Show in Explorer" (opens Windows Explorer with the file selected) actions.
+- **Project AI summaries** — disabled in the active workflow until the summary template and review model are redesigned as a separate work order
 - **Project summary (prose)** — legacy prose summary; still available via `summarizeProject()` in OllamaService
 - **Email draft** — drafts an email for a specific work item (Work Item Detail)
 - **Task extract** — extracts tasks from free-form note text (Work Item Detail)
@@ -180,7 +180,7 @@ AI actions available:
 
 `lib/services/atlas_agent_service.dart` is the desktop-side contract intended for the future Atlas MCP and for a local LLM harness.
 
-- Read operations assemble stable project DTOs: alphabetical project list, status, brief, cached summary, stale/attention list, local refresh preview, git visibility inspection, enrichment run history/findings, and summary/local-refresh triggers.
+- Read operations assemble stable project DTOs: alphabetical project list, status, brief, stale/attention list, local refresh preview, git visibility inspection, enrichment run history/findings, and local-refresh triggers.
 - Write-shaped operations are proposal-first. Status changes, task updates, manifest updates, validation runs, and handoffs are validated and saved as Library drafts with `kind='atlas_agent_proposal'`.
 - Library has an **Agent Proposals** filter with pending/approved/rejected status chips. Pending proposals can be approved or rejected from the detail pane; approved status/task/manifest proposals apply through `AppState`, validation proposals log the run, and handoff proposals create a `project_handoff` draft.
 - The MCP tool registry lives in `lib/mcp/atlas_mcp_server.dart`. It exposes reads, Atlas-only enrichment triggers, LLM queue lifecycle tools, and proposal-creation tools; approval/rejection stays in the desktop review queue. Project Detail lets the operator edit, move, cancel, requeue, and attach media to LLM tasks. MCP `get_llm_task` returns attached media metadata for harness context. Queue completion can attach a proposed handoff as a reviewable draft instead of directly mutating project state.

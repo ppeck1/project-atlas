@@ -84,13 +84,6 @@ void main() {
         priority: 'urgent',
         blockedReason: 'Waiting on scan',
       );
-      await state.saveDraft(
-        kind: 'project_summary',
-        title: 'Atlas summary',
-        body: 'Current operational summary',
-        projectId: 'atlas',
-      );
-
       final brief = await service.getProjectBrief('atlas');
 
       expect(brief, isNotNull);
@@ -101,7 +94,6 @@ void main() {
       expect(brief.risks.single['title'], 'Index drift');
       expect(brief.decisions.single['title'], 'Use proposals');
       expect(brief.openWorkItems.single['title'], 'Review local docs');
-      expect(brief.cachedSummary, 'Current operational summary');
       expect(brief.toJson()['status'], isA<Map<String, Object?>>());
     });
 

@@ -81,8 +81,6 @@ class AtlasProjectBrief {
   final String? scopeExcluded;
   final String? outcomeSummary;
   final String? lessonsLearned;
-  final String? cachedSummary;
-  final DateTime? cachedSummaryCreatedAt;
   final List<Map<String, Object?>> tags;
   final List<Map<String, Object?>> people;
   final List<Map<String, Object?>> risks;
@@ -102,8 +100,6 @@ class AtlasProjectBrief {
     required this.scopeExcluded,
     required this.outcomeSummary,
     required this.lessonsLearned,
-    required this.cachedSummary,
-    required this.cachedSummaryCreatedAt,
     required this.tags,
     required this.people,
     required this.risks,
@@ -124,8 +120,6 @@ class AtlasProjectBrief {
     'scopeExcluded': scopeExcluded,
     'outcomeSummary': outcomeSummary,
     'lessonsLearned': lessonsLearned,
-    'cachedSummary': cachedSummary,
-    'cachedSummaryCreatedAt': cachedSummaryCreatedAt?.toIso8601String(),
     'tags': tags,
     'people': people,
     'risks': risks,
@@ -420,7 +414,6 @@ class AtlasAgentService {
     final registry = await state.getProjectRegistryForAtlasProject(projectId);
     final observation = await state.getLatestLocalProjectObservation(projectId);
     final githubRemote = await state.getLatestProjectGitRemoteStatus(projectId);
-    final summary = await state.getLatestProjectSummaryDraft(projectId);
     final openItems =
         items
             .where((item) => !{'done', 'archived'}.contains(item.status))
@@ -443,8 +436,6 @@ class AtlasAgentService {
       scopeExcluded: _clean(project.scopeExcluded),
       outcomeSummary: _clean(project.outcomeSummary),
       lessonsLearned: _clean(project.lessonsLearned),
-      cachedSummary: summary?.body,
-      cachedSummaryCreatedAt: summary?.createdAt,
       tags: tags.map(_tagToJson).toList(),
       people: people.map(_personToJson).toList(),
       risks: risks.map(_riskToJson).toList(),
@@ -458,20 +449,10 @@ class AtlasAgentService {
     );
   }
 
-  Future<String?> getProjectSummary(String projectId) async {
-    final project = await _visibleProject(projectId);
-    if (project == null) return null;
-    return (await state.getLatestProjectSummaryDraft(projectId))?.body;
-  }
-
   Future<List<AtlasProjectStatus>> getStaleProjects() async =>
       (await listProjects())
           .where((project) => project.needsAttention)
           .toList();
-
-  Future<ProjectSummaryRefreshResult> refreshProjectSummaries({
-    bool force = false,
-  }) => state.refreshMissingProjectSummaries(force: force);
 
   Future<LocalProjectBatchRefreshResult> refreshLinkedLocalProjects({
     bool includeSourceDocuments = true,
@@ -482,7 +463,7 @@ class AtlasAgentService {
   Future<ProjectEnrichmentRunResult> runProjectEnrichment({
     bool refreshLinkedProjects = true,
     bool includeSourceDocuments = true,
-    bool refreshSummaries = true,
+    bool refreshSummaries = false,
   }) => state.runProjectEnrichment(
     refreshLinkedProjects: refreshLinkedProjects,
     includeSourceDocuments: includeSourceDocuments,

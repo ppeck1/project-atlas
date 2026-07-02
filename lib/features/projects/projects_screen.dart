@@ -701,6 +701,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   }
 
   void _queueProjectSummaryRefresh(AppState state, String projectId) {
+    if (!state.projectAiSummariesEnabled) return;
     unawaited(
       (() async {
         try {
@@ -854,26 +855,29 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     final summaryRefreshBusy =
-        _refreshingSummaries || state.isProjectSummaryRefreshRunning;
+        state.projectAiSummariesEnabled &&
+        (_refreshingSummaries || state.isProjectSummaryRefreshRunning);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Projects'),
         actions: [
-          IconButton(
-            tooltip: summaryRefreshBusy
-                ? 'AI summaries are refreshing'
-                : 'Refresh AI summaries',
-            onPressed: summaryRefreshBusy ? null : _refreshAiSummaries,
-            icon: summaryRefreshBusy
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.auto_awesome_outlined),
-          ),
-          const SizedBox(width: 8),
+          if (state.projectAiSummariesEnabled) ...[
+            IconButton(
+              tooltip: summaryRefreshBusy
+                  ? 'AI summaries are refreshing'
+                  : 'Refresh AI summaries',
+              onPressed: summaryRefreshBusy ? null : _refreshAiSummaries,
+              icon: summaryRefreshBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.auto_awesome_outlined),
+            ),
+            const SizedBox(width: 8),
+          ],
           OutlinedButton.icon(
             onPressed: _uploadingProject ? null : _uploadOrUpdateProject,
             icon: _uploadingProject

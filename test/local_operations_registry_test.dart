@@ -1143,11 +1143,12 @@ Pressure flakes a useful edge.
         containsAll([
           'registry',
           'documents_media',
-          'summary',
+          'identity',
           'verification',
           'correction',
         ]),
       );
+      expect(steps.map((step) => step.worker), isNot(contains('summary')));
       expect(proposals.map((proposal) => proposal.worker).toSet(), {
         'correction',
       });

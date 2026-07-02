@@ -92,7 +92,7 @@ const projectStatusOptions = <ProjectStatusOption>[
     value: 'paused',
     label: 'Paused',
     descriptor: 'Inactive',
-    description: 'Intentionally on hold; not part of active summary refreshes.',
+    description: 'Intentionally on hold; not part of active work lists.',
     disposition: ProjectStatusDisposition.inactive,
     color: Color(0xFFFF9800),
   ),

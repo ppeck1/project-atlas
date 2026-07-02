@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import '../shared/models/app_state.dart';
 import '../services/atlas_agent_service.dart';
 import '../services/local_git_visibility_service.dart';
 import '../services/local_project_refresh_service.dart';
@@ -73,12 +72,7 @@ class AtlasMcpAdapter {
     AtlasMcpTool(
       name: 'get_project_brief',
       description:
-          'Get one project brief with lifecycle, tasks, tags, people, risks, decisions, registry, and cached summary.',
-      inputSchema: _projectIdSchema,
-    ),
-    AtlasMcpTool(
-      name: 'get_project_summary',
-      description: 'Get the latest cached AI summary draft for a project.',
+          'Get one project brief with lifecycle, tasks, tags, people, risks, decisions, and registry context.',
       inputSchema: _projectIdSchema,
     ),
     AtlasMcpTool(
@@ -123,17 +117,6 @@ class AtlasMcpAdapter {
       inputSchema: _projectIdSchema,
     ),
     AtlasMcpTool(
-      name: 'refresh_project_summaries',
-      description:
-          'Trigger the governed project summary refresh loop. This may call local Ollama.',
-      inputSchema: {
-        'type': 'object',
-        'properties': {
-          'force': {'type': 'boolean'},
-        },
-      },
-    ),
-    AtlasMcpTool(
       name: 'list_project_enrichment_runs',
       description:
           'List recent Atlas enrichment runs with completeness and finding counts.',
@@ -165,7 +148,6 @@ class AtlasMcpAdapter {
         'properties': {
           'refreshLinkedProjects': {'type': 'boolean'},
           'includeSourceDocuments': {'type': 'boolean'},
-          'refreshSummaries': {'type': 'boolean'},
         },
       },
     ),
@@ -364,12 +346,6 @@ class AtlasMcpAdapter {
       'get_project_brief' => (await agent.getProjectBrief(
         _requiredString(args, 'projectId'),
       ))?.toJson(),
-      'get_project_summary' => {
-        'projectId': _requiredString(args, 'projectId'),
-        'summary': await agent.getProjectSummary(
-          _requiredString(args, 'projectId'),
-        ),
-      },
       'get_stale_projects' =>
         (await agent.getStaleProjects())
             .map((project) => project.toJson())
@@ -389,9 +365,6 @@ class AtlasMcpAdapter {
       'refresh_github_remote_status' => (await agent.refreshGithubRemoteStatus(
         _requiredString(args, 'projectId'),
       )).toJson(),
-      'refresh_project_summaries' => (await agent.refreshProjectSummaries(
-        force: _bool(args, 'force') ?? false,
-      )).toJson(),
       'list_project_enrichment_runs' => (await agent.listProjectEnrichmentRuns(
         limit: _int(args, 'limit') ?? 20,
       )).map((run) => run.toJson()).toList(),
@@ -401,7 +374,7 @@ class AtlasMcpAdapter {
       'run_project_enrichment' => (await agent.runProjectEnrichment(
         refreshLinkedProjects: _bool(args, 'refreshLinkedProjects') ?? true,
         includeSourceDocuments: _bool(args, 'includeSourceDocuments') ?? true,
-        refreshSummaries: _bool(args, 'refreshSummaries') ?? true,
+        refreshSummaries: false,
       )).toJson(),
       'enqueue_llm_task' => (await agent.enqueueLlmTask(
         projectId: _requiredString(args, 'projectId'),
@@ -591,16 +564,4 @@ class AtlasMcpAdapter {
     if (value is! Map) return const {};
     return value.map((key, value) => MapEntry('$key', value));
   }
-}
-
-extension _ProjectSummaryRefreshResultJson on ProjectSummaryRefreshResult {
-  Map<String, Object?> toJson() => {
-    'considered': considered,
-    'refreshed': refreshed,
-    'skipped': skipped,
-    'failed': failed,
-    'aiUnavailable': aiUnavailable,
-    'alreadyRunning': alreadyRunning,
-    'errors': errors,
-  };
 }

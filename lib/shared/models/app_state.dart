@@ -241,7 +241,6 @@ class AppState extends ChangeNotifier {
   };
   static const int _projectEnrichmentProposalCap = 120;
 
-  Timer? _summaryRefreshTimer;
   Timer? _localProjectRefreshTimer;
   bool _summaryRefreshRunning = false;
   bool _localProjectRefreshRunning = false;
@@ -252,6 +251,7 @@ class AppState extends ChangeNotifier {
   int? _projectEnrichmentProgressTotal;
 
   bool get isProjectSummaryRefreshRunning => _summaryRefreshRunning;
+  bool get projectAiSummariesEnabled => false;
   bool get isLocalProjectRefreshRunning => _localProjectRefreshRunning;
   bool get isProjectEnrichmentRunning => _projectEnrichmentRunning;
   String? get projectEnrichmentStatus => _projectEnrichmentStatus;
@@ -292,12 +292,6 @@ class AppState extends ChangeNotifier {
       }),
     );
     if (enableBackgroundSummaryRefresh) {
-      // Background-refresh project summaries after the UI has settled.
-      Future.delayed(const Duration(seconds: 10), _backgroundSummaryRefresh);
-      _summaryRefreshTimer = Timer.periodic(
-        const Duration(hours: 6),
-        (_) => _backgroundSummaryRefresh(),
-      );
       _localProjectRefreshTimer = Timer.periodic(
         const Duration(hours: 12),
         (_) => refreshLinkedLocalProjects(includeSourceDocuments: false),
@@ -1619,7 +1613,6 @@ class AppState extends ChangeNotifier {
       'workboard' => 'task_update',
       'governance' => 'governance_update',
       'repository' => 'repository_metadata_review',
-      'ai_summary' => 'summary_refresh',
       _ => 'enrichment_follow_up',
     };
   }
@@ -1642,8 +1635,6 @@ class AppState extends ChangeNotifier {
         'Add risks/issues or decision-log entries, or confirm no governance record is needed.',
       'repository' =>
         'Refresh local/GitHub repository metadata or mark the project local-only.',
-      'ai_summary' =>
-        'Refresh the AI summary when Ollama is available, or keep the unavailable finding.',
       _ => 'Review and resolve this enrichment finding.',
     };
   }
@@ -1862,7 +1853,7 @@ class AppState extends ChangeNotifier {
   Future<ProjectEnrichmentRunResult> runProjectEnrichment({
     bool refreshLinkedProjects = true,
     bool includeSourceDocuments = true,
-    bool refreshSummaries = true,
+    bool refreshSummaries = false,
     bool forceSummaries = false,
     bool includeLibraryInSummaries = true,
     Duration betweenProjects = Duration.zero,
@@ -1882,9 +1873,11 @@ class AppState extends ChangeNotifier {
       'schema': 'project_atlas_enrichment_run_v1',
       'refreshLinkedProjects': refreshLinkedProjects,
       'includeSourceDocuments': includeSourceDocuments,
-      'refreshSummaries': refreshSummaries,
-      'forceSummaries': forceSummaries,
-      'includeLibraryInSummaries': includeLibraryInSummaries,
+      'projectAiSummariesEnabled': projectAiSummariesEnabled,
+      if (refreshSummaries) 'requestedRefreshSummaries': true,
+      if (forceSummaries) 'requestedForceSummaries': true,
+      if (!includeLibraryInSummaries)
+        'requestedIncludeLibraryInSummaries': false,
       'writeBoundary': 'atlas_only',
       'sourceReposMutated': false,
     };
@@ -1906,7 +1899,6 @@ class AppState extends ChangeNotifier {
     }
 
     LocalProjectBatchRefreshResult? refreshResult;
-    ProjectSummaryRefreshResult? summaryResult;
     var registryEntries = 0;
     var linkedProjects = 0;
     var refreshedProjects = 0;
@@ -2096,63 +2088,6 @@ class AppState extends ChangeNotifier {
         'Identity update complete: ${identityResult.updated} updated, ${identityResult.unchanged} unchanged.',
       );
 
-      if (refreshSummaries) {
-        final summaryStepId = await startTrackedStep(
-          worker: 'summary',
-          title: 'Summary agent: refresh AI summaries when available',
-        );
-        summaryResult = await refreshMissingProjectSummaries(
-          force: forceSummaries,
-          includeLibrary: includeLibraryInSummaries,
-          betweenProjects: Duration.zero,
-          onStatus: _setProjectEnrichmentStatus,
-        );
-        summaryConsidered = summaryResult.considered;
-        summaryRefreshed = summaryResult.refreshed;
-        summarySkipped = summaryResult.skipped;
-        summaryFailed = summaryResult.failed;
-        warnings.addAll(summaryResult.errors);
-        if (summaryResult.aiUnavailable) {
-          warnings.add(
-            'AI summary refresh skipped because Ollama is unavailable.',
-          );
-        }
-        if (summaryResult.alreadyRunning) {
-          warnings.add('AI summary refresh was already running.');
-        }
-        await finishTrackedStep(
-          summaryStepId,
-          status: summaryFailed > 0
-              ? 'completed_with_errors'
-              : summaryResult.aiUnavailable || summaryResult.alreadyRunning
-              ? 'skipped'
-              : 'completed',
-          considered: summaryConsidered,
-          createdItems: summaryRefreshed,
-          skippedItems: summarySkipped,
-          failedItems: summaryFailed,
-          warnings: summaryResult.errors,
-          output: {
-            'aiUnavailable': summaryResult.aiUnavailable,
-            'alreadyRunning': summaryResult.alreadyRunning,
-            'includeLibrary': includeLibraryInSummaries,
-          },
-        );
-        _setProjectEnrichmentStatus(
-          'AI summaries complete: $summaryRefreshed refreshed, $summaryFailed failed, $summarySkipped skipped.',
-        );
-      } else {
-        final summaryStepId = await startTrackedStep(
-          worker: 'summary',
-          title: 'Summary agent: skipped by run scope',
-        );
-        await finishTrackedStep(
-          summaryStepId,
-          status: 'skipped',
-          output: {'reason': 'refreshSummaries=false'},
-        );
-      }
-
       final verificationStepId = await startTrackedStep(
         worker: 'verification',
         title: 'Verification agent: audit project completeness',
@@ -2166,8 +2101,6 @@ class AppState extends ChangeNotifier {
       final audit = await _buildProjectEnrichmentAudit(
         registry: registry,
         projects: projects,
-        refreshSummaries: refreshSummaries,
-        summaryResult: summaryResult,
       );
       await finishTrackedStep(
         verificationStepId,
@@ -2222,7 +2155,7 @@ class AppState extends ChangeNotifier {
       final openFindings = savedFindings
           .where((finding) => finding.status == 'open')
           .length;
-      final status = failedProjects > 0 || summaryFailed > 0
+      final status = failedProjects > 0
           ? 'completed_with_errors'
           : openFindings > 0 || warnings.isNotEmpty
           ? 'completed_with_findings'
@@ -2240,16 +2173,6 @@ class AppState extends ChangeNotifier {
                 'skipped': refreshResult.skipped,
                 'failed': refreshResult.failed,
                 'alreadyRunning': refreshResult.alreadyRunning,
-              },
-        'summary': summaryResult == null
-            ? null
-            : {
-                'considered': summaryResult.considered,
-                'refreshed': summaryResult.refreshed,
-                'skipped': summaryResult.skipped,
-                'failed': summaryResult.failed,
-                'aiUnavailable': summaryResult.aiUnavailable,
-                'alreadyRunning': summaryResult.alreadyRunning,
               },
         'identity': {
           'considered': identityConsidered,
@@ -2397,8 +2320,6 @@ class AppState extends ChangeNotifier {
   Future<_ProjectEnrichmentAudit> _buildProjectEnrichmentAudit({
     required List<ProjectRegistryEntry> registry,
     required List<Project> projects,
-    required bool refreshSummaries,
-    ProjectSummaryRefreshResult? summaryResult,
   }) async {
     final findings = <_ProjectEnrichmentFindingDraft>[];
     final registryByProjectId = <String, ProjectRegistryEntry>{};
@@ -2428,7 +2349,6 @@ class AppState extends ChangeNotifier {
     var projectsWithTasks = 0;
     var projectsWithRisks = 0;
     var projectsWithDecisions = 0;
-    var projectsWithSummaries = 0;
     var projectsWithGithubCache = 0;
 
     void addFinding({
@@ -2535,7 +2455,6 @@ class AppState extends ChangeNotifier {
       final items = await getWorkItemsForProject(project.id);
       final risks = await getProjectRisks(project.id);
       final decisions = await getProjectDecisions(project.id);
-      final summary = await db.getLatestProjectSummaryDraft(project.id);
       final observation = registryEntry == null
           ? null
           : await db.getLatestProjectObservationForPath(
@@ -2565,7 +2484,6 @@ class AppState extends ChangeNotifier {
       if (items.isNotEmpty) projectsWithTasks++;
       if (risks.isNotEmpty) projectsWithRisks++;
       if (decisions.isNotEmpty) projectsWithDecisions++;
-      if (summary != null) projectsWithSummaries++;
       if (github != null) projectsWithGithubCache++;
 
       if (registryEntry == null) {
@@ -2682,18 +2600,6 @@ class AppState extends ChangeNotifier {
           title: 'Project decision log is empty.',
         );
       }
-      if (refreshSummaries && summary == null) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: summaryResult?.aiUnavailable == true ? 'info' : 'warning',
-          category: 'ai_summary',
-          title: 'Project has no cached AI summary.',
-          detail: summaryResult?.aiUnavailable == true
-              ? 'AI summary refresh was skipped because Ollama is unavailable.'
-              : 'Run AI summary refresh after documents and media are imported.',
-        );
-      }
       final remote = observation?.remoteUrl;
       final githubIdentity = GithubRemoteMetadataService.parseGithubRemoteUrl(
         remote,
@@ -2769,7 +2675,6 @@ class AppState extends ChangeNotifier {
       'projectsWithTasks': projectsWithTasks,
       'projectsWithRisks': projectsWithRisks,
       'projectsWithDecisions': projectsWithDecisions,
-      'projectsWithSummaries': projectsWithSummaries,
       'projectsWithGithubCache': projectsWithGithubCache,
     };
     return _ProjectEnrichmentAudit(findings: findings, coverage: coverage);
@@ -4400,16 +4305,30 @@ class AppState extends ChangeNotifier {
 
   /// Generates summaries for operational projects that are missing one today.
   /// Runs silently in the background — errors are swallowed per project.
-  Future<void> _backgroundSummaryRefresh() async {
-    await refreshMissingProjectSummaries();
-  }
-
   Future<ProjectSummaryRefreshResult> refreshMissingProjectSummaries({
     bool force = false,
     bool includeLibrary = false,
     Duration betweenProjects = const Duration(seconds: 3),
     ProjectEnrichmentStatusCallback? onStatus,
   }) async {
+    if (!projectAiSummariesEnabled) {
+      onStatus?.call(
+        'Project AI summary refresh is disabled pending a separate work order.',
+        current: 0,
+        total: 0,
+      );
+      return const ProjectSummaryRefreshResult(
+        considered: 0,
+        refreshed: 0,
+        skipped: 0,
+        failed: 0,
+        aiUnavailable: false,
+        errors: [
+          'Project AI summary refresh is disabled pending a separate work order.',
+        ],
+      );
+    }
+    // Dormant implementation retained below for the dedicated summary work order.
     if (_summaryRefreshRunning) {
       return const ProjectSummaryRefreshResult(
         considered: 0,
@@ -4546,6 +4465,11 @@ class AppState extends ChangeNotifier {
     String projectId, {
     bool includeLibrary = false,
   }) async {
+    if (!projectAiSummariesEnabled) {
+      throw StateError(
+        'Project AI summaries are disabled pending a separate work order.',
+      );
+    }
     final host = await getSetting(AppDb.kOllamaHost);
     final model = await getSetting(AppDb.kOllamaModel);
     final svc = _buildOllama(host, model);
@@ -5423,7 +5347,6 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
-    _summaryRefreshTimer?.cancel();
     _localProjectRefreshTimer?.cancel();
     _activeProjectSub.cancel();
     hasActiveProject.dispose();
