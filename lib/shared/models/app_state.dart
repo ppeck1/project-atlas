@@ -44,6 +44,34 @@ class ProjectLocalRepoSummary {
       refreshItems.where((item) => item.sourceKind == 'atlas_card').length;
 }
 
+class ProjectAiSummarySettings {
+  final bool enabled;
+  final bool includeLibrary;
+  final bool allowBulkRefresh;
+  final String? model;
+
+  const ProjectAiSummarySettings({
+    this.enabled = false,
+    this.includeLibrary = true,
+    this.allowBulkRefresh = false,
+    this.model,
+  });
+
+  ProjectAiSummarySettings copyWith({
+    bool? enabled,
+    bool? includeLibrary,
+    bool? allowBulkRefresh,
+    String? model,
+  }) {
+    return ProjectAiSummarySettings(
+      enabled: enabled ?? this.enabled,
+      includeLibrary: includeLibrary ?? this.includeLibrary,
+      allowBulkRefresh: allowBulkRefresh ?? this.allowBulkRefresh,
+      model: model ?? this.model,
+    );
+  }
+}
+
 String _pathKey(String value) => value
     .trim()
     .replaceAll('/', r'\')
@@ -245,13 +273,22 @@ class AppState extends ChangeNotifier {
   bool _summaryRefreshRunning = false;
   bool _localProjectRefreshRunning = false;
   bool _projectEnrichmentRunning = false;
+  bool _projectAiSummariesEnabled = false;
+  bool _projectAiSummaryIncludeLibrary = true;
+  bool _projectAiSummaryAllowBulkRefresh = false;
+  String? _projectAiSummaryModel;
   String? _projectEnrichmentStatus;
   DateTime? _projectEnrichmentStartedAt;
   int? _projectEnrichmentProgressCurrent;
   int? _projectEnrichmentProgressTotal;
+  final List<StreamSubscription<String?>> _settingsSubscriptions = [];
 
   bool get isProjectSummaryRefreshRunning => _summaryRefreshRunning;
-  bool get projectAiSummariesEnabled => false;
+  bool get projectAiSummariesEnabled => _projectAiSummariesEnabled;
+  bool get projectAiSummaryIncludeLibrary => _projectAiSummaryIncludeLibrary;
+  bool get projectAiSummaryAllowBulkRefresh =>
+      _projectAiSummaryAllowBulkRefresh;
+  String? get projectAiSummaryModel => _projectAiSummaryModel;
   bool get isLocalProjectRefreshRunning => _localProjectRefreshRunning;
   bool get isProjectEnrichmentRunning => _projectEnrichmentRunning;
   String? get projectEnrichmentStatus => _projectEnrichmentStatus;
@@ -271,6 +308,7 @@ class AppState extends ChangeNotifier {
   }
 
   AppState(this.db, {bool enableBackgroundSummaryRefresh = true}) {
+    _watchProjectAiSummarySettings();
     _activeProjectSub = db.watchActiveProject().listen(
       (p) {
         _activeProject = p;
@@ -297,6 +335,75 @@ class AppState extends ChangeNotifier {
         (_) => refreshLinkedLocalProjects(includeSourceDocuments: false),
       );
     }
+  }
+
+  static bool _metaBool(String? value, {required bool fallback}) {
+    if (value == null || value.isEmpty) return fallback;
+    final normalized = value.trim().toLowerCase();
+    return normalized == '1' || normalized == 'true' || normalized == 'yes';
+  }
+
+  static String _boolMeta(bool value) => value ? '1' : '0';
+  static String? _metaString(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  void _watchBoolSetting(
+    String key, {
+    required bool fallback,
+    required bool Function() current,
+    required void Function(bool value) assign,
+  }) {
+    _settingsSubscriptions.add(
+      db.watchMetaString(key).listen((raw) {
+        final next = _metaBool(raw, fallback: fallback);
+        if (current() == next) return;
+        assign(next);
+        notifyListeners();
+      }),
+    );
+  }
+
+  void _watchStringSetting(
+    String key, {
+    required String? Function() current,
+    required void Function(String? value) assign,
+  }) {
+    _settingsSubscriptions.add(
+      db.watchMetaString(key).listen((raw) {
+        final next = _metaString(raw);
+        if (current() == next) return;
+        assign(next);
+        notifyListeners();
+      }),
+    );
+  }
+
+  void _watchProjectAiSummarySettings() {
+    _watchBoolSetting(
+      AppDb.kProjectAiSummariesEnabled,
+      fallback: false,
+      current: () => _projectAiSummariesEnabled,
+      assign: (value) => _projectAiSummariesEnabled = value,
+    );
+    _watchBoolSetting(
+      AppDb.kProjectAiSummaryIncludeLibrary,
+      fallback: true,
+      current: () => _projectAiSummaryIncludeLibrary,
+      assign: (value) => _projectAiSummaryIncludeLibrary = value,
+    );
+    _watchBoolSetting(
+      AppDb.kProjectAiSummaryAllowBulkRefresh,
+      fallback: false,
+      current: () => _projectAiSummaryAllowBulkRefresh,
+      assign: (value) => _projectAiSummaryAllowBulkRefresh = value,
+    );
+    _watchStringSetting(
+      AppDb.kProjectAiSummaryModel,
+      current: () => _projectAiSummaryModel,
+      assign: (value) => _projectAiSummaryModel = value,
+    );
   }
 
   late final StreamSubscription<Project?> _activeProjectSub;
@@ -622,9 +729,57 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Future<String?> getSetting(String key) => db.getMetaString(key);
-  Future<void> setSetting(String key, String? value) =>
-      db.setMetaString(key, value);
+  Future<void> setSetting(String key, String? value) async {
+    await db.setMetaString(key, value);
+    notifyListeners();
+  }
+
   Stream<String?> watchSetting(String key) => db.watchMetaString(key);
+
+  Future<ProjectAiSummarySettings> loadProjectAiSummarySettings() async {
+    final enabled = await getSetting(AppDb.kProjectAiSummariesEnabled);
+    final includeLibrary = await getSetting(
+      AppDb.kProjectAiSummaryIncludeLibrary,
+    );
+    final allowBulkRefresh = await getSetting(
+      AppDb.kProjectAiSummaryAllowBulkRefresh,
+    );
+    final model = await getSetting(AppDb.kProjectAiSummaryModel);
+    return ProjectAiSummarySettings(
+      enabled: _metaBool(enabled, fallback: false),
+      includeLibrary: _metaBool(includeLibrary, fallback: true),
+      allowBulkRefresh: _metaBool(allowBulkRefresh, fallback: false),
+      model: _metaString(model),
+    );
+  }
+
+  Future<void> saveProjectAiSummarySettings(
+    ProjectAiSummarySettings settings,
+  ) async {
+    await Future.wait([
+      db.setMetaString(
+        AppDb.kProjectAiSummariesEnabled,
+        _boolMeta(settings.enabled),
+      ),
+      db.setMetaString(
+        AppDb.kProjectAiSummaryIncludeLibrary,
+        _boolMeta(settings.includeLibrary),
+      ),
+      db.setMetaString(
+        AppDb.kProjectAiSummaryAllowBulkRefresh,
+        _boolMeta(settings.allowBulkRefresh),
+      ),
+      db.setMetaString(
+        AppDb.kProjectAiSummaryModel,
+        _metaString(settings.model),
+      ),
+    ]);
+    _projectAiSummariesEnabled = settings.enabled;
+    _projectAiSummaryIncludeLibrary = settings.includeLibrary;
+    _projectAiSummaryAllowBulkRefresh = settings.allowBulkRefresh;
+    _projectAiSummaryModel = _metaString(settings.model);
+    notifyListeners();
+  }
 
   // ---------------------------------------------------------------------------
   // Drafts
@@ -683,6 +838,14 @@ class AppState extends ChangeNotifier {
         : 'http://localhost:11434',
     model: model?.trim().isNotEmpty == true ? model!.trim() : 'qwen3.5:9b',
   );
+
+  Future<String?> _projectSummaryModelSetting() async {
+    final projectSummaryModel = _metaString(
+      await getSetting(AppDb.kProjectAiSummaryModel),
+    );
+    if (projectSummaryModel != null) return projectSummaryModel;
+    return getSetting(AppDb.kOllamaModel);
+  }
 
   Future<OllamaResult> summarizeProject(String projectId) async {
     final host = await getSetting(AppDb.kOllamaHost);
@@ -4307,13 +4470,13 @@ class AppState extends ChangeNotifier {
   /// Runs silently in the background — errors are swallowed per project.
   Future<ProjectSummaryRefreshResult> refreshMissingProjectSummaries({
     bool force = false,
-    bool includeLibrary = false,
+    bool? includeLibrary,
     Duration betweenProjects = const Duration(seconds: 3),
     ProjectEnrichmentStatusCallback? onStatus,
   }) async {
     if (!projectAiSummariesEnabled) {
       onStatus?.call(
-        'Project AI summary refresh is disabled pending a separate work order.',
+        'Project AI summaries are disabled in Settings.',
         current: 0,
         total: 0,
       );
@@ -4323,12 +4486,24 @@ class AppState extends ChangeNotifier {
         skipped: 0,
         failed: 0,
         aiUnavailable: false,
-        errors: [
-          'Project AI summary refresh is disabled pending a separate work order.',
-        ],
+        errors: ['Project AI summaries are disabled in Settings.'],
       );
     }
-    // Dormant implementation retained below for the dedicated summary work order.
+    if (!projectAiSummaryAllowBulkRefresh) {
+      onStatus?.call(
+        'Project AI bulk refresh is disabled in Settings.',
+        current: 0,
+        total: 0,
+      );
+      return const ProjectSummaryRefreshResult(
+        considered: 0,
+        refreshed: 0,
+        skipped: 0,
+        failed: 0,
+        aiUnavailable: false,
+        errors: ['Project AI bulk refresh is disabled in Settings.'],
+      );
+    }
     if (_summaryRefreshRunning) {
       return const ProjectSummaryRefreshResult(
         considered: 0,
@@ -4348,10 +4523,12 @@ class AppState extends ChangeNotifier {
     var failed = 0;
     var aiUnavailable = false;
     final errors = <String>[];
+    final resolvedIncludeLibrary =
+        includeLibrary ?? projectAiSummaryIncludeLibrary;
     try {
       onStatus?.call('Checking Ollama summary service.', current: 0);
       final host = await getSetting(AppDb.kOllamaHost);
-      final model = await getSetting(AppDb.kOllamaModel);
+      final model = await _projectSummaryModelSetting();
       if (!await _buildOllama(host, model).isAvailable()) {
         aiUnavailable = true;
         onStatus?.call('AI summary refresh skipped: Ollama unavailable.');
@@ -4397,7 +4574,7 @@ class AppState extends ChangeNotifier {
         try {
           final outcome = await summarizeProjectFull(
             project.id,
-            includeLibrary: includeLibrary,
+            includeLibrary: resolvedIncludeLibrary,
           );
           if (outcome.isSuccess) {
             refreshed++;
@@ -4443,7 +4620,7 @@ class AppState extends ChangeNotifier {
           'skipped': skipped,
           'failed': failed,
           'force': force,
-          'includeLibrary': includeLibrary,
+          'includeLibrary': resolvedIncludeLibrary,
         }),
       );
       return ProjectSummaryRefreshResult(
@@ -4463,18 +4640,18 @@ class AppState extends ChangeNotifier {
   // Project AI summary (with optional library context)
   Future<ProjectSummaryOutcome> summarizeProjectFull(
     String projectId, {
-    bool includeLibrary = false,
+    bool? includeLibrary,
   }) async {
     if (!projectAiSummariesEnabled) {
-      throw StateError(
-        'Project AI summaries are disabled pending a separate work order.',
-      );
+      throw StateError('Project AI summaries are disabled in Settings.');
     }
     final host = await getSetting(AppDb.kOllamaHost);
-    final model = await getSetting(AppDb.kOllamaModel);
+    final model = await _projectSummaryModelSetting();
     final svc = _buildOllama(host, model);
     final proj = await getProjectFull(projectId);
     final items = await getWorkItemsForProject(projectId);
+    final resolvedIncludeLibrary =
+        includeLibrary ?? projectAiSummaryIncludeLibrary;
 
     List<ProjectRisk> risks = [];
     List<ProjectDecision> decisions = [];
@@ -4495,7 +4672,7 @@ class AppState extends ChangeNotifier {
     final contextDocs = <ProjectSummaryContextDoc>[];
     final docPaths = <String, String?>{};
 
-    if (includeLibrary) {
+    if (resolvedIncludeLibrary) {
       final docs = await (db.select(
         db.documents,
       )..where((t) => t.projectId.equals(projectId))).get();
@@ -4597,12 +4774,13 @@ class AppState extends ChangeNotifier {
 
     ProjectSummaryOutcome outcome;
     try {
-      final (:result, :parsed) = await svc.summarizeProjectStructured(
-        context: context,
-      );
+      final (:result, :parsed, :validation) = await svc
+          .summarizeProjectStructured(context: context);
       outcome = ProjectSummaryOutcome(
         rawOutput: result.output,
+        inputText: result.input,
         structured: parsed,
+        validationIssues: validation.issues,
         documentPaths: docPaths,
       );
     } catch (e) {
@@ -4628,6 +4806,7 @@ class AppState extends ChangeNotifier {
       );
       outcome = ProjectSummaryOutcome(
         rawOutput: oldResult.output,
+        inputText: oldResult.input,
         documentPaths: docPaths,
       );
     }
@@ -4641,7 +4820,7 @@ class AppState extends ChangeNotifier {
           kind: 'project_summary',
           title: 'Project Summary — ${proj?.title ?? projectId}',
           body: outcome.rawOutput ?? '',
-          inputJson: outcome.rawOutput,
+          inputJson: outcome.inputText,
           projectId: projectId,
         );
       } catch (_) {}
@@ -5348,6 +5527,9 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _localProjectRefreshTimer?.cancel();
+    for (final subscription in _settingsSubscriptions) {
+      unawaited(subscription.cancel());
+    }
     _activeProjectSub.cancel();
     hasActiveProject.dispose();
     super.dispose();

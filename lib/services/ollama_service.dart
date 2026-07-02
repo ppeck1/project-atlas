@@ -147,8 +147,14 @@ class OllamaService {
 
   /// Generate a structured project summary using the supplied context.
   /// Returns an [OllamaResult] whose [output] is raw JSON, plus a parsed
-  /// [ProjectSummaryResult] when parsing succeeds.
-  Future<({OllamaResult result, ProjectSummaryResult? parsed})>
+  /// [ProjectSummaryResult] only when parsing and validation succeed.
+  Future<
+    ({
+      OllamaResult result,
+      ProjectSummaryResult? parsed,
+      ProjectSummaryValidationReport validation,
+    })
+  >
   summarizeProjectStructured({required ProjectSummaryContext context}) async {
     const system = '''
 You are a project status assistant for a local project management app.
@@ -157,7 +163,9 @@ Summarize the supplied project context and return ONLY valid JSON.
 Rules:
 - Use only the data provided. Do not invent people, document IDs, file paths, or work assignments.
 - relevantDocuments must only reference document IDs that appear in the supplied Library Documents section.
-- If ownership is unclear, use "Unassigned" as the person and explain in the basis field.
+- If the People section says none recorded, ownership must use "Unassigned" and explain the gap in the basis field.
+- Do not recommend meetings, communication plans, timelines, stakeholders, team members, or repository setup unless the supplied context explicitly supports that action.
+- If the supplied context is thin, say what is missing instead of filling in generic project-management advice.
 - Keep goal to 1-2 concise lines.
 - Keep currentState concise (1-2 short paragraphs).
 - nextActions should be practical and specific (max 5).
@@ -189,16 +197,47 @@ Return a JSON object matching this exact schema:
 
     final user = '${context.toPromptText()}\n\nReturn only valid JSON.';
 
-    final rawOutput = await _chatStructured(system, user);
-    final parsed = ProjectSummaryResult.tryParse(rawOutput);
+    var finalInput = user;
+    var rawOutput = await _chatStructured(system, user);
+    var parsed = ProjectSummaryResult.tryParse(rawOutput);
+    var validation = ProjectSummaryResult.validateParsed(
+      parsed,
+      context: context,
+      rawOutput: rawOutput,
+    );
+
+    if (!validation.isValid && rawOutput != null && validation.shouldRetry) {
+      final retryUser =
+          '''
+$user
+
+The previous response failed validation:
+${validation.toPromptText()}
+
+Return ONLY a corrected JSON object matching the requested schema. Do not explain the correction.
+''';
+      final retryOutput = await _chatStructured(system, retryUser);
+      final retryParsed = ProjectSummaryResult.tryParse(retryOutput);
+      final retryValidation = ProjectSummaryResult.validateParsed(
+        retryParsed,
+        context: context,
+        rawOutput: retryOutput,
+      );
+      finalInput = retryUser;
+      rawOutput = retryOutput;
+      parsed = retryValidation.isValid ? retryParsed : null;
+      validation = retryValidation;
+    } else if (!validation.isValid) {
+      parsed = null;
+    }
 
     final result = OllamaResult(
-      input: user,
+      input: finalInput,
       output: rawOutput,
       kind: 'project_summary_structured',
       title: 'Project Summary — ${context.title}',
     );
-    return (result: result, parsed: parsed);
+    return (result: result, parsed: parsed, validation: validation);
   }
 
   /// Summarize all active work items for a project into a concise status update.

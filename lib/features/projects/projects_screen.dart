@@ -302,6 +302,14 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   Future<void> _refreshAiSummaries() async {
     if (_refreshingSummaries) return;
     final state = AppStateScope.of(context);
+    if (!state.projectAiSummaryAllowBulkRefresh) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enable AI summary bulk refresh in Settings first.'),
+        ),
+      );
+      return;
+    }
     setState(() => _refreshingSummaries = true);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('AI summary refresh started.')),
@@ -309,6 +317,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     try {
       final result = await state.refreshMissingProjectSummaries(
         force: true,
+        includeLibrary: state.projectAiSummaryIncludeLibrary,
         betweenProjects: Duration.zero,
       );
       if (!mounted) return;
@@ -701,11 +710,17 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   }
 
   void _queueProjectSummaryRefresh(AppState state, String projectId) {
-    if (!state.projectAiSummariesEnabled) return;
+    if (!state.projectAiSummariesEnabled ||
+        !state.projectAiSummaryAllowBulkRefresh) {
+      return;
+    }
     unawaited(
       (() async {
         try {
-          await state.summarizeProjectFull(projectId, includeLibrary: true);
+          await state.summarizeProjectFull(
+            projectId,
+            includeLibrary: state.projectAiSummaryIncludeLibrary,
+          );
         } catch (error) {
           try {
             await state.db.logEvent(
@@ -856,13 +871,15 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     final state = AppStateScope.of(context);
     final summaryRefreshBusy =
         state.projectAiSummariesEnabled &&
+        state.projectAiSummaryAllowBulkRefresh &&
         (_refreshingSummaries || state.isProjectSummaryRefreshRunning);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Projects'),
         actions: [
-          if (state.projectAiSummariesEnabled) ...[
+          if (state.projectAiSummariesEnabled &&
+              state.projectAiSummaryAllowBulkRefresh) ...[
             IconButton(
               tooltip: summaryRefreshBusy
                   ? 'AI summaries are refreshing'

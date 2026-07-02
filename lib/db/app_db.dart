@@ -489,6 +489,12 @@ class AppDb extends _$AppDb {
   static const kActiveProjectId = 'active_project_id';
   static const kOllamaHost = 'ollama_host';
   static const kOllamaModel = 'ollama_model';
+  static const kProjectAiSummariesEnabled = 'project_ai_summaries_enabled';
+  static const kProjectAiSummaryIncludeLibrary =
+      'project_ai_summary_include_library';
+  static const kProjectAiSummaryAllowBulkRefresh =
+      'project_ai_summary_allow_bulk_refresh';
+  static const kProjectAiSummaryModel = 'project_ai_summary_model';
   static const kTelegramBotToken = 'telegram_bot_token';
   static const kTelegramChatId = 'telegram_chat_id';
   static const kTelegramEnabled = 'telegram_enabled';

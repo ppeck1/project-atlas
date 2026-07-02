@@ -2,37 +2,32 @@
 
 ## Current State
 
-Project Atlas is a public Flutter Windows desktop repo. The active app repo is this directory, not the outer wrapper folder. The local `main` branch is clean and synced to `origin/main`.
+Project Atlas is a public Flutter Windows desktop repo. The active app repo is this directory, not the outer wrapper folder. The current closeout validates the opt-in AI summary wizard, Library-backed summary defaults, summary-specific Ollama model selection, and fail-closed structured-summary validation. Commit/push is pending at the time this handoff evidence is written.
 
 ## Last Run
 
 | Field | Value |
 |---|---|
-| Run ID | db189a6-project-status-cleanup |
-| Run State | PUSHED |
-| Last Verified At | 2026-07-01T19:18:21-04:00 |
+| Run ID | 20260702-ai-summary-wizard-validation |
+| Run State | VALIDATED_LOCAL |
+| Last Verified At | 2026-07-02T07:41:10-04:00 |
 | Validation State | pass |
-| Git Head | `db189a6 Clarify project status handling` |
+| Git Head | pre-commit working tree based on `79b0a77 Disable project AI summary workflow` |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
 ## Validation Evidence
 
-- `dart format lib\shared\models\project_metadata.dart lib\db\app_db.dart lib\features\projects\projects_screen.dart lib\features\projects\project_metadata_dialog.dart lib\features\projects\project_detail_screen.dart test\dropdown_normalization_test.dart test\schema_media_test.dart`: pass.
-- `flutter test test\dropdown_normalization_test.dart`: pass, 4 tests passed.
-- `flutter test test\schema_media_test.dart`: pass, 9 tests passed.
+- `dart format lib\shared\models\app_state.dart lib\services\ollama_service.dart lib\services\project_summary_models.dart lib\features\settings\settings_screen.dart test\project_summary_models_test.dart test\smoke_test.dart test\ollama_service_test.dart`: pass.
+- `flutter test test\project_summary_models_test.dart test\ollama_service_test.dart`: pass, 24 tests passed.
+- Focused manifest suite with schema/media/local-operations/document/smoke/project-summary/Ollama tests: pass, 98 tests passed.
 - `flutter analyze`: pass, no issues found.
-- `git diff --check`: pass.
-- Full `flutter test`: pass, 146 tests passed.
-- `flutter build windows`: pass.
-- GitHub CI run `28553381256`: pass, including Drift codegen, analyze, tests, and Windows release build.
+- Full `flutter test`: pass, 157 tests passed.
+- `git diff --check`: pass, only normal CRLF conversion warnings.
+- Terminal smoke: `flutter run -d windows` launched a `project_atlas` process from the terminal run loop; the process and Flutter/Dart helpers were stopped after verification.
 
 ## Latest Stabilization Pass
 
-The Windows temp-directory lock seen in the local Operations scanner test was fixed by waiting for timed-out read-only git probe processes to exit after killing them. The same timeout cleanup pattern was applied to Local Git Visibility inspection. The MCP adapter regression test now also covers project category metadata in `list_projects` and attached media metadata in `get_llm_task`.
-
-## Latest Product Cleanup
-
-Project status display now uses centralized lifecycle descriptors: Open, Review, Inactive, and Closed. Status alias normalization was extended for values such as `Needs Review`, `needs-review`, and `local only`; Projects filtering, attention sorting, summary eligibility, the metadata dialog, and Project Detail status pills all use the shared helpers. Project-task count wording now uses "Open" where the count refers to open work items rather than project lifecycle status.
+Project AI summaries now sit behind an explicit Settings -> AI Summaries wizard with Disabled, Manual review, and Manual review + bulk refresh modes. Manual summaries can default to linked Library evidence, bulk refresh remains separately gated, and project summaries can use either the global Ollama model or a summary-specific installed model. Structured summary output now validates schema, ownership, document IDs, and unsupported generic next actions before it is accepted; validation failures are shown to the operator instead of being treated as successful summaries. Ollama validation retries once for correctable structured-output failures and does not retry transport/model errors.
 
 ## Live Atlas Queue Cleanup
 
@@ -40,9 +35,9 @@ The local Atlas LLM queue was reconciled after the pushed code closeout. Four Pr
 
 ## Known Risks
 
-- Manual UI smoke is still recommended for Projects category/status display and media attachment on a queued LLM task.
+- Manual UI smoke of the Settings -> AI Summaries tab is still useful to inspect layout and local Ollama model dropdown behavior.
+- Evidence-packet preview and Library ranking are intentionally deferred to a separate work order.
 - Raw capsule run ledgers and outboxes are local-only for public-repo safety.
-- GitHub Actions currently emits a non-blocking warning that `actions/checkout@v4` targets Node.js 20 while GitHub forces Node.js 24.
 
 ## Project Atlas Status
 
@@ -54,8 +49,8 @@ BOH sync is outbox-first and evidence-only. The packet is queued locally at `.pr
 
 ## Git Status
 
-Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`. Latest public head is `db189a6` and local status is clean/synced.
+Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`. This handoff records the validated pre-commit state for the AI summary setup/validation closeout.
 
 ## Next Best Action
 
-Manually smoke the Projects category/status UI and media attachment flow, then triage Operations warning findings starting with registry and repository warnings.
+Commit and push the validated AI summary setup/validation work, then open the separate evidence-packet preview and Library-ranking work order.

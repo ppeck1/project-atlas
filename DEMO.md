@@ -260,6 +260,8 @@ Documents can be attached to work items so they appear in AI analysis.
 
 The structured summary reads linked documents and surfaces relevant ones.
 
+Prerequisite: go to **Settings** -> **AI Summaries**, select **Manual review**, and confirm the desired Library/model defaults.
+
 1. Go to **Projects** → select a project → **Project Detail**.
 2. Open the **AI Summary** panel.
 3. Click **Regenerate** — Atlas sends project metadata + document excerpts to Ollama.

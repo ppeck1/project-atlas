@@ -84,6 +84,38 @@ void main() {
       expect(projects, isEmpty);
     });
 
+    test(
+      'project AI summary settings persist and update cached gates',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        expect(state.projectAiSummariesEnabled, isFalse);
+        expect(state.projectAiSummaryIncludeLibrary, isTrue);
+        expect(state.projectAiSummaryAllowBulkRefresh, isFalse);
+
+        await state.saveProjectAiSummarySettings(
+          const ProjectAiSummarySettings(
+            enabled: true,
+            includeLibrary: true,
+            allowBulkRefresh: true,
+            model: 'mistral-small3.2:24b',
+          ),
+        );
+
+        expect(state.projectAiSummariesEnabled, isTrue);
+        expect(state.projectAiSummaryIncludeLibrary, isTrue);
+        expect(state.projectAiSummaryAllowBulkRefresh, isTrue);
+        expect(state.projectAiSummaryModel, 'mistral-small3.2:24b');
+
+        final loaded = await state.loadProjectAiSummarySettings();
+        expect(loaded.enabled, isTrue);
+        expect(loaded.includeLibrary, isTrue);
+        expect(loaded.allowBulkRefresh, isTrue);
+        expect(loaded.model, 'mistral-small3.2:24b');
+      },
+    );
+
     test('Today items stream: work item with status doing appears', () async {
       await db.createProject('proj-2', 'Today Project', DateTime(2026, 1, 1));
 

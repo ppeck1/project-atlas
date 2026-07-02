@@ -36,7 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 5, vsync: this);
+    _tabs = TabController(length: 6, vsync: this);
   }
 
   @override
@@ -83,6 +83,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                   dividerColor: _line,
                   tabs: const [
                     Tab(text: 'Integrations'),
+                    Tab(text: 'AI Summaries'),
                     Tab(text: 'Activity Log'),
                     Tab(text: 'Export'),
                     Tab(text: 'Workforce'),
@@ -97,6 +98,7 @@ class _SettingsScreenState extends State<SettingsScreen>
               controller: _tabs,
               children: const [
                 _IntegrationsTab(),
+                _AiSummaryTab(),
                 _ActivityLogTab(),
                 _ExportTab(),
                 _WorkforceTab(),
@@ -420,6 +422,297 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
 // ─────────────────────────────────────────────────────────────────────────────
 // Tab 2 — Activity Log
 // ─────────────────────────────────────────────────────────────────────────────
+
+enum _AiSummaryMode { disabled, manual, bulk }
+
+const _summaryModelGlobalValue = '__atlas_global_ollama_model__';
+
+// Tab 2 - AI Summaries
+
+class _AiSummaryTab extends StatefulWidget {
+  const _AiSummaryTab();
+
+  @override
+  State<_AiSummaryTab> createState() => _AiSummaryTabState();
+}
+
+class _AiSummaryTabState extends State<_AiSummaryTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  bool _enabled = false;
+  bool _includeLibrary = true;
+  bool _allowBulkRefresh = false;
+  String? _summaryModel;
+  String? _globalModel;
+  List<String> _availableSummaryModels = [];
+  bool _loadingSummaryModels = false;
+  bool _loaded = false;
+  bool _saving = false;
+  String? _status;
+
+  _AiSummaryMode get _mode {
+    if (!_enabled) return _AiSummaryMode.disabled;
+    return _allowBulkRefresh ? _AiSummaryMode.bulk : _AiSummaryMode.manual;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_loaded) {
+      _loaded = true;
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final state = AppStateScope.of(context);
+    final settings = await state.loadProjectAiSummarySettings();
+    final globalModel = await state.getSetting(AppDb.kOllamaModel);
+    if (!mounted) return;
+    setState(() {
+      _enabled = settings.enabled;
+      _includeLibrary = settings.includeLibrary;
+      _allowBulkRefresh = settings.allowBulkRefresh;
+      _summaryModel = settings.model;
+      _globalModel = globalModel;
+      _availableSummaryModels = [if (settings.model != null) settings.model!];
+    });
+    await _fetchSummaryModels();
+  }
+
+  void _setMode(_AiSummaryMode mode) {
+    setState(() {
+      _enabled = mode != _AiSummaryMode.disabled;
+      _allowBulkRefresh = mode == _AiSummaryMode.bulk;
+    });
+  }
+
+  Future<void> _fetchSummaryModels() async {
+    final state = AppStateScope.of(context);
+    final hostSetting = await state.getSetting(AppDb.kOllamaHost);
+    final host = hostSetting?.trim().isNotEmpty == true
+        ? hostSetting!.trim()
+        : 'http://localhost:11434';
+    if (mounted) setState(() => _loadingSummaryModels = true);
+    final svc = OllamaService(host: host, model: '');
+    final models = await svc.getAvailableModels();
+    if (!mounted) return;
+    final saved = _summaryModel?.trim();
+    setState(() {
+      _loadingSummaryModels = false;
+      _availableSummaryModels = [
+        ...models,
+        if (saved != null && saved.isNotEmpty && !models.contains(saved)) saved,
+      ];
+    });
+  }
+
+  Future<void> _save() async {
+    final state = AppStateScope.of(context);
+    setState(() {
+      _saving = true;
+      _status = null;
+    });
+    try {
+      await state.saveProjectAiSummarySettings(
+        ProjectAiSummarySettings(
+          enabled: _enabled,
+          includeLibrary: _includeLibrary,
+          allowBulkRefresh: _enabled && _allowBulkRefresh,
+          model: _summaryModel,
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _status = 'AI summary setup saved.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _status = 'AI summary setup failed: $error');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        _SectionTitle(
+          icon: Icons.auto_awesome_outlined,
+          iconColor: _primary,
+          title: 'AI summary setup',
+          subtitle: 'Project summaries are opt-in, local, and review-first.',
+        ),
+        const SizedBox(height: 16),
+        _WizardStepPanel(
+          step: '1',
+          title: 'Mode',
+          child: Column(
+            children: [
+              _ModeRadioTile(
+                value: _AiSummaryMode.disabled,
+                groupValue: _mode,
+                onChanged: _setMode,
+                title: 'Disabled',
+                subtitle: 'Hide project summary controls.',
+              ),
+              _ModeRadioTile(
+                value: _AiSummaryMode.manual,
+                groupValue: _mode,
+                onChanged: _setMode,
+                title: 'Manual review',
+                subtitle: 'Show project detail summaries only.',
+              ),
+              _ModeRadioTile(
+                value: _AiSummaryMode.bulk,
+                groupValue: _mode,
+                onChanged: _setMode,
+                title: 'Manual review + bulk refresh',
+                subtitle: 'Also show the Projects toolbar refresh action.',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _WizardStepPanel(
+          step: '2',
+          title: 'Model',
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _SummaryModelDropdown(
+                  models: _availableSummaryModels,
+                  selected: _summaryModel,
+                  globalModel: _globalModel,
+                  enabled: _enabled,
+                  onChanged: (value) {
+                    setState(() {
+                      _summaryModel = value == _summaryModelGlobalValue
+                          ? null
+                          : value;
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'Refresh Ollama models',
+                onPressed: _loadingSummaryModels ? null : _fetchSummaryModels,
+                icon: _loadingSummaryModels
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, color: _text54),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _WizardStepPanel(
+          step: '3',
+          title: 'Evidence defaults',
+          child: Column(
+            children: [
+              SwitchListTile(
+                value: _includeLibrary,
+                onChanged: _enabled
+                    ? (value) => setState(() => _includeLibrary = value)
+                    : null,
+                activeColor: _primary,
+                contentPadding: EdgeInsets.zero,
+                secondary: const Icon(
+                  Icons.library_books_outlined,
+                  color: _text54,
+                ),
+                title: const Text(
+                  'Always include Library',
+                  style: TextStyle(fontSize: 14, color: _text87),
+                ),
+                subtitle: const Text(
+                  'Use project-linked documents as default summary context.',
+                  style: TextStyle(fontSize: 12, color: _text54),
+                ),
+              ),
+              const Divider(color: _line),
+              const _GuardrailRow(
+                icon: Icons.inventory_2_outlined,
+                title: 'Draft evidence packet',
+                subtitle: 'New drafts store the prompt packet in input_json.',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        const _WizardStepPanel(
+          step: '4',
+          title: 'Review guardrails',
+          child: Column(
+            children: [
+              _GuardrailRow(
+                icon: Icons.people_alt_outlined,
+                title: 'Recorded people only',
+                subtitle: 'Empty people lists are sent as explicit gaps.',
+              ),
+              Divider(color: _line),
+              _GuardrailRow(
+                icon: Icons.description_outlined,
+                title: 'Known documents only',
+                subtitle: 'Relevant documents must come from supplied IDs.',
+              ),
+              Divider(color: _line),
+              _GuardrailRow(
+                icon: Icons.rule_outlined,
+                title: 'Hard validator',
+                subtitle:
+                    'Invalid schema, people, docs, and generic actions fail closed.',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        Row(
+          children: [
+            FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save_outlined, size: 16),
+              label: const Text('Save setup'),
+              style: FilledButton.styleFrom(
+                backgroundColor: _primary,
+                foregroundColor: _bg,
+              ),
+            ),
+            if (_status != null) ...[
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _status!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _status!.contains('failed')
+                        ? Colors.redAccent
+                        : _primary,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
 
 class _ActivityLogTab extends StatefulWidget {
   const _ActivityLogTab();
@@ -1600,6 +1893,127 @@ class _AdminTabState extends State<_AdminTab> {
 // Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+class _WizardStepPanel extends StatelessWidget {
+  final String step;
+  final String title;
+  final Widget child;
+
+  const _WizardStepPanel({
+    required this.step,
+    required this.title,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _panel,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 24,
+                height: 24,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _primary.withAlpha(35),
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  step,
+                  style: const TextStyle(
+                    color: _primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: _text87,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _ModeRadioTile extends StatelessWidget {
+  final _AiSummaryMode value;
+  final _AiSummaryMode groupValue;
+  final ValueChanged<_AiSummaryMode> onChanged;
+  final String title;
+  final String subtitle;
+
+  const _ModeRadioTile({
+    required this.value,
+    required this.groupValue,
+    required this.onChanged,
+    required this.title,
+    required this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RadioListTile<_AiSummaryMode>(
+      value: value,
+      groupValue: groupValue,
+      onChanged: (mode) {
+        if (mode != null) onChanged(mode);
+      },
+      activeColor: _primary,
+      contentPadding: EdgeInsets.zero,
+      title: Text(title, style: const TextStyle(fontSize: 14, color: _text87)),
+      subtitle: Text(
+        subtitle,
+        style: const TextStyle(fontSize: 12, color: _text54),
+      ),
+    );
+  }
+}
+
+class _GuardrailRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  const _GuardrailRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, color: _text54, size: 20),
+      title: Text(title, style: const TextStyle(fontSize: 14, color: _text87)),
+      subtitle: Text(
+        subtitle,
+        style: const TextStyle(fontSize: 12, color: _text54),
+      ),
+      dense: true,
+    );
+  }
+}
+
 class _SectionTitle extends StatelessWidget {
   final IconData icon;
   final Color iconColor;
@@ -1719,6 +2133,85 @@ class _ModelDropdown extends StatelessWidget {
         helperStyle: TextStyle(fontSize: 11, color: _text38),
         enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: _line)),
         focusedBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: _primary),
+        ),
+        filled: true,
+        fillColor: _bg,
+      ),
+      style: const TextStyle(color: _text87, fontSize: 14),
+    );
+  }
+}
+
+class _SummaryModelDropdown extends StatelessWidget {
+  final List<String> models;
+  final String? selected;
+  final String? globalModel;
+  final bool enabled;
+  final ValueChanged<String?> onChanged;
+
+  const _SummaryModelDropdown({
+    required this.models,
+    required this.selected,
+    required this.globalModel,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final seen = <String>{};
+    final installedModels = <String>[];
+    for (final raw in models) {
+      final model = raw.trim();
+      if (model.isNotEmpty && seen.add(model)) installedModels.add(model);
+    }
+    final selectedValue =
+        selected != null && installedModels.contains(selected!.trim())
+        ? selected!.trim()
+        : _summaryModelGlobalValue;
+    final global = globalModel?.trim();
+    final globalLabel = global == null || global.isEmpty
+        ? 'Use global model'
+        : 'Use global model ($global)';
+    final items = [
+      DropdownMenuItem(
+        value: _summaryModelGlobalValue,
+        child: Text(
+          globalLabel,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: _text87, fontSize: 14),
+        ),
+      ),
+      ...installedModels.map(
+        (model) => DropdownMenuItem(
+          value: model,
+          child: Text(
+            model,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: _text87, fontSize: 14),
+          ),
+        ),
+      ),
+    ];
+
+    return DropdownButtonFormField<String>(
+      value: selectedValue,
+      items: items,
+      isExpanded: true,
+      onChanged: enabled ? onChanged : null,
+      dropdownColor: _panel,
+      decoration: InputDecoration(
+        labelText: 'Summary model',
+        labelStyle: const TextStyle(color: _text54),
+        helperText: installedModels.isEmpty
+            ? 'Refresh after Ollama starts to list installed models'
+            : 'Used for project summaries only',
+        helperStyle: const TextStyle(fontSize: 11, color: _text38),
+        enabledBorder: const OutlineInputBorder(
+          borderSide: BorderSide(color: _line),
+        ),
+        focusedBorder: const OutlineInputBorder(
           borderSide: BorderSide(color: _primary),
         ),
         filled: true,

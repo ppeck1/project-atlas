@@ -178,6 +178,216 @@ void main() {
     });
   });
 
+  group('ProjectSummaryResult validation', () {
+    const ctx = ProjectSummaryContext(
+      id: 'proj-1',
+      title: 'Validated Project',
+      status: 'active',
+      workItems: [],
+      people: [],
+      risks: [],
+      decisions: [],
+      documents: [ProjectSummaryContextDoc(id: 'doc-1', title: 'README.md')],
+    );
+
+    test('rejects content extraction JSON that does not match schema', () {
+      const raw = '''
+{
+  "notes": [
+    {"title": "Stable State", "description": "Extracted content"}
+  ]
+}
+''';
+      final parsed = ProjectSummaryResult.tryParse(raw);
+      final report = ProjectSummaryResult.validateParsed(
+        parsed,
+        context: ctx,
+        rawOutput: raw,
+      );
+
+      expect(parsed, isNotNull);
+      expect(report.isValid, isFalse);
+      expect(
+        report.issues.map((issue) => issue.code),
+        contains('missing_goal'),
+      );
+      expect(
+        report.issues.map((issue) => issue.code),
+        contains('missing_current_state'),
+      );
+    });
+
+    test('rejects invented owners and invalid document IDs', () {
+      const raw = '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [{"person": "Alice", "work": [], "basis": "Made up"}],
+  "relevantDocuments": [{"documentId": "doc-404", "title": "X", "reason": "Y"}],
+  "blockersAndRisks": ["None recorded"],
+  "nextActions": ["Record work items"],
+  "confidence": "Based on supplied context."
+}
+''';
+      final parsed = ProjectSummaryResult.tryParse(raw);
+      final report = ProjectSummaryResult.validateParsed(
+        parsed,
+        context: ctx,
+        rawOutput: raw,
+      );
+
+      expect(report.isValid, isFalse);
+      expect(
+        report.issues.map((issue) => issue.code),
+        containsAll(['invented_owner', 'invalid_document_id']),
+      );
+    });
+
+    test('rejects unsupported generic next actions', () {
+      const raw = '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [{"person": "Unassigned", "work": [], "basis": "No people"}],
+  "relevantDocuments": [{"documentId": "doc-1", "title": "README.md", "reason": "Project overview"}],
+  "blockersAndRisks": ["None recorded"],
+  "nextActions": ["Set up a repository for the project if not already done."],
+  "confidence": "Based on README."
+}
+''';
+      final parsed = ProjectSummaryResult.tryParse(raw);
+      final report = ProjectSummaryResult.validateParsed(
+        parsed,
+        context: ctx,
+        rawOutput: raw,
+      );
+
+      expect(report.isValid, isFalse);
+      expect(
+        report.issues.map((issue) => issue.code),
+        contains('unsupported_generic_action'),
+      );
+    });
+
+    test('accepts project and work item owners supplied outside People', () {
+      const ownerContext = ProjectSummaryContext(
+        id: 'proj-owners',
+        title: 'Owner Project',
+        status: 'active',
+        owner: 'Paul',
+        workItems: [
+          ProjectSummaryContextWorkItem(
+            id: 'w1',
+            title: 'Implement validator',
+            status: 'doing',
+            priority: 'normal',
+            owner: 'Mira',
+          ),
+        ],
+        people: [],
+        risks: [],
+        decisions: [],
+        documents: [ProjectSummaryContextDoc(id: 'doc-1', title: 'README.md')],
+      );
+      const raw = '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [
+    {"person": "Paul", "work": ["Project direction"], "basis": "Project owner"},
+    {"person": "Mira", "work": ["Implement validator"], "basis": "Work item owner"}
+  ],
+  "relevantDocuments": [{"documentId": "doc-1", "title": "README.md", "reason": "Project overview"}],
+  "blockersAndRisks": ["None recorded"],
+  "nextActions": ["Record explicit work items in Atlas"],
+  "confidence": "Based on supplied owners and README."
+}
+''';
+      final parsed = ProjectSummaryResult.tryParse(raw);
+      final report = ProjectSummaryResult.validateParsed(
+        parsed,
+        context: ownerContext,
+        rawOutput: raw,
+      );
+
+      expect(report.isValid, isTrue);
+    });
+
+    test('accepts generic phrase when supplied context supports it', () {
+      const supportedContext = ProjectSummaryContext(
+        id: 'proj-supported-action',
+        title: 'Supported Action Project',
+        status: 'active',
+        workItems: [],
+        people: [],
+        risks: [],
+        decisions: [],
+        documents: [
+          ProjectSummaryContextDoc(
+            id: 'doc-1',
+            title: 'README.md',
+            excerpt:
+                'The next milestone is to set up development environment instructions for contributors.',
+          ),
+        ],
+      );
+      const raw = '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [{"person": "Unassigned", "work": [], "basis": "No owners recorded"}],
+  "relevantDocuments": [{"documentId": "doc-1", "title": "README.md", "reason": "Project overview"}],
+  "blockersAndRisks": ["No risks recorded"],
+  "nextActions": ["Set up development environment instructions for contributors."],
+  "confidence": "Based on README."
+}
+''';
+      final parsed = ProjectSummaryResult.tryParse(raw);
+      final report = ProjectSummaryResult.validateParsed(
+        parsed,
+        context: supportedContext,
+        rawOutput: raw,
+      );
+
+      expect(report.isValid, isTrue);
+    });
+
+    test('classifies Ollama transport errors without parse retry need', () {
+      const raw = 'Ollama request failed: connection refused';
+      final report = ProjectSummaryResult.validateParsed(
+        ProjectSummaryResult.tryParse(raw),
+        context: ctx,
+        rawOutput: raw,
+      );
+
+      expect(report.isValid, isFalse);
+      expect(report.shouldRetry, isFalse);
+      expect(report.issues.single.code, 'model_error');
+    });
+
+    test('accepts grounded library-backed summary', () {
+      const raw = '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [{"person": "Unassigned", "work": [], "basis": "No people recorded"}],
+  "relevantDocuments": [{"documentId": "doc-1", "title": "README.md", "reason": "Project overview"}],
+  "blockersAndRisks": ["No risks recorded"],
+  "nextActions": ["Record explicit work items in Atlas"],
+  "confidence": "Goal and state are based on README; work tracking is missing."
+}
+''';
+      final parsed = ProjectSummaryResult.tryParse(raw);
+      final report = ProjectSummaryResult.validateParsed(
+        parsed,
+        context: ctx,
+        rawOutput: raw,
+      );
+
+      expect(report.isValid, isTrue);
+    });
+  });
+
   group('ProjectSummaryOutcome', () {
     test('isSuccess true when structured result is present', () {
       final outcome = ProjectSummaryOutcome(
@@ -193,6 +403,20 @@ void main() {
       );
       expect(outcome.hasStructured, isTrue);
       expect(outcome.isSuccess, isTrue);
+    });
+
+    test('isSuccess false when validation issues are present', () {
+      const outcome = ProjectSummaryOutcome(
+        rawOutput: '{"notes":[]}',
+        validationIssues: [
+          ProjectSummaryValidationIssue(
+            code: 'missing_goal',
+            message: 'goal is required',
+          ),
+        ],
+      );
+      expect(outcome.hasValidationIssues, isTrue);
+      expect(outcome.isSuccess, isFalse);
     });
 
     test('isSuccess false when rawOutput is error', () {

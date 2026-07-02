@@ -169,10 +169,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     try {
       decisions = await state.getProjectDecisions(widget.projectId);
     } catch (_) {}
+    final summarySettings = await state.loadProjectAiSummarySettings();
 
-    // Project AI summaries are dormant behind projectAiSummariesEnabled.
     Draft? cachedDraft;
-    if (state.projectAiSummariesEnabled) {
+    if (summarySettings.enabled) {
       try {
         cachedDraft = await state.getLatestProjectSummaryDraft(
           widget.projectId,
@@ -187,13 +187,16 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       _people = people;
       _risks = risks;
       _decisions = decisions;
+      _includeLibrary = summarySettings.includeLibrary;
     });
 
     if (cachedDraft != null &&
         _summaryOutcome == null &&
         _summaryText == null) {
       final docPaths = await state.getDocumentPathsForProject(widget.projectId);
-      final structured = ProjectSummaryResult.tryParse(cachedDraft.inputJson);
+      final structured =
+          ProjectSummaryResult.tryParse(cachedDraft.body) ??
+          ProjectSummaryResult.tryParse(cachedDraft.inputJson);
       if (!mounted) return;
       setState(() {
         _summaryGeneratedAt = cachedDraft!.createdAt;
@@ -864,9 +867,19 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           _summaryGeneratedAt = now;
         });
       } else {
-        final text = outcome.rawOutput?.trim().isEmpty == true
+        final rawText = outcome.rawOutput?.trim().isEmpty == true
             ? 'No output from model.'
             : (outcome.rawOutput ?? 'No output from model.');
+        final text = outcome.hasValidationIssues
+            ? [
+                'Validation failed:',
+                for (final issue in outcome.validationIssues)
+                  '- ${issue.code}: ${issue.message}',
+                '',
+                'Raw output:',
+                rawText,
+              ].join('\n')
+            : rawText;
         setState(() {
           _summaryText = text;
           _summaryGeneratedAt = now;

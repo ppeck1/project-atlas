@@ -132,8 +132,10 @@ class ProjectSummaryContext {
     if (successCriteria != null)
       buf.writeln('Success criteria: $successCriteria');
 
-    if (workItems.isNotEmpty) {
-      buf.writeln('\n## Work Items');
+    buf.writeln('\n## Work Items');
+    if (workItems.isEmpty) {
+      buf.writeln('(none recorded)');
+    } else {
       for (final item in workItems) {
         buf.write('- [${item.status}] ${item.title}');
         if (item.owner != null) buf.write(' (owner: ${item.owner})');
@@ -150,8 +152,10 @@ class ProjectSummaryContext {
       }
     }
 
-    if (people.isNotEmpty) {
-      buf.writeln('\n## People');
+    buf.writeln('\n## People');
+    if (people.isEmpty) {
+      buf.writeln('(none recorded; do not invent people or assignments)');
+    } else {
       for (final p in people) {
         buf.write('- ${p.name}');
         if (p.role != null) buf.write(' (role: ${p.role})');
@@ -160,8 +164,10 @@ class ProjectSummaryContext {
       }
     }
 
-    if (risks.isNotEmpty) {
-      buf.writeln('\n## Risks');
+    buf.writeln('\n## Risks');
+    if (risks.isEmpty) {
+      buf.writeln('(none recorded)');
+    } else {
       for (final r in risks) {
         buf.write('- [${r.severity}] ${r.title}');
         if (r.description != null) buf.write(': ${r.description}');
@@ -169,8 +175,10 @@ class ProjectSummaryContext {
       }
     }
 
-    if (decisions.isNotEmpty) {
-      buf.writeln('\n## Decisions');
+    buf.writeln('\n## Decisions');
+    if (decisions.isEmpty) {
+      buf.writeln('(none recorded)');
+    } else {
       for (final d in decisions) {
         buf.writeln('- ${d.title}');
         if (d.context != null) buf.writeln('  Context: ${d.context}');
@@ -178,8 +186,10 @@ class ProjectSummaryContext {
       }
     }
 
-    if (documents.isNotEmpty) {
-      buf.writeln('\n## Library Documents');
+    buf.writeln('\n## Library Documents');
+    if (documents.isEmpty) {
+      buf.writeln('(none supplied; do not cite or invent documents)');
+    } else {
       for (final doc in documents) {
         buf.writeln('Document ID: ${doc.id}');
         buf.writeln('Title: ${doc.title}');
@@ -312,6 +322,283 @@ class ProjectSummaryResult {
     if (start == -1 || end == -1 || end <= start) return null;
     return text.substring(start, end + 1);
   }
+
+  ProjectSummaryValidationReport validateAgainst(
+    ProjectSummaryContext context,
+  ) {
+    final issues = <ProjectSummaryValidationIssue>[];
+    final documentIds = context.documents.map((doc) => doc.id).toSet();
+    final suppliedOwnerNames = _suppliedOwnerNames(context);
+    final suppliedOwnerLabels = _suppliedOwnerLabels(context);
+
+    if (goal.where((item) => item.trim().isNotEmpty).isEmpty) {
+      issues.add(
+        const ProjectSummaryValidationIssue(
+          code: 'missing_goal',
+          message: 'goal must contain at least one non-empty string.',
+        ),
+      );
+    }
+    if (currentState.trim().isEmpty) {
+      issues.add(
+        const ProjectSummaryValidationIssue(
+          code: 'missing_current_state',
+          message: 'currentState must be a non-empty string.',
+        ),
+      );
+    }
+    if (confidence.trim().isEmpty) {
+      issues.add(
+        const ProjectSummaryValidationIssue(
+          code: 'missing_confidence',
+          message: 'confidence must describe evidence quality and gaps.',
+        ),
+      );
+    }
+    if (ownership.isEmpty) {
+      issues.add(
+        const ProjectSummaryValidationIssue(
+          code: 'missing_ownership',
+          message: 'ownership must be present; use Unassigned when unknown.',
+        ),
+      );
+    }
+    for (final owner in ownership) {
+      final person = owner.person.trim();
+      if (person.isEmpty) {
+        issues.add(
+          const ProjectSummaryValidationIssue(
+            code: 'empty_owner',
+            message: 'ownership.person cannot be empty.',
+          ),
+        );
+      } else if (suppliedOwnerNames.isEmpty && person != 'Unassigned') {
+        issues.add(
+          ProjectSummaryValidationIssue(
+            code: 'invented_owner',
+            message:
+                'ownership.person "$person" is not allowed when no owners or people are supplied; use Unassigned.',
+          ),
+        );
+      } else if (suppliedOwnerNames.isNotEmpty &&
+          person != 'Unassigned' &&
+          !suppliedOwnerNames.contains(_normalizedName(person))) {
+        issues.add(
+          ProjectSummaryValidationIssue(
+            code: 'invented_owner',
+            message:
+                'ownership.person "$person" does not match a supplied person or owner (${suppliedOwnerLabels.join(', ')}).',
+          ),
+        );
+      }
+    }
+
+    if (context.documents.isNotEmpty && relevantDocuments.isEmpty) {
+      issues.add(
+        const ProjectSummaryValidationIssue(
+          code: 'missing_relevant_documents',
+          message:
+              'Library Documents were supplied; cite at least one relevant document ID.',
+        ),
+      );
+    }
+    for (final doc in relevantDocuments) {
+      final id = doc.documentId.trim();
+      if (id.isEmpty) {
+        issues.add(
+          const ProjectSummaryValidationIssue(
+            code: 'empty_document_id',
+            message: 'relevantDocuments.documentId cannot be empty.',
+          ),
+        );
+      } else if (!documentIds.contains(id)) {
+        issues.add(
+          ProjectSummaryValidationIssue(
+            code: 'invalid_document_id',
+            message:
+                'relevantDocuments.documentId "$id" was not supplied in Library Documents.',
+          ),
+        );
+      }
+    }
+
+    if (nextActions.length > 5) {
+      issues.add(
+        const ProjectSummaryValidationIssue(
+          code: 'too_many_next_actions',
+          message: 'nextActions must contain no more than five items.',
+        ),
+      );
+    }
+    for (final action in nextActions) {
+      final text = action.trim();
+      if (text.isEmpty) {
+        issues.add(
+          const ProjectSummaryValidationIssue(
+            code: 'empty_next_action',
+            message: 'nextActions cannot contain empty strings.',
+          ),
+        );
+        continue;
+      }
+      final blockedPhrase = _unsupportedGenericActionPhrase(text, context);
+      if (blockedPhrase != null) {
+        issues.add(
+          ProjectSummaryValidationIssue(
+            code: 'unsupported_generic_action',
+            message:
+                'nextActions contains unsupported generic advice "$blockedPhrase": $text',
+          ),
+        );
+      }
+    }
+
+    return ProjectSummaryValidationReport(issues);
+  }
+
+  static ProjectSummaryValidationReport validateParsed(
+    ProjectSummaryResult? result, {
+    required ProjectSummaryContext context,
+    String? rawOutput,
+  }) {
+    if (rawOutput != null && _isModelErrorOutput(rawOutput)) {
+      return ProjectSummaryValidationReport([
+        ProjectSummaryValidationIssue(code: 'model_error', message: rawOutput),
+      ]);
+    }
+    if (rawOutput == null || rawOutput.trim().isEmpty) {
+      return const ProjectSummaryValidationReport([
+        ProjectSummaryValidationIssue(
+          code: 'empty_output',
+          message: 'The model returned no output.',
+        ),
+      ]);
+    }
+    if (rawOutput.startsWith('âš  ')) {
+      return ProjectSummaryValidationReport([
+        ProjectSummaryValidationIssue(code: 'model_error', message: rawOutput),
+      ]);
+    }
+    if (result == null) {
+      return const ProjectSummaryValidationReport([
+        ProjectSummaryValidationIssue(
+          code: 'parse_failed',
+          message: 'The model output was not parseable as a JSON object.',
+        ),
+      ]);
+    }
+    return result.validateAgainst(context);
+  }
+
+  static String _normalizedName(String value) =>
+      value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+  static Set<String> _suppliedOwnerNames(ProjectSummaryContext context) {
+    final names = <String>{};
+    void add(String? value) {
+      final normalized = _normalizedName(value ?? '');
+      if (normalized.isNotEmpty) names.add(normalized);
+    }
+
+    add(context.owner);
+    for (final item in context.workItems) {
+      add(item.owner);
+    }
+    for (final person in context.people) {
+      add(person.name);
+    }
+    return names;
+  }
+
+  static List<String> _suppliedOwnerLabels(ProjectSummaryContext context) {
+    final labels = <String>[];
+    final seen = <String>{};
+    void add(String? value) {
+      final label = value?.trim();
+      if (label == null || label.isEmpty) return;
+      if (seen.add(_normalizedName(label))) labels.add(label);
+    }
+
+    add(context.owner);
+    for (final item in context.workItems) {
+      add(item.owner);
+    }
+    for (final person in context.people) {
+      add(person.name);
+    }
+    return labels;
+  }
+
+  static bool _isModelErrorOutput(String rawOutput) {
+    final trimmed = rawOutput.trimLeft();
+    final lower = trimmed.toLowerCase();
+    return trimmed.startsWith('⚠ ') ||
+        trimmed.startsWith('âš  ') ||
+        trimmed.startsWith('Ã¢Å¡Â  ') ||
+        lower.startsWith('ollama returned http') ||
+        lower.startsWith('ollama request failed') ||
+        lower.contains('ollama returned http') ||
+        lower.contains('ollama request failed');
+  }
+
+  static String? _unsupportedGenericActionPhrase(
+    String action,
+    ProjectSummaryContext context,
+  ) {
+    final lower = action.toLowerCase();
+    final suppliedContext = context.toPromptText().toLowerCase();
+    const phrases = [
+      'schedule a meeting',
+      'communication plan',
+      'stakeholder',
+      'team member',
+      'team members',
+      'project manager',
+      'specific individuals',
+      'assign roles',
+      'establish a timeline',
+      'development timeline',
+      'set up a repository',
+      'set up project repository',
+      'set up the github repository',
+      'set up a github repository',
+      'set up development environment',
+    ];
+    for (final phrase in phrases) {
+      if (lower.contains(phrase) && !suppliedContext.contains(phrase)) {
+        return phrase;
+      }
+    }
+    return null;
+  }
+}
+
+class ProjectSummaryValidationIssue {
+  final String code;
+  final String message;
+
+  const ProjectSummaryValidationIssue({
+    required this.code,
+    required this.message,
+  });
+
+  @override
+  String toString() => '$code: $message';
+}
+
+class ProjectSummaryValidationReport {
+  final List<ProjectSummaryValidationIssue> issues;
+
+  const ProjectSummaryValidationReport(this.issues);
+
+  bool get isValid => issues.isEmpty;
+  bool get shouldRetry =>
+      issues.isNotEmpty &&
+      !issues.any(
+        (issue) => issue.code == 'model_error' || issue.code == 'empty_output',
+      );
+
+  String toPromptText() => issues.map((issue) => '- $issue').join('\n');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -322,22 +609,32 @@ class ProjectSummaryOutcome {
   /// The raw Ollama result (for fallback prose display).
   final String? rawOutput;
 
+  /// The exact prompt/evidence packet sent to the model.
+  final String? inputText;
+
   /// Parsed structured result; null if parsing failed or structured call
   /// was not attempted.
   final ProjectSummaryResult? structured;
+
+  /// Validation issues from structured summary generation.
+  final List<ProjectSummaryValidationIssue> validationIssues;
 
   /// Map from documentId → storedPath (may be null) for Explorer actions.
   final Map<String, String?> documentPaths;
 
   const ProjectSummaryOutcome({
     this.rawOutput,
+    this.inputText,
     this.structured,
+    this.validationIssues = const [],
     this.documentPaths = const {},
   });
 
   bool get hasStructured => structured != null;
+  bool get hasValidationIssues => validationIssues.isNotEmpty;
 
   bool get isSuccess {
+    if (hasValidationIssues) return false;
     if (hasStructured) return true;
     return rawOutput != null &&
         rawOutput!.trim().isNotEmpty &&

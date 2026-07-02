@@ -12,7 +12,7 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Primary navigation: Today, Projects, Operations, Library, Settings
 - Legacy deep links still available: Dashboard, Work, Review, Export, Governance, Backend Log
 - Optional local AI: Ollama drafts, Today/Review summaries, and work-item analysis remain human-in-the-loop
-- Project AI summaries: disabled in the active workflow pending a separate template/work-order redesign
+- Project AI summaries: disabled by default, with an opt-in Settings wizard for manual review and Library evidence defaults
 - Optional phone handoff: outbound Telegram task-list sending with outbox logging
 - Contacts / workforce directory with JSON and CSV import/export
 - Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
@@ -80,7 +80,7 @@ After changing Drift tables or database code, rerun build runner before launchin
 | Project Detail | Collapsible task header with project tasks and editable/movable LLM queue items with media attachments, identity, scope, lifecycle fields, local repo refresh preview/apply for docs/media/native rows, read-only git visibility inspection, project bundle preview/export, people roster, risk register, decision log, media gallery, tag assignment |
 | Operations | Manual local project scans, reviewable observations, local registry records, create/update existing Project bridge, enrichment run dashboard/findings, warnings, scan JSON copy/export, warnings JSON save, and app scan-folder access |
 | Library | Documents, project media, and AI drafts with search, project/type filters, native file picker import, copy, preview, and file-open actions |
-| Settings | Integrations, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
+| Settings | Integrations, AI summary setup, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
 | Work | Legacy stage/task list with editable work items |
 | Review | Blocked/overdue/in-progress review and optional Ollama briefing |
 | Export | Markdown task list, Telegram send, AI summary, and outbox visibility |
@@ -170,7 +170,7 @@ When Ollama is reachable, the model field becomes a **dropdown** populated with 
 
 AI actions available:
 - **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
-- **Project AI summaries** — disabled in the active workflow until the summary template and review model are redesigned as a separate work order
+- **Project AI summaries** — opt-in via **Settings -> AI Summaries**; project summaries can use the global Ollama model or a summary-specific installed model, can default to Library evidence, and keep bulk refresh separately gated while invalid schema/claim output fails validation
 - **Project summary (prose)** — legacy prose summary; still available via `summarizeProject()` in OllamaService
 - **Email draft** — drafts an email for a specific work item (Work Item Detail)
 - **Task extract** — extracts tasks from free-form note text (Work Item Detail)

@@ -44,7 +44,7 @@ The extraction helpers live in `lib/db/document_extractor.dart` as standalone pu
 
 **Library entry model bridges documents and media.** `_LibraryEntry.fromDocument` in `library_screen.dart` detects image extensions (`jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`) and sets `isMedia: true` + `mediaType: 'image'`. This lets Library-imported images appear in the Images filter and use the `InteractiveViewer` image path. The entry's `content` field uses `extractedText ?? renderedMarkdown` (stripped text first, so HTML search/copy doesn't expose raw markup). Documents with `content == null` and no image type fall through to `DocumentPreview`, which handles the full extension matrix: rendered Markdown, pretty-printed JSON, rendered HTML, EML body text, plain text, external-viewer prompt (PDF, RTF, SVG, .doc), and DOCX extracted text.
 
-**Project AI summaries are dormant.** The structured project summary pipeline remains in code for a future redesign, but active generation, background refresh, Project Detail display, Operations enrichment summary findings, and MCP summary tools are disabled. Treat the template/review model as a separate work order before re-enabling it.
+**Project AI summaries are opt-in.** The structured project summary pipeline is gated through Settings -> AI Summaries. Manual Project Detail summaries can be enabled without enabling bulk refresh; bulk refresh remains a separate operator gate. Summary generation can include linked Library documents by default, can use a summary-specific installed Ollama model, stores the evidence packet in draft `input_json`, and fails closed when schema, people, document, or generic-action validation fails. Evidence-packet preview and Library ranking remain a separate work order.
 
 **Project status/category metadata.** Project statuses and category helpers are centralized in `lib/shared/models/project_metadata.dart`. The shared status list drives Projects filtering, Project Detail editing, attention detection in `AtlasAgentService`, and summary eligibility. Status options also carry lifecycle descriptors (`Open`, `Review`, `Inactive`, `Closed`) and short descriptions so "active" project lifecycle state is not confused with open task counts. `projects.category` is editable free text; Projects groups by category and uses `Uncategorized` for empty values. The Projects tab also stores operator ordering preferences in `app_meta`: category sort, project sort, pinned category labels, and pinned project IDs.
 
@@ -80,7 +80,7 @@ lib/
     projects/    projects_screen.dart, project_detail_screen.dart
     operations/  operations_screen.dart
     library/     library_screen.dart
-    settings/    settings_screen.dart (tabs: Integrations, Activity Log, Export, Workforce, Admin)
+    settings/    settings_screen.dart (tabs: Integrations, AI Summaries, Activity Log, Export, Workforce, Admin)
     work/        work_screen.dart, status_priority_helpers.dart
     review/      review_screen.dart
     export/      export_screen.dart
@@ -195,7 +195,7 @@ Full column-level documentation with write/read sites and quirks: `VARIABLE_MAP.
 - Host: `http://localhost:11434` (configurable in Settings → Integrations)
 - Model: `qwen3.5:9b` default in code; `mistral` shown as hint in Settings UI
 - Human-in-the-loop: every response requires user review before saving
-- Actions: today summary, email draft, task extract, work item analysis, **structured project summary** (7-section JSON output with ownership, blockers, relevant docs, next actions; results cached as Drafts with startup plus 6-hour background refresh)
+- Actions: today summary, email draft, task extract, work item analysis, and opt-in structured project summary. Project summaries are controlled in Settings -> AI Summaries and can use the global Ollama model or a summary-specific installed model.
 - Timeout: 300 seconds (5-minute) for all generation calls
 
 **Telegram (outbound)**

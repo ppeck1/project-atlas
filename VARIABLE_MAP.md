@@ -52,8 +52,12 @@ Key-value store for all runtime settings and active-state flags.
 | `setting::telegram_enabled` | `'1'` or `'0'` | `SettingsScreen` | Informational (UI toggle), not enforced in send path | Toggle exists but `sendTodayToTelegram()` does not gate on this flag. |
 | `setting::ollama_host` | URL string | `SettingsScreen → setSetting()` | `_buildOllama()` in `AppState` | Defaults to `http://localhost:11434` if null. |
 | `setting::ollama_model` | model name | `SettingsScreen → setSetting()` | `_buildOllama()` in `AppState` | Defaults to `qwen3.5:9b` if null (Settings UI shows `mistral` as hint). |
+| `setting::project_ai_summaries_enabled` | `'1'` or `'0'` | Settings -> AI Summaries | `ProjectDetailScreen`, `summarizeProjectFull()` | Default off. Gates manual project summary controls and generation. |
+| `setting::project_ai_summary_include_library` | `'1'` or `'0'` | Settings -> AI Summaries | `ProjectDetailScreen`, `summarizeProjectFull()` | Default on. Controls whether linked Library docs are included by default. |
+| `setting::project_ai_summary_allow_bulk_refresh` | `'1'` or `'0'` | Settings -> AI Summaries | `ProjectsScreen`, `refreshMissingProjectSummaries()` | Default off. Bulk refresh is a separate gate from manual summaries. |
+| `setting::project_ai_summary_model` | model name? | Settings -> AI Summaries | `summarizeProjectFull()`, `refreshMissingProjectSummaries()` | Optional summary-specific Ollama model. Null/empty falls back to `setting::ollama_model`. |
 
-**AppDb constants:** `kActiveProjectId`, `kTelegramBotToken`, `kTelegramChatId`, `kTelegramEnabled`, `kOllamaHost`, `kOllamaModel`  
+**AppDb constants:** `kActiveProjectId`, `kTelegramBotToken`, `kTelegramChatId`, `kTelegramEnabled`, `kOllamaHost`, `kOllamaModel`, `kProjectAiSummariesEnabled`, `kProjectAiSummaryIncludeLibrary`, `kProjectAiSummaryAllowBulkRefresh`, `kProjectAiSummaryModel`
 **Quirks:** All values stored as raw text strings. No type coercion — callers must parse booleans as `'1'/'0'` and handle null as "not set / use default".
 
 ---
@@ -642,7 +646,7 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `activeProject` | `Project? getter` | Synchronous read from cache. May be stale for one frame after a project switch. |
 | `hasActiveProject` | `ValueNotifier<bool>` | Router uses this for nav gating. Updated on every active-project stream event. |
 
-**Background refresh:** Project AI summary refresh is disabled pending a separate work order. The constructor still schedules the linked-local project refresh timer when background refreshes are enabled.
+**Background refresh:** Project AI summary refresh is no longer automatic on a timer. Manual project summaries are gated by `project_ai_summaries_enabled`; toolbar bulk refresh is separately gated by `project_ai_summary_allow_bulk_refresh`. The constructor still schedules the linked-local project refresh timer when background refreshes are enabled.
 
 **AppState document methods:**
 
@@ -652,8 +656,8 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `deleteDocument(id)` | `Future<void>` | Calls `db.deleteDocument(id)` (removes document_links, documents row, and disk file), then `notifyListeners()`. |
 | `getLatestProjectSummaryDraft(projectId)` | `Future<Draft?>` | Delegate to `db.getLatestProjectSummaryDraft(projectId)`. |
 | `getDocumentPathsForProject(projectId)` | `Future<Map<String, String?>>` | Delegate to `db.getDocumentPathsForProject(projectId)`. |
-| `summarizeProjectFull(projectId)` | `Future<ProjectSummaryOutcome>` | Dormant project AI summary generator. Currently throws while `projectAiSummariesEnabled == false`; retained for the separate summary redesign work order. |
-| `refreshMissingProjectSummaries({force, includeLibrary, betweenProjects})` | `Future<ProjectSummaryRefreshResult>` | Disabled while project AI summaries are out of scope. Returns a zero-count result with an explanatory error and does not call Ollama. |
+| `summarizeProjectFull(projectId)` | `Future<ProjectSummaryOutcome>` | Opt-in structured project summary generator. Throws while `projectAiSummariesEnabled == false`; otherwise uses the summary-specific model setting when present, can include linked Library docs, validates output, and saves a review draft. |
+| `refreshMissingProjectSummaries({force, includeLibrary, betweenProjects})` | `Future<ProjectSummaryRefreshResult>` | Bulk project-summary refresh. Requires `projectAiSummaryAllowBulkRefresh == true`; otherwise returns a zero-count result with an explanatory error and does not call Ollama. |
 | `mergeProjects({sourceProjectId, targetProjectId})` | `Future<Map<String, int>>` | Delegates to `AppDb.mergeProjects()`, moves source-linked rows to the target, notifies listeners, and returns moved row counts. |
 | `exportOperationalBackupToJson(path)` | `Future<int>` | Exports a ZIP archive to `path` containing `backup.json` (all DB tables serialized) plus `documents/<id>.<ext>` and `media/<id>.<ext>` entries for all stored files. |
 | `previewProjectBundleExport(projectId, {includeFiles})` | `Future<ProjectBundleExportPreview>` | Builds the review summary for project bundle export: Atlas record counts, optional copied file counts, registry/observation/refresh-ledger counts, and missing-file warnings. Read-only. |
@@ -754,8 +758,8 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 
 | Variable | Type | Notes |
 |----------|------|-------|
-| `_summaryOutcome` | `ProjectSummaryOutcome?` | Dormant project AI summary state retained for the separate redesign work order. |
-| `_summaryGeneratedAt` | `DateTime?` | Dormant project AI summary timestamp retained for the separate redesign work order. |
+| `_summaryOutcome` | `ProjectSummaryOutcome?` | Current or cached project AI summary result when opt-in summaries are enabled. Validation failures are retained for operator review. |
+| `_summaryGeneratedAt` | `DateTime?` | Timestamp for the current or cached project AI summary result. |
 | `_taskHeaderExpanded` | `bool` | Controls the top collapsible Project Detail task header. Defaults expanded. |
 | `_llmQueueItems` | `List<LlmTaskQueueItem>` | Most recent queue items for the current project, rendered in the LLM queue subsection and manager dialog. Queue rows open an operator edit/move/cancel/requeue dialog with media attachment controls. |
 
@@ -838,13 +842,13 @@ Transport-neutral MCP tool registry and JSON-safe dispatcher for `AtlasAgentServ
 |--------|-------|--------|-------|
 | `isAvailable()` | — | `bool` | GET to `/api/tags`. Timeout: 4 s. Checks server reachability only, not model presence. |
 | `isModelAvailable()` | — | `bool` | Parses `/api/tags` model list; prefix-matches `model` (handles `:tag` suffixes). |
-| `getAvailableModels()` | — | `List<String>` | Returns all installed model names sorted alphabetically. Returns `[]` if Ollama unreachable. Used by Settings → Integrations model dropdown. |
+| `getAvailableModels()` | — | `List<String>` | Returns all installed model names sorted alphabetically. Returns `[]` if Ollama unreachable. Used by Settings -> Integrations and Settings -> AI Summaries model dropdowns. |
 | `summarizeProject(...)` | project title, active/blocked/done work item titles | `OllamaResult` | Includes `desired_outcome` and `success_criteria` in system prompt if set. |
 | `summarizeToday(...)` | doing/overdue/dueToday/blocked item titles | `OllamaResult` | |
 | `draftEmail(...)` | task context + user instruction | `OllamaResult` | |
 | `extractTasksFromNote(...)` | raw text, project title | `OllamaResult` | |
 | `analyzeWorkItem(...)` | work item fields + linked document text | `OllamaResult` | Read-only; does not mutate any record. |
-| `summarizeProjectStructured({required ProjectSummaryContext context})` | `ProjectSummaryContext` | `({OllamaResult result, ProjectSummaryResult? parsed})` | Structured JSON summary via `format:"json"`, low temperature. Uses `_chatStructured`. |
+| `summarizeProjectStructured({required ProjectSummaryContext context})` | `ProjectSummaryContext` | `({OllamaResult result, ProjectSummaryResult? parsed, ProjectSummaryValidationReport validation})` | Structured JSON summary via `format:"json"`, low temperature. Validates parsed output and retries once with validation feedback before failing closed. |
 
 **`OllamaResult`:** `{ input: String, output: String?, kind: String, title: String, isSuccess: bool }`  
 `output == null` or `isSuccess == false` means unavailable or empty. Never auto-applied.
