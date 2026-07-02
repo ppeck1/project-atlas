@@ -566,10 +566,10 @@ Atlas-owned refresh/audit run history for local project completeness.
 | `unchanged_items` | INTEGER | 0 | Ledger-matched unchanged refresh entries. |
 | `skipped_items` | INTEGER | 0 | Refresh entries skipped by selection/status. |
 | `failed_projects` | INTEGER | 0 | Linked project refresh failures. |
-| `summary_considered` | INTEGER | 0 | Legacy counter retained while project AI summaries are disabled. |
-| `summary_refreshed` | INTEGER | 0 | Legacy counter retained while project AI summaries are disabled. |
-| `summary_skipped` | INTEGER | 0 | Legacy counter retained while project AI summaries are disabled. |
-| `summary_failed` | INTEGER | 0 | Legacy counter retained while project AI summaries are disabled. |
+| `summary_considered` | INTEGER | 0 | Legacy enrichment counter retained for reporting. Project AI summaries are opt-in/manual and bulk-gated outside enrichment. |
+| `summary_refreshed` | INTEGER | 0 | Legacy enrichment counter retained for reporting. Project AI summaries are opt-in/manual and bulk-gated outside enrichment. |
+| `summary_skipped` | INTEGER | 0 | Legacy enrichment counter retained for reporting. Project AI summaries are opt-in/manual and bulk-gated outside enrichment. |
+| `summary_failed` | INTEGER | 0 | Legacy enrichment counter retained for reporting. Project AI summaries are opt-in/manual and bulk-gated outside enrichment. |
 | `findings` | INTEGER | 0 | Findings saved for this run. |
 | `open_findings` | INTEGER | 0 | Findings with `status='open'`. |
 | `warnings_json` | TEXT | `[]` | Run-level warnings. |
@@ -656,7 +656,7 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `deleteDocument(id)` | `Future<void>` | Calls `db.deleteDocument(id)` (removes document_links, documents row, and disk file), then `notifyListeners()`. |
 | `getLatestProjectSummaryDraft(projectId)` | `Future<Draft?>` | Delegate to `db.getLatestProjectSummaryDraft(projectId)`. |
 | `getDocumentPathsForProject(projectId)` | `Future<Map<String, String?>>` | Delegate to `db.getDocumentPathsForProject(projectId)`. |
-| `buildProjectSummaryEvidencePacket(projectId, {includeLibrary})` | `Future<ProjectSummaryEvidencePacket>` | Builds the same ranked/capped Library evidence packet used by Project Detail preview and generation. README/HANDOFF/CURRENT_STATE/ACTIVE_TASK-style docs rank highest; excerpts are capped per document and per packet. |
+| `buildProjectSummaryEvidencePacket(projectId, {includeLibrary})` | `Future<ProjectSummaryEvidencePacket>` | Builds the same categorized, ranked, capped Library evidence packet used by Project Detail preview and generation. ACTIVE_TASK/CURRENT_STATE/HANDOFF/README/ACCEPTANCE-style docs rank ahead of raw source; excerpts are capped per document and per packet; packet warnings flag missing, unreadable, truncated, or metadata-only evidence. |
 | `summarizeProjectFull(projectId, {includeLibrary, evidencePacket, trigger})` | `Future<ProjectSummaryOutcome>` | Opt-in structured project summary generator. Throws while `projectAiSummariesEnabled == false`; otherwise uses the summary-specific model setting when present, can include a prebuilt ranked Library evidence packet, validates output, saves a review draft, and logs correlated summary provenance. |
 | `refreshMissingProjectSummaries({force, includeLibrary, betweenProjects})` | `Future<ProjectSummaryRefreshResult>` | Bulk project-summary refresh. Requires `projectAiSummaryAllowBulkRefresh == true`; otherwise returns a zero-count result with an explanatory error and does not call Ollama. |
 | `mergeProjects({sourceProjectId, targetProjectId})` | `Future<Map<String, int>>` | Delegates to `AppDb.mergeProjects()`, moves source-linked rows to the target, notifies listeners, and returns moved row counts. |
@@ -887,7 +887,7 @@ Input models (all `const`-constructable):
 | `ProjectSummaryContextDecision` | `title, decider?` | Decision entry for the summary prompt. |
 | `ProjectSummaryContextDoc` | `id, title, extension?, excerpt?, storedPath?, canOpenInExplorer, rank?, score?, selectionReason?` | Document reference with optional text excerpt and ranked evidence-preview metadata. |
 | `ProjectSummaryContext` | `id, title, description?, desiredOutcome?, successCriteria?, status, phase?, priority?, owner?, workItems, people, risks, decisions, documents` | Top-level input aggregate. Has `toPromptText()` method that serializes all fields to a human-readable prompt string. |
-| `ProjectSummaryEvidencePacket` | `context, includeLibrary, suppliedDocumentCount, maxExcerptCharsPerDoc, maxTotalExcerptChars, warnings` | Shared Project Detail preview/generation packet. Exposes document counts, excerpt totals, document paths, and compact log JSON without storing full excerpts in `event_log`. |
+| `ProjectSummaryEvidencePacket` | `context, includeLibrary, suppliedDocumentCount, maxExcerptCharsPerDoc, maxTotalExcerptChars, warnings` | Shared Project Detail preview/generation packet. Exposes document counts, excerpt totals, category counts, document paths, compact log JSON, and deterministic evaluation JSON without storing full excerpts in `event_log`. |
 
 Output models:
 
@@ -1138,7 +1138,9 @@ OperationsScreen Registered Projects -> Create new
        -> sets review_state='linked' and atlas_project_id
     -> importDocumentFromPath(path, projectId)
        -> imports safe root marker docs:
-          README.md, ACTIVE_TASK.md, CURRENT_STATE.md, AGENTS.md, CLAUDE.md,
+          README.md, ACTIVE_TASK.md, CURRENT_STATE.md, HANDOFF.md,
+          ACCEPTANCE.md, OPERATIONS.md, ROADMAP.md, CHANGELOG.md,
+          CHANGELOG_AGENT.md, DECISIONS.md, AGENTS.md, CLAUDE.md,
           package.json, pubspec.yaml, pyproject.toml
     -> AppState.applyLocalProjectRefreshForRegistryEntry(...)
        -> imports/updates refresh-profile documents, media, source files, cards,
@@ -1165,8 +1167,6 @@ OperationsScreen Enrichment -> Run enrichment
     -> AppState.refreshLinkedLocalProjects()
        -> applies local refresh for linked registry rows
        -> imports/updates documents, media, source files, cards, work items, risks, decisions, and project metadata
-    -> AppState.refreshMissingProjectSummaries()
-       -> refreshes cached summaries when Ollama is available
     -> audit registry/project completeness
        -> checks registry links, local paths, docs/media/source/card coverage, tags, people, tasks, risks, decisions, summaries, git/GitHub cache
     -> AppDb.addProjectEnrichmentFinding(...) for each info/warning/error

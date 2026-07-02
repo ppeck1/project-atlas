@@ -12,7 +12,7 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Primary navigation: Today, Projects, Operations, Library, Settings
 - Legacy deep links still available: Dashboard, Work, Review, Export, Governance, Backend Log
 - Optional local AI: Ollama drafts, Today/Review summaries, and work-item analysis remain human-in-the-loop
-- Project AI summaries: disabled by default, with an opt-in Settings wizard for manual review and Library evidence defaults
+- Project AI summaries: disabled by default, with an opt-in Settings wizard for manual review, Library evidence defaults, ranked evidence preview, and packet warnings
 - Optional phone handoff: outbound Telegram task-list sending with outbox logging
 - Contacts / workforce directory with JSON and CSV import/export
 - Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
@@ -120,7 +120,7 @@ MIME type is detected at import and saved to the `mime_type` column. Image docum
 
 ### Linking documents and media to work items
 
-Documents can be linked to work items in the Work Item Detail sheet. Linked documents are included in Ollama work-item analysis and project structured summaries (up to 3 000 chars per document, 16 000 char total cap).
+Documents can be linked to work items in the Work Item Detail sheet. Linked work-item documents are included in Ollama work-item analysis; project-linked Library documents are included in project structured summaries (up to 3 000 chars per document, 16 000 char total cap).
 
 Project media can also be attached from the Work Item Detail sheet. These attachments keep visual/audio/file context beside the task without feeding binary content into Ollama prompts.
 
@@ -170,7 +170,7 @@ When Ollama is reachable, the model field becomes a **dropdown** populated with 
 
 AI actions available:
 - **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
-- **Project AI summaries** — opt-in via **Settings -> AI Summaries**; project summaries can use the global Ollama model or a summary-specific installed model, can default to Library evidence, preview the ranked evidence packet, log summary run provenance, and keep bulk refresh separately gated while invalid schema/claim output fails validation
+- **Project AI summaries** — opt-in via **Settings -> AI Summaries**; project summaries can use the global Ollama model or a summary-specific installed model, can default to Library evidence, preview the categorized ranked evidence packet with warnings, log summary run provenance, emit deterministic evaluation JSON for tests, and keep bulk refresh separately gated while invalid schema/claim output fails validation
 - **Project summary (prose)** — legacy prose summary; still available via `summarizeProject()` in OllamaService
 - **Email draft** — drafts an email for a specific work item (Work Item Detail)
 - **Task extract** — extracts tasks from free-form note text (Work Item Detail)

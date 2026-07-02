@@ -70,6 +70,7 @@ class ProjectSummaryContextDoc {
   final String id;
   final String title;
   final String? extension;
+  final String? evidenceCategory;
   final String? excerpt;
   final String? storedPath;
   final bool canOpenInExplorer;
@@ -81,6 +82,7 @@ class ProjectSummaryContextDoc {
     required this.id,
     required this.title,
     this.extension,
+    this.evidenceCategory,
     this.excerpt,
     this.storedPath,
     this.canOpenInExplorer = false,
@@ -97,6 +99,7 @@ class ProjectSummaryContextDoc {
       'id': id,
       'title': title,
       'extension': extension,
+      'evidenceCategory': evidenceCategory,
       'rank': rank,
       'score': score,
       'selectionReason': selectionReason,
@@ -219,9 +222,17 @@ class ProjectSummaryContext {
         buf.writeln('Document ID: ${doc.id}');
         buf.writeln('Title: ${doc.title}');
         if (doc.extension != null) buf.writeln('Type: .${doc.extension}');
+        if (doc.evidenceCategory != null) {
+          buf.writeln('Evidence category: ${doc.evidenceCategory}');
+        }
+        if (doc.selectionReason != null) {
+          buf.writeln('Selection reason: ${doc.selectionReason}');
+        }
         if (doc.excerpt != null && doc.excerpt!.trim().isNotEmpty) {
           buf.writeln('Excerpt:');
           buf.writeln(doc.excerpt);
+        } else {
+          buf.writeln('No excerpt supplied; do not infer from title alone.');
         }
         buf.writeln('---');
       }
@@ -259,6 +270,15 @@ class ProjectSummaryEvidencePacket {
   int get totalExcerptChars =>
       documents.fold<int>(0, (sum, doc) => sum + doc.excerptChars);
 
+  Map<String, int> get categoryCounts {
+    final counts = <String, int>{};
+    for (final doc in documents) {
+      final category = doc.evidenceCategory ?? 'unknown';
+      counts[category] = (counts[category] ?? 0) + 1;
+    }
+    return Map.unmodifiable(counts);
+  }
+
   Map<String, String?> get documentPaths => {
     for (final doc in documents) doc.id: doc.storedPath,
   };
@@ -274,12 +294,30 @@ class ProjectSummaryEvidencePacket {
     'includedDocumentCount': includedDocumentCount,
     'excerptedDocumentCount': excerptedDocumentCount,
     'totalExcerptChars': totalExcerptChars,
+    'categoryCounts': categoryCounts,
     'maxExcerptCharsPerDoc': maxExcerptCharsPerDoc,
     'maxTotalExcerptChars': maxTotalExcerptChars,
     'workItems': context.workItems.length,
     'people': context.people.length,
     'risks': context.risks.length,
     'decisions': context.decisions.length,
+    'warnings': warnings,
+    'documents': documents
+        .map((doc) => doc.toEvidenceJson())
+        .toList(growable: false),
+  };
+
+  Map<String, Object?> toEvaluationJson({String? label}) => {
+    'schema': 'project_summary_evidence_evaluation_v1',
+    'label': label,
+    'projectId': context.id,
+    'projectTitle': context.title,
+    'includeLibrary': includeLibrary,
+    'suppliedDocumentCount': suppliedDocumentCount,
+    'includedDocumentCount': includedDocumentCount,
+    'excerptedDocumentCount': excerptedDocumentCount,
+    'totalExcerptChars': totalExcerptChars,
+    'categoryCounts': categoryCounts,
     'warnings': warnings,
     'documents': documents
         .map((doc) => doc.toEvidenceJson())

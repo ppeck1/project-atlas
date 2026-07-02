@@ -3266,6 +3266,11 @@ class _EvidencePacketPreview extends StatelessWidget {
     return '$value';
   }
 
+  String _categoryLabel(String? value) =>
+      (value == null || value.trim().isEmpty)
+      ? 'other'
+      : value.replaceAll('_', ' ');
+
   @override
   Widget build(BuildContext context) {
     final currentPacket = packet;
@@ -3334,11 +3339,55 @@ class _EvidencePacketPreview extends StatelessWidget {
                 'No linked Library documents.',
                 style: TextStyle(fontSize: 12, color: Colors.white54),
               )
-            else
+            else ...[
+              if (currentPacket.warnings.isNotEmpty) ...[
+                ...currentPacket.warnings
+                    .take(3)
+                    .map(
+                      (warning) => Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.warning_amber_rounded,
+                              size: 13,
+                              color: Colors.amberAccent,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                warning,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white54,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                if (currentPacket.warnings.length > 3)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 5),
+                    child: Text(
+                      '+${currentPacket.warnings.length - 3} more warning(s)',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.white38,
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 2),
+              ],
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: docs.take(6).map((doc) {
                   final reason = doc.selectionReason ?? 'linked document';
+                  final category = _categoryLabel(doc.evidenceCategory);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Row(
@@ -3369,7 +3418,7 @@ class _EvidencePacketPreview extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                '$reason - ${_chars(doc.excerptChars)} chars',
+                                '$category - $reason - ${_chars(doc.excerptChars)} chars',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -3385,6 +3434,7 @@ class _EvidencePacketPreview extends StatelessWidget {
                   );
                 }).toList(),
               ),
+            ],
           ],
         ],
       ),

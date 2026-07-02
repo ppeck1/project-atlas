@@ -135,9 +135,37 @@ void main() {
           extension: 'txt',
         );
         await db.importGeneratedDocument(
+          title: 'lib/main.dart',
+          originalFilename: 'lib/main.dart',
+          body: 'void main() {}',
+          projectId: 'summary-proj',
+          extension: 'dart',
+        );
+        await db.importGeneratedDocument(
           title: 'README.md',
           originalFilename: 'README.md',
           body: List.filled(500, 'README evidence').join(' '),
+          projectId: 'summary-proj',
+          extension: 'md',
+        );
+        await db.importGeneratedDocument(
+          title: 'HANDOFF.md',
+          originalFilename: 'HANDOFF.md',
+          body: 'Handoff evidence.',
+          projectId: 'summary-proj',
+          extension: 'md',
+        );
+        await db.importGeneratedDocument(
+          title: 'CURRENT_STATE.md',
+          originalFilename: 'CURRENT_STATE.md',
+          body: 'Current state evidence.',
+          projectId: 'summary-proj',
+          extension: 'md',
+        );
+        await db.importGeneratedDocument(
+          title: 'ACTIVE_TASK.md',
+          originalFilename: 'ACTIVE_TASK.md',
+          body: 'Active task evidence.',
           projectId: 'summary-proj',
           extension: 'md',
         );
@@ -146,20 +174,97 @@ void main() {
           'summary-proj',
           includeLibrary: true,
         );
-        expect(packet.suppliedDocumentCount, 2);
-        expect(packet.includedDocumentCount, 2);
-        expect(packet.documents.first.title, 'README.md');
-        expect(packet.documents.first.selectionReason, 'project readme');
+        expect(packet.suppliedDocumentCount, 6);
+        expect(packet.includedDocumentCount, 6);
+        expect(
+          packet.documents.take(4).map((doc) => doc.evidenceCategory).toList(),
+          ['active_task', 'current_state', 'handoff', 'readme'],
+        );
+        expect(packet.documents.first.title, 'ACTIVE_TASK.md');
+        expect(packet.documents.first.selectionReason, 'active task');
         expect(packet.documents.first.excerptChars, lessThanOrEqualTo(3000));
         expect(packet.totalExcerptChars, lessThanOrEqualTo(16000));
+        expect(packet.categoryCounts['source'], 1);
+
+        final logJson = packet.toLogJson(model: 'mistral', trigger: 'test');
+        expect(logJson['categoryCounts'], containsPair('readme', 1));
+
+        final evalJson = packet.toEvaluationJson(label: 'ranking-fixture');
+        expect(evalJson['schema'], 'project_summary_evidence_evaluation_v1');
+        expect(evalJson['label'], 'ranking-fixture');
+        final evalDocs = evalJson['documents']! as List<Object?>;
+        expect(evalDocs.first, containsPair('evidenceCategory', 'active_task'));
 
         final gated = await state.buildProjectSummaryEvidencePacket(
           'summary-proj',
           includeLibrary: false,
         );
-        expect(gated.suppliedDocumentCount, 2);
+        expect(gated.suppliedDocumentCount, 6);
         expect(gated.includedDocumentCount, 0);
         expect(gated.warnings.single, contains('Library evidence disabled'));
+      },
+    );
+
+    test(
+      'project summary evidence packet warns on weak source packets',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        await db.createProject(
+          'summary-warnings',
+          'Summary Warnings',
+          DateTime(2026, 1, 1),
+        );
+        await db.importGeneratedDocument(
+          title: 'manual.pdf',
+          originalFilename: 'manual.pdf',
+          body: '',
+          projectId: 'summary-warnings',
+          extension: 'pdf',
+        );
+
+        final unreadablePacket = await state.buildProjectSummaryEvidencePacket(
+          'summary-warnings',
+          includeLibrary: true,
+        );
+        expect(unreadablePacket.documents.single.hasExcerpt, isFalse);
+        expect(
+          unreadablePacket.warnings,
+          contains(
+            'No readable excerpts available from linked Library documents.',
+          ),
+        );
+
+        await db.createProject(
+          'summary-caps',
+          'Summary Caps',
+          DateTime(2026, 1, 1),
+        );
+        for (var index = 0; index < 7; index++) {
+          await db.importGeneratedDocument(
+            title: 'notes-$index.md',
+            originalFilename: 'notes-$index.md',
+            body: List.filled(500, 'long evidence').join(' '),
+            projectId: 'summary-caps',
+            extension: 'md',
+          );
+        }
+
+        final cappedPacket = await state.buildProjectSummaryEvidencePacket(
+          'summary-caps',
+          includeLibrary: true,
+        );
+        expect(cappedPacket.totalExcerptChars, 16000);
+        expect(cappedPacket.excerptedDocumentCount, 6);
+        expect(
+          cappedPacket.warnings,
+          contains(contains('truncated at 3000 chars')),
+        );
+        expect(
+          cappedPacket.warnings,
+          contains(contains('Excerpt budget reached at 16000 chars')),
+        );
       },
     );
 

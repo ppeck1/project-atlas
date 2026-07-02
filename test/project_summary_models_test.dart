@@ -167,6 +167,8 @@ void main() {
             id: 'doc-1',
             title: 'Design Doc',
             extension: 'md',
+            evidenceCategory: 'requirements',
+            selectionReason: 'requirements/spec',
             excerpt: 'The system should do X.',
           ),
         ],
@@ -174,7 +176,35 @@ void main() {
       final text = ctx.toPromptText();
       expect(text, contains('doc-1'));
       expect(text, contains('Design Doc'));
+      expect(text, contains('Evidence category: requirements'));
+      expect(text, contains('Selection reason: requirements/spec'));
       expect(text, contains('The system should do X.'));
+    });
+
+    test('guards metadata-only documents', () {
+      const ctx = ProjectSummaryContext(
+        id: 'proj-1',
+        title: 'T',
+        status: 'active',
+        workItems: [],
+        people: [],
+        risks: [],
+        decisions: [],
+        documents: [
+          ProjectSummaryContextDoc(
+            id: 'doc-1',
+            title: 'Manual.pdf',
+            extension: 'pdf',
+            evidenceCategory: 'binary',
+            selectionReason: 'binary or metadata-only document',
+          ),
+        ],
+      );
+      final text = ctx.toPromptText();
+      expect(
+        text,
+        contains('No excerpt supplied; do not infer from title alone.'),
+      );
     });
   });
 
@@ -189,6 +219,110 @@ void main() {
       decisions: [],
       documents: [ProjectSummaryContextDoc(id: 'doc-1', title: 'README.md')],
     );
+
+    test('evaluates deterministic validation fixtures', () {
+      final fixtures =
+          <
+            ({
+              String name,
+              String rawOutput,
+              bool expectedValid,
+              Set<String> expectedIssueCodes,
+            })
+          >[
+            (
+              name: 'bad extraction schema',
+              rawOutput: '''
+{
+  "notes": [
+    {"title": "Stable State", "description": "Extracted content"}
+  ]
+}
+''',
+              expectedValid: false,
+              expectedIssueCodes: {'missing_goal', 'missing_current_state'},
+            ),
+            (
+              name: 'invented owner and document',
+              rawOutput: '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [{"person": "Alice", "work": [], "basis": "Made up"}],
+  "relevantDocuments": [{"documentId": "doc-404", "title": "X", "reason": "Y"}],
+  "blockersAndRisks": ["None recorded"],
+  "nextActions": ["Record work items"],
+  "confidence": "Based on supplied context."
+}
+''',
+              expectedValid: false,
+              expectedIssueCodes: {'invented_owner', 'invalid_document_id'},
+            ),
+            (
+              name: 'missing relevant docs',
+              rawOutput: '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [{"person": "Unassigned", "work": [], "basis": "No people"}],
+  "relevantDocuments": [],
+  "blockersAndRisks": ["None recorded"],
+  "nextActions": ["Record work items"],
+  "confidence": "Based on supplied context."
+}
+''',
+              expectedValid: false,
+              expectedIssueCodes: {'missing_relevant_documents'},
+            ),
+            (
+              name: 'too many next actions',
+              rawOutput: '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [{"person": "Unassigned", "work": [], "basis": "No people"}],
+  "relevantDocuments": [{"documentId": "doc-1", "title": "README.md", "reason": "Project overview"}],
+  "blockersAndRisks": ["None recorded"],
+  "nextActions": ["One", "Two", "Three", "Four", "Five", "Six"],
+  "confidence": "Based on supplied context."
+}
+''',
+              expectedValid: false,
+              expectedIssueCodes: {'too_many_next_actions'},
+            ),
+            (
+              name: 'grounded readme summary',
+              rawOutput: '''
+{
+  "goal": ["G"],
+  "currentState": "S",
+  "ownership": [{"person": "Unassigned", "work": [], "basis": "No people recorded"}],
+  "relevantDocuments": [{"documentId": "doc-1", "title": "README.md", "reason": "Project overview"}],
+  "blockersAndRisks": ["No risks recorded"],
+  "nextActions": ["Record explicit work items in Atlas"],
+  "confidence": "Goal and state are based on README; work tracking is missing."
+}
+''',
+              expectedValid: true,
+              expectedIssueCodes: <String>{},
+            ),
+          ];
+
+      for (final fixture in fixtures) {
+        final parsed = ProjectSummaryResult.tryParse(fixture.rawOutput);
+        final report = ProjectSummaryResult.validateParsed(
+          parsed,
+          context: ctx,
+          rawOutput: fixture.rawOutput,
+        );
+        expect(report.isValid, fixture.expectedValid, reason: fixture.name);
+        expect(
+          report.issues.map((issue) => issue.code).toSet(),
+          containsAll(fixture.expectedIssueCodes),
+          reason: fixture.name,
+        );
+      }
+    });
 
     test('rejects content extraction JSON that does not match schema', () {
       const raw = '''

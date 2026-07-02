@@ -261,6 +261,13 @@ class AppState extends ChangeNotifier {
     'README.md',
     'ACTIVE_TASK.md',
     'CURRENT_STATE.md',
+    'HANDOFF.md',
+    'ACCEPTANCE.md',
+    'OPERATIONS.md',
+    'ROADMAP.md',
+    'CHANGELOG.md',
+    'CHANGELOG_AGENT.md',
+    'DECISIONS.md',
     'AGENTS.md',
     'CLAUDE.md',
     'package.json',
@@ -270,6 +277,51 @@ class AppState extends ChangeNotifier {
   static const int _projectEnrichmentProposalCap = 120;
   static const int _projectSummaryMaxCharsPerDoc = 3000;
   static const int _projectSummaryMaxTotalDocChars = 16000;
+  static const Map<String, int> _projectSummaryCategoryWeights = {
+    'active_task': 1200,
+    'current_state': 1180,
+    'handoff': 1160,
+    'readme': 1140,
+    'acceptance': 1120,
+    'operations': 1100,
+    'roadmap': 1060,
+    'requirements': 1040,
+    'change_history': 1020,
+    'agent_guidance': 1000,
+    'text': 560,
+    'source': 240,
+    'binary': 160,
+    'other': 100,
+  };
+  static const Set<String> _projectSummaryTextExtensions = {
+    'md',
+    'mdx',
+    'txt',
+    'log',
+    'rst',
+    'html',
+    'htm',
+    'eml',
+    'json',
+    'yaml',
+    'yml',
+    'toml',
+    'ini',
+    'csv',
+    'xml',
+  };
+  static const Set<String> _projectSummarySourceExtensions = {
+    'dart',
+    'py',
+    'js',
+    'ts',
+    'tsx',
+    'jsx',
+    'java',
+    'cs',
+    'go',
+    'rs',
+  };
 
   Timer? _localProjectRefreshTimer;
   bool _summaryRefreshRunning = false;
@@ -4491,18 +4543,24 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
 
     final suppliedDocs = await db.getDocumentsForProject(projectId);
-    final rankedDocs = suppliedDocs.toList()
-      ..sort((a, b) {
-        final scoreCompare = _projectSummaryDocumentScore(
-          b,
-        ).compareTo(_projectSummaryDocumentScore(a));
-        if (scoreCompare != 0) return scoreCompare;
-        final titleCompare = a.title.toLowerCase().compareTo(
-          b.title.toLowerCase(),
-        );
-        if (titleCompare != 0) return titleCompare;
-        return a.id.compareTo(b.id);
-      });
+    final rankedDocs =
+        suppliedDocs.map((doc) {
+          final classification = _projectSummaryDocumentClassification(doc);
+          return (
+            doc: doc,
+            category: classification.category,
+            reason: classification.reason,
+            score: classification.score,
+          );
+        }).toList()..sort((a, b) {
+          final scoreCompare = b.score.compareTo(a.score);
+          if (scoreCompare != 0) return scoreCompare;
+          final titleCompare = a.doc.title.toLowerCase().compareTo(
+            b.doc.title.toLowerCase(),
+          );
+          if (titleCompare != 0) return titleCompare;
+          return a.doc.id.compareTo(b.doc.id);
+        });
     final warnings = <String>[];
     final contextDocs = <ProjectSummaryContextDoc>[];
 
@@ -4513,35 +4571,78 @@ class AppState extends ChangeNotifier {
     }
 
     if (resolvedIncludeLibrary) {
+      if (suppliedDocs.isEmpty) {
+        warnings.add(
+          'Library evidence enabled; no linked documents available.',
+        );
+      }
       var totalChars = 0;
+      var unreadableDocuments = 0;
+      var documentCapTruncations = 0;
+      var packetCapTruncations = 0;
+      var budgetMetadataOnlyDocuments = 0;
       for (var index = 0; index < rankedDocs.length; index++) {
-        final doc = rankedDocs[index];
+        final ranked = rankedDocs[index];
+        final doc = ranked.doc;
         String? excerpt;
         if (totalChars < _projectSummaryMaxTotalDocChars) {
-          excerpt = await _readDocumentExcerpt(
-            doc,
-            maxChars: _projectSummaryMaxCharsPerDoc,
-          );
-          if (excerpt != null) {
+          final rawText = await _readDocumentText(doc);
+          if (rawText != null) {
+            excerpt = rawText;
+            if (excerpt.length > _projectSummaryMaxCharsPerDoc) {
+              excerpt = excerpt.substring(0, _projectSummaryMaxCharsPerDoc);
+              documentCapTruncations++;
+            }
             final remaining = _projectSummaryMaxTotalDocChars - totalChars;
             if (excerpt.length > remaining) {
               excerpt = excerpt.substring(0, remaining);
+              packetCapTruncations++;
             }
             totalChars += excerpt.length;
+          } else {
+            unreadableDocuments++;
           }
+        } else {
+          budgetMetadataOnlyDocuments++;
         }
         contextDocs.add(
           ProjectSummaryContextDoc(
             id: doc.id,
             title: doc.title,
             extension: doc.extension,
+            evidenceCategory: ranked.category,
             excerpt: excerpt,
             storedPath: doc.storedPath,
             canOpenInExplorer: _canOpenSummaryDocument(doc),
             rank: index + 1,
-            score: _projectSummaryDocumentScore(doc),
-            selectionReason: _projectSummaryDocumentReason(doc),
+            score: ranked.score,
+            selectionReason: ranked.reason,
           ),
+        );
+      }
+      if (contextDocs.isNotEmpty &&
+          contextDocs.every((doc) => !doc.hasExcerpt)) {
+        warnings.add(
+          'No readable excerpts available from linked Library documents.',
+        );
+      }
+      if (unreadableDocuments > 0) {
+        warnings.add(
+          '$unreadableDocuments linked document(s) had no readable excerpt; metadata only.',
+        );
+      }
+      if (documentCapTruncations > 0) {
+        warnings.add(
+          '$documentCapTruncations document excerpt(s) truncated at $_projectSummaryMaxCharsPerDoc chars.',
+        );
+      }
+      if (packetCapTruncations > 0 || budgetMetadataOnlyDocuments > 0) {
+        final metadataOnlyDetail = budgetMetadataOnlyDocuments > 0
+            ? '; $budgetMetadataOnlyDocuments lower-ranked document(s) metadata only.'
+            : '.';
+        warnings.add(
+          'Excerpt budget reached at $_projectSummaryMaxTotalDocChars chars'
+          '$metadataOnlyDetail',
         );
       }
     }
@@ -4612,95 +4713,99 @@ class AppState extends ChangeNotifier {
     );
   }
 
-  int _projectSummaryDocumentScore(Document doc) {
-    var score = 0;
-    final identity = _summaryDocumentIdentity(doc);
-    void bump(String needle, int value) {
-      if (identity.contains(needle) && value > score) score = value;
-    }
-
-    bump('active_task', 1000);
-    bump('current_state', 960);
-    bump('handoff', 940);
-    bump('readme', 920);
-    bump('acceptance', 900);
-    bump('agents', 880);
-    bump('operations', 860);
-    bump('roadmap', 840);
-    bump('changelog', 820);
-    bump('spec', 780);
-    bump('requirements', 760);
-
+  ({String category, String reason, int score})
+  _projectSummaryDocumentClassification(Document doc) {
+    final category = _projectSummaryEvidenceCategory(doc);
+    var score =
+        _projectSummaryCategoryWeights[category] ??
+        _projectSummaryCategoryWeights['other']!;
     final ext = doc.extension?.toLowerCase();
-    if (const {'md', 'mdx', 'txt'}.contains(ext)) score += 80;
-    if (const {'json', 'yaml', 'yml', 'csv'}.contains(ext)) score += 40;
+
+    if (_projectSummaryTextExtensions.contains(ext)) score += 80;
     if (const {'pdf', 'docx', 'doc'}.contains(ext)) score += 25;
-    if (const {
-      'dart',
-      'py',
-      'js',
-      'ts',
-      'tsx',
-      'jsx',
-      'java',
-      'cs',
-      'go',
-      'rs',
-    }.contains(ext)) {
-      score += 15;
+    if (_projectSummarySourceExtensions.contains(ext)) score += 15;
+    if (_hasStoredSummaryText(doc)) score += 35;
+    if ((doc.source ?? '').toLowerCase().contains('local_project')) {
+      score += 20;
     }
-    if ((doc.extractedText ?? doc.renderedMarkdown)?.trim().isNotEmpty ==
-        true) {
-      score += 35;
-    }
-    return score;
+
+    return (
+      category: category,
+      reason: _projectSummaryDocumentReason(category),
+      score: score,
+    );
   }
 
-  String _projectSummaryDocumentReason(Document doc) {
+  String _projectSummaryEvidenceCategory(Document doc) {
     final identity = _summaryDocumentIdentity(doc);
-    if (identity.contains('active_task')) return 'active task';
-    if (identity.contains('current_state')) return 'current state';
-    if (identity.contains('handoff')) return 'handoff';
-    if (identity.contains('readme')) return 'project readme';
-    if (identity.contains('acceptance')) return 'acceptance criteria';
-    if (identity.contains('agents')) return 'agent guidance';
-    if (identity.contains('operations')) return 'operations note';
-    if (identity.contains('roadmap')) return 'roadmap';
-    if (identity.contains('changelog')) return 'change history';
-    if (identity.contains('spec') || identity.contains('requirements')) {
-      return 'requirements/spec';
+    final normalized = identity.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    bool has(String needle) {
+      final token = needle.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+      return normalized.contains(token);
     }
+
     final ext = doc.extension?.toLowerCase();
-    if (const {
-      'md',
-      'mdx',
-      'txt',
-      'json',
-      'yaml',
-      'yml',
-      'csv',
-    }.contains(ext)) {
-      return 'text document';
+    if (has('active_task')) return 'active_task';
+    if (has('current_state')) return 'current_state';
+    if (has('handoff')) return 'handoff';
+    if (has('readme')) return 'readme';
+    if (has('acceptance')) return 'acceptance';
+    if (has('operations')) return 'operations';
+    if (has('roadmap')) return 'roadmap';
+    if (has('requirements') || has('spec')) return 'requirements';
+    if (has('changelog') || has('change_log') || has('history')) {
+      return 'change_history';
     }
-    if (const {
-      'dart',
-      'py',
-      'js',
-      'ts',
-      'tsx',
-      'jsx',
-      'java',
-      'cs',
-      'go',
-      'rs',
-    }.contains(ext)) {
-      return 'source-like document';
+    if (has('agents') || has('agent') || has('claude')) {
+      return 'agent_guidance';
     }
-    return 'linked Library document';
+    if (_projectSummarySourceExtensions.contains(ext)) return 'source';
+    if (_projectSummaryTextExtensions.contains(ext) ||
+        _hasStoredSummaryText(doc)) {
+      return 'text';
+    }
+    if (ext != null && ext.isNotEmpty) return 'binary';
+    return 'other';
+  }
+
+  String _projectSummaryDocumentReason(String category) {
+    switch (category) {
+      case 'active_task':
+        return 'active task';
+      case 'current_state':
+        return 'current state';
+      case 'handoff':
+        return 'handoff';
+      case 'readme':
+        return 'project readme';
+      case 'acceptance':
+        return 'acceptance criteria';
+      case 'operations':
+        return 'operations note';
+      case 'roadmap':
+        return 'roadmap';
+      case 'requirements':
+        return 'requirements/spec';
+      case 'change_history':
+        return 'change history';
+      case 'agent_guidance':
+        return 'agent guidance';
+      case 'source':
+        return 'source-like document';
+      case 'text':
+        return 'text document';
+      case 'binary':
+        return 'binary or metadata-only document';
+      default:
+        return 'linked Library document';
+    }
   }
 
   String _summaryDocumentIdentity(Document doc) =>
       '${doc.title} ${doc.originalFilename}'.toLowerCase();
+
+  bool _hasStoredSummaryText(Document doc) =>
+      (doc.extractedText ?? doc.renderedMarkdown)?.trim().isNotEmpty == true;
 
   bool _canOpenSummaryDocument(Document doc) =>
       doc.storedPath != null &&
@@ -5024,33 +5129,30 @@ class AppState extends ChangeNotifier {
     return outcome;
   }
 
-  /// Read a bounded text excerpt from a document, trying in order:
+  /// Read raw text from a document, trying in order:
   /// 1. extractedText, 2. renderedMarkdown, 3. disk read for text-like files.
-  Future<String?> _readDocumentExcerpt(
-    Document doc, {
-    int maxChars = 3000,
-  }) async {
-    String? cap(String? s) {
+  Future<String?> _readDocumentText(Document doc) async {
+    String? clean(String? s) {
       if (s == null || s.trim().isEmpty) return null;
-      return s.length > maxChars ? s.substring(0, maxChars) : s;
+      return s;
     }
 
-    final fromExtracted = cap(doc.extractedText);
+    final fromExtracted = clean(doc.extractedText);
     if (fromExtracted != null) return fromExtracted;
 
-    final fromMarkdown = cap(doc.renderedMarkdown);
+    final fromMarkdown = clean(doc.renderedMarkdown);
     if (fromMarkdown != null) return fromMarkdown;
 
     final path = doc.storedPath;
     final ext = doc.extension?.toLowerCase();
     if (path != null &&
         path.isNotEmpty &&
-        const ['md', 'txt', 'json', 'csv'].contains(ext)) {
+        _projectSummaryTextExtensions.contains(ext)) {
       try {
         final file = File(path);
         if (await file.exists()) {
           final text = await file.readAsString();
-          return cap(text);
+          return clean(text);
         }
       } catch (_) {}
     }
