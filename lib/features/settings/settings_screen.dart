@@ -749,6 +749,7 @@ class _ActivityLogTabState extends State<_ActivityLogTab>
             'input_json': e.inputJson,
             'output_json': e.outputJson,
             'error': e.error,
+            'correlation_id': e.correlationId,
           },
         )
         .toList();

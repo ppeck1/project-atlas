@@ -720,6 +720,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           await state.summarizeProjectFull(
             projectId,
             includeLibrary: state.projectAiSummaryIncludeLibrary,
+            trigger: 'upload_refresh',
           );
         } catch (error) {
           try {

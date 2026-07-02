@@ -116,6 +116,64 @@ void main() {
       },
     );
 
+    test(
+      'project summary evidence packet ranks and gates Library docs',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        await db.createProject(
+          'summary-proj',
+          'Summary Project',
+          DateTime(2026, 1, 1),
+        );
+        await db.importGeneratedDocument(
+          title: 'notes.txt',
+          originalFilename: 'notes.txt',
+          body: 'Loose notes.',
+          projectId: 'summary-proj',
+          extension: 'txt',
+        );
+        await db.importGeneratedDocument(
+          title: 'README.md',
+          originalFilename: 'README.md',
+          body: List.filled(500, 'README evidence').join(' '),
+          projectId: 'summary-proj',
+          extension: 'md',
+        );
+
+        final packet = await state.buildProjectSummaryEvidencePacket(
+          'summary-proj',
+          includeLibrary: true,
+        );
+        expect(packet.suppliedDocumentCount, 2);
+        expect(packet.includedDocumentCount, 2);
+        expect(packet.documents.first.title, 'README.md');
+        expect(packet.documents.first.selectionReason, 'project readme');
+        expect(packet.documents.first.excerptChars, lessThanOrEqualTo(3000));
+        expect(packet.totalExcerptChars, lessThanOrEqualTo(16000));
+
+        final gated = await state.buildProjectSummaryEvidencePacket(
+          'summary-proj',
+          includeLibrary: false,
+        );
+        expect(gated.suppliedDocumentCount, 2);
+        expect(gated.includedDocumentCount, 0);
+        expect(gated.warnings.single, contains('Library evidence disabled'));
+      },
+    );
+
+    test('event log persists correlation id', () async {
+      await db.logEvent(
+        area: 'ai',
+        action: 'project_summary_started',
+        correlationId: 'summary-run-1',
+      );
+
+      final events = await db.getRecentEvents();
+      expect(events.first.correlationId, 'summary-run-1');
+    });
+
     test('Today items stream: work item with status doing appears', () async {
       await db.createProject('proj-2', 'Today Project', DateTime(2026, 1, 1));
 

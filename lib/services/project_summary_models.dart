@@ -73,6 +73,9 @@ class ProjectSummaryContextDoc {
   final String? excerpt;
   final String? storedPath;
   final bool canOpenInExplorer;
+  final int? rank;
+  final int? score;
+  final String? selectionReason;
 
   const ProjectSummaryContextDoc({
     required this.id,
@@ -81,7 +84,29 @@ class ProjectSummaryContextDoc {
     this.excerpt,
     this.storedPath,
     this.canOpenInExplorer = false,
+    this.rank,
+    this.score,
+    this.selectionReason,
   });
+
+  int get excerptChars => excerpt?.length ?? 0;
+  bool get hasExcerpt => excerpt != null && excerpt!.trim().isNotEmpty;
+
+  Map<String, Object?> toEvidenceJson({bool includeStoredPath = false}) {
+    final data = <String, Object?>{
+      'id': id,
+      'title': title,
+      'extension': extension,
+      'rank': rank,
+      'score': score,
+      'selectionReason': selectionReason,
+      'excerptChars': excerptChars,
+      'hasExcerpt': hasExcerpt,
+      'canOpenInExplorer': canOpenInExplorer,
+    };
+    if (includeStoredPath) data['storedPath'] = storedPath;
+    return data;
+  }
 }
 
 class ProjectSummaryContext {
@@ -209,6 +234,58 @@ class ProjectSummaryContext {
 // ─────────────────────────────────────────────────────────────────────────────
 // Structured output from the LLM
 // ─────────────────────────────────────────────────────────────────────────────
+
+class ProjectSummaryEvidencePacket {
+  final ProjectSummaryContext context;
+  final bool includeLibrary;
+  final int suppliedDocumentCount;
+  final int maxExcerptCharsPerDoc;
+  final int maxTotalExcerptChars;
+  final List<String> warnings;
+
+  const ProjectSummaryEvidencePacket({
+    required this.context,
+    required this.includeLibrary,
+    required this.suppliedDocumentCount,
+    required this.maxExcerptCharsPerDoc,
+    required this.maxTotalExcerptChars,
+    this.warnings = const [],
+  });
+
+  List<ProjectSummaryContextDoc> get documents => context.documents;
+  int get includedDocumentCount => documents.length;
+  int get excerptedDocumentCount =>
+      documents.where((doc) => doc.hasExcerpt).length;
+  int get totalExcerptChars =>
+      documents.fold<int>(0, (sum, doc) => sum + doc.excerptChars);
+
+  Map<String, String?> get documentPaths => {
+    for (final doc in documents) doc.id: doc.storedPath,
+  };
+
+  Map<String, Object?> toLogJson({String? model, String? trigger}) => {
+    'schema': 'project_summary_evidence_packet_v1',
+    'projectId': context.id,
+    'projectTitle': context.title,
+    'model': model,
+    'trigger': trigger,
+    'includeLibrary': includeLibrary,
+    'suppliedDocumentCount': suppliedDocumentCount,
+    'includedDocumentCount': includedDocumentCount,
+    'excerptedDocumentCount': excerptedDocumentCount,
+    'totalExcerptChars': totalExcerptChars,
+    'maxExcerptCharsPerDoc': maxExcerptCharsPerDoc,
+    'maxTotalExcerptChars': maxTotalExcerptChars,
+    'workItems': context.workItems.length,
+    'people': context.people.length,
+    'risks': context.risks.length,
+    'decisions': context.decisions.length,
+    'warnings': warnings,
+    'documents': documents
+        .map((doc) => doc.toEvidenceJson())
+        .toList(growable: false),
+  };
+}
 
 class ProjectSummaryOwnershipItem {
   final String person;

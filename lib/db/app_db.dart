@@ -2452,6 +2452,7 @@ class AppDb extends _$AppDb {
         inputJson: Value(inputJson),
         outputJson: Value(outputJson),
         error: Value(error),
+        correlationId: Value(correlationId),
       ),
     );
   }

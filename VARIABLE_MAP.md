@@ -212,11 +212,11 @@ Key-value store for all runtime settings and active-state flags.
 | `output_json` | TEXT? | Serialized outputs / results. |
 | `error` | TEXT? | Error message if applicable. |
 | `stack_trace` | TEXT? | Stack trace for error events. |
-| `correlation_id` | TEXT? | Reserved for future multi-step tracing. |
+| `correlation_id` | TEXT? | Multi-step trace ID. Project summary start/result events share one ID. |
 
 **Written by:** `AppDb.logEvent()`, `AppDb.logError()`  
 **Read by:** `watchRecentEvents()` → Settings → Activity Log, `clearEventLog()`  
-**Quirks:** No rotation or size limit. Use "Clear event log" in Settings → Admin to prune. `correlation_id` is defined but never set in current code.
+**Quirks:** No rotation or size limit. Use "Clear event log" in Settings → Admin to prune. Project summary provenance uses `entity_type='project_summary'` so summary runs do not appear as normal project-update attribution rows.
 
 ---
 
@@ -656,7 +656,8 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `deleteDocument(id)` | `Future<void>` | Calls `db.deleteDocument(id)` (removes document_links, documents row, and disk file), then `notifyListeners()`. |
 | `getLatestProjectSummaryDraft(projectId)` | `Future<Draft?>` | Delegate to `db.getLatestProjectSummaryDraft(projectId)`. |
 | `getDocumentPathsForProject(projectId)` | `Future<Map<String, String?>>` | Delegate to `db.getDocumentPathsForProject(projectId)`. |
-| `summarizeProjectFull(projectId)` | `Future<ProjectSummaryOutcome>` | Opt-in structured project summary generator. Throws while `projectAiSummariesEnabled == false`; otherwise uses the summary-specific model setting when present, can include linked Library docs, validates output, and saves a review draft. |
+| `buildProjectSummaryEvidencePacket(projectId, {includeLibrary})` | `Future<ProjectSummaryEvidencePacket>` | Builds the same ranked/capped Library evidence packet used by Project Detail preview and generation. README/HANDOFF/CURRENT_STATE/ACTIVE_TASK-style docs rank highest; excerpts are capped per document and per packet. |
+| `summarizeProjectFull(projectId, {includeLibrary, evidencePacket, trigger})` | `Future<ProjectSummaryOutcome>` | Opt-in structured project summary generator. Throws while `projectAiSummariesEnabled == false`; otherwise uses the summary-specific model setting when present, can include a prebuilt ranked Library evidence packet, validates output, saves a review draft, and logs correlated summary provenance. |
 | `refreshMissingProjectSummaries({force, includeLibrary, betweenProjects})` | `Future<ProjectSummaryRefreshResult>` | Bulk project-summary refresh. Requires `projectAiSummaryAllowBulkRefresh == true`; otherwise returns a zero-count result with an explanatory error and does not call Ollama. |
 | `mergeProjects({sourceProjectId, targetProjectId})` | `Future<Map<String, int>>` | Delegates to `AppDb.mergeProjects()`, moves source-linked rows to the target, notifies listeners, and returns moved row counts. |
 | `exportOperationalBackupToJson(path)` | `Future<int>` | Exports a ZIP archive to `path` containing `backup.json` (all DB tables serialized) plus `documents/<id>.<ext>` and `media/<id>.<ext>` entries for all stored files. |
@@ -884,8 +885,9 @@ Input models (all `const`-constructable):
 | `ProjectSummaryContextPerson` | `name, role?` | Person entry for the summary prompt. |
 | `ProjectSummaryContextRisk` | `title, severity` | Risk entry for the summary prompt. |
 | `ProjectSummaryContextDecision` | `title, decider?` | Decision entry for the summary prompt. |
-| `ProjectSummaryContextDoc` | `id, title, extension?, excerpt?` | Document reference with optional text excerpt. |
+| `ProjectSummaryContextDoc` | `id, title, extension?, excerpt?, storedPath?, canOpenInExplorer, rank?, score?, selectionReason?` | Document reference with optional text excerpt and ranked evidence-preview metadata. |
 | `ProjectSummaryContext` | `id, title, description?, desiredOutcome?, successCriteria?, status, phase?, priority?, owner?, workItems, people, risks, decisions, documents` | Top-level input aggregate. Has `toPromptText()` method that serializes all fields to a human-readable prompt string. |
+| `ProjectSummaryEvidencePacket` | `context, includeLibrary, suppliedDocumentCount, maxExcerptCharsPerDoc, maxTotalExcerptChars, warnings` | Shared Project Detail preview/generation packet. Exposes document counts, excerpt totals, document paths, and compact log JSON without storing full excerpts in `event_log`. |
 
 Output models:
 
@@ -899,7 +901,7 @@ Return type:
 
 | Class | Fields / Getters | Notes |
 |-------|-----------------|-------|
-| `ProjectSummaryOutcome` | `rawOutput?, structured?, documentPaths?`; `hasStructured` getter; `isSuccess` getter | `isSuccess` is true if `structured != null` OR `rawOutput` is non-null and non-error. |
+| `ProjectSummaryOutcome` | `rawOutput?, inputText?, structured?, validationIssues, documentPaths`; `hasStructured`, `hasValidationIssues`, `isSuccess` getters | `inputText` is the exact model prompt/evidence input saved with project summary drafts. `isSuccess` fails closed when validation issues are present. |
 
 ---
 
@@ -1222,7 +1224,7 @@ ProjectsScreen project tile -> merge action
 | Inbound Telegram | Not implemented | `/done`, `/snooze`, `/add` commands planned. |
 | Project bundle restore | Not implemented | Project bundle ZIP export exists; restore/import is deferred. |
 | Operations automation | Manual plus explicit enrichment plus queued LLM handoff | Local Operations Registry has no background watcher, scheduled scan, autonomous harness execution, or BOH integration. `llm_task_queue` stores explicit queue/lease handoffs for future MCP harness workers, with operator edit/move/cancel/requeue controls in Project Detail. Workers still complete through reviewable output/proposal paths. Enrichment runs are operator-triggered or MCP-triggered Atlas-only DB updates. GitHub metadata refresh is explicit/read-only and cache-based. Registry rows stay separate from Atlas Projects unless linked. |
-| `correlation_id` on event_log | Defined, never set | Reserved for multi-step tracing. |
+| `event_log` audit durability | Clearable operator log | Correlation IDs are persisted for multi-step traces, but Settings can still clear event rows; this is provenance, not immutable audit. |
 | `stages.is_bottleneck` vs `app_meta` | Dual storage | GovernanceScreen reads `app_meta`; table column is historical. |
 | Document/media file cleanup | Stored media files not deleted on media record delete | Manual via Open app data folder. `deleteDocument()` removes the copied document file; `deleteProjectMedia()` removes DB/link rows but leaves the copied media file. |
 | `telegram_enabled` flag | Set but not enforced | `sendTodayToTelegram()` does not check this flag before sending. |

@@ -268,6 +268,8 @@ class AppState extends ChangeNotifier {
     'pyproject.toml',
   };
   static const int _projectEnrichmentProposalCap = 120;
+  static const int _projectSummaryMaxCharsPerDoc = 3000;
+  static const int _projectSummaryMaxTotalDocChars = 16000;
 
   Timer? _localProjectRefreshTimer;
   bool _summaryRefreshRunning = false;
@@ -4466,6 +4468,253 @@ class AppState extends ChangeNotifier {
   Future<Map<String, String?>> getDocumentPathsForProject(String projectId) =>
       db.getDocumentPathsForProject(projectId);
 
+  Future<ProjectSummaryEvidencePacket> buildProjectSummaryEvidencePacket(
+    String projectId, {
+    bool? includeLibrary,
+  }) async {
+    final proj = await getProjectFull(projectId);
+    final items = await getWorkItemsForProject(projectId);
+    final resolvedIncludeLibrary =
+        includeLibrary ?? projectAiSummaryIncludeLibrary;
+
+    List<ProjectRisk> risks = [];
+    List<ProjectDecision> decisions = [];
+    List<ProjectPerson> people = [];
+    try {
+      risks = await getProjectRisks(projectId);
+    } catch (_) {}
+    try {
+      decisions = await getProjectDecisions(projectId);
+    } catch (_) {}
+    try {
+      people = await getProjectPeople(projectId);
+    } catch (_) {}
+
+    final suppliedDocs = await db.getDocumentsForProject(projectId);
+    final rankedDocs = suppliedDocs.toList()
+      ..sort((a, b) {
+        final scoreCompare = _projectSummaryDocumentScore(
+          b,
+        ).compareTo(_projectSummaryDocumentScore(a));
+        if (scoreCompare != 0) return scoreCompare;
+        final titleCompare = a.title.toLowerCase().compareTo(
+          b.title.toLowerCase(),
+        );
+        if (titleCompare != 0) return titleCompare;
+        return a.id.compareTo(b.id);
+      });
+    final warnings = <String>[];
+    final contextDocs = <ProjectSummaryContextDoc>[];
+
+    if (!resolvedIncludeLibrary && suppliedDocs.isNotEmpty) {
+      warnings.add(
+        'Library evidence disabled; ${suppliedDocs.length} linked document(s) available.',
+      );
+    }
+
+    if (resolvedIncludeLibrary) {
+      var totalChars = 0;
+      for (var index = 0; index < rankedDocs.length; index++) {
+        final doc = rankedDocs[index];
+        String? excerpt;
+        if (totalChars < _projectSummaryMaxTotalDocChars) {
+          excerpt = await _readDocumentExcerpt(
+            doc,
+            maxChars: _projectSummaryMaxCharsPerDoc,
+          );
+          if (excerpt != null) {
+            final remaining = _projectSummaryMaxTotalDocChars - totalChars;
+            if (excerpt.length > remaining) {
+              excerpt = excerpt.substring(0, remaining);
+            }
+            totalChars += excerpt.length;
+          }
+        }
+        contextDocs.add(
+          ProjectSummaryContextDoc(
+            id: doc.id,
+            title: doc.title,
+            extension: doc.extension,
+            excerpt: excerpt,
+            storedPath: doc.storedPath,
+            canOpenInExplorer: _canOpenSummaryDocument(doc),
+            rank: index + 1,
+            score: _projectSummaryDocumentScore(doc),
+            selectionReason: _projectSummaryDocumentReason(doc),
+          ),
+        );
+      }
+    }
+
+    final context = ProjectSummaryContext(
+      id: projectId,
+      title: proj?.title ?? projectId,
+      description: proj?.description,
+      desiredOutcome: proj?.desiredOutcome,
+      successCriteria: proj?.successCriteria,
+      status: proj?.status ?? 'active',
+      phase: proj?.phase,
+      priority: proj?.priority,
+      owner: proj?.owner,
+      workItems: items
+          .map(
+            (i) => ProjectSummaryContextWorkItem(
+              id: i.id,
+              title: i.title,
+              status: i.status,
+              priority: i.priority,
+              owner: i.owner,
+              blockedReason: i.blockedReason,
+              dueAt: i.dueAt,
+            ),
+          )
+          .toList(),
+      people: people
+          .map(
+            (p) => ProjectSummaryContextPerson(
+              id: p.id,
+              name: p.name,
+              role: p.role,
+              authority: p.authority,
+            ),
+          )
+          .toList(),
+      risks: risks
+          .map(
+            (r) => ProjectSummaryContextRisk(
+              id: r.id,
+              title: r.title,
+              severity: r.severity,
+              description: r.desc,
+            ),
+          )
+          .toList(),
+      decisions: decisions
+          .map(
+            (d) => ProjectSummaryContextDecision(
+              id: d.id,
+              title: d.title,
+              context: d.ctx,
+              decider: d.decider,
+            ),
+          )
+          .toList(),
+      documents: contextDocs,
+    );
+
+    return ProjectSummaryEvidencePacket(
+      context: context,
+      includeLibrary: resolvedIncludeLibrary,
+      suppliedDocumentCount: suppliedDocs.length,
+      maxExcerptCharsPerDoc: _projectSummaryMaxCharsPerDoc,
+      maxTotalExcerptChars: _projectSummaryMaxTotalDocChars,
+      warnings: warnings,
+    );
+  }
+
+  int _projectSummaryDocumentScore(Document doc) {
+    var score = 0;
+    final identity = _summaryDocumentIdentity(doc);
+    void bump(String needle, int value) {
+      if (identity.contains(needle) && value > score) score = value;
+    }
+
+    bump('active_task', 1000);
+    bump('current_state', 960);
+    bump('handoff', 940);
+    bump('readme', 920);
+    bump('acceptance', 900);
+    bump('agents', 880);
+    bump('operations', 860);
+    bump('roadmap', 840);
+    bump('changelog', 820);
+    bump('spec', 780);
+    bump('requirements', 760);
+
+    final ext = doc.extension?.toLowerCase();
+    if (const {'md', 'mdx', 'txt'}.contains(ext)) score += 80;
+    if (const {'json', 'yaml', 'yml', 'csv'}.contains(ext)) score += 40;
+    if (const {'pdf', 'docx', 'doc'}.contains(ext)) score += 25;
+    if (const {
+      'dart',
+      'py',
+      'js',
+      'ts',
+      'tsx',
+      'jsx',
+      'java',
+      'cs',
+      'go',
+      'rs',
+    }.contains(ext)) {
+      score += 15;
+    }
+    if ((doc.extractedText ?? doc.renderedMarkdown)?.trim().isNotEmpty ==
+        true) {
+      score += 35;
+    }
+    return score;
+  }
+
+  String _projectSummaryDocumentReason(Document doc) {
+    final identity = _summaryDocumentIdentity(doc);
+    if (identity.contains('active_task')) return 'active task';
+    if (identity.contains('current_state')) return 'current state';
+    if (identity.contains('handoff')) return 'handoff';
+    if (identity.contains('readme')) return 'project readme';
+    if (identity.contains('acceptance')) return 'acceptance criteria';
+    if (identity.contains('agents')) return 'agent guidance';
+    if (identity.contains('operations')) return 'operations note';
+    if (identity.contains('roadmap')) return 'roadmap';
+    if (identity.contains('changelog')) return 'change history';
+    if (identity.contains('spec') || identity.contains('requirements')) {
+      return 'requirements/spec';
+    }
+    final ext = doc.extension?.toLowerCase();
+    if (const {
+      'md',
+      'mdx',
+      'txt',
+      'json',
+      'yaml',
+      'yml',
+      'csv',
+    }.contains(ext)) {
+      return 'text document';
+    }
+    if (const {
+      'dart',
+      'py',
+      'js',
+      'ts',
+      'tsx',
+      'jsx',
+      'java',
+      'cs',
+      'go',
+      'rs',
+    }.contains(ext)) {
+      return 'source-like document';
+    }
+    return 'linked Library document';
+  }
+
+  String _summaryDocumentIdentity(Document doc) =>
+      '${doc.title} ${doc.originalFilename}'.toLowerCase();
+
+  bool _canOpenSummaryDocument(Document doc) =>
+      doc.storedPath != null &&
+      doc.storedPath!.isNotEmpty &&
+      const [
+        'md',
+        'txt',
+        'json',
+        'csv',
+        'pdf',
+        'docx',
+        'doc',
+      ].contains(doc.extension?.toLowerCase());
+
   /// Generates summaries for operational projects that are missing one today.
   /// Runs silently in the background — errors are swallowed per project.
   Future<ProjectSummaryRefreshResult> refreshMissingProjectSummaries({
@@ -4575,6 +4824,7 @@ class AppState extends ChangeNotifier {
           final outcome = await summarizeProjectFull(
             project.id,
             includeLibrary: resolvedIncludeLibrary,
+            trigger: 'bulk_refresh',
           );
           if (outcome.isSuccess) {
             refreshed++;
@@ -4641,6 +4891,8 @@ class AppState extends ChangeNotifier {
   Future<ProjectSummaryOutcome> summarizeProjectFull(
     String projectId, {
     bool? includeLibrary,
+    ProjectSummaryEvidencePacket? evidencePacket,
+    String trigger = 'manual',
   }) async {
     if (!projectAiSummariesEnabled) {
       throw StateError('Project AI summaries are disabled in Settings.');
@@ -4648,131 +4900,28 @@ class AppState extends ChangeNotifier {
     final host = await getSetting(AppDb.kOllamaHost);
     final model = await _projectSummaryModelSetting();
     final svc = _buildOllama(host, model);
-    final proj = await getProjectFull(projectId);
-    final items = await getWorkItemsForProject(projectId);
-    final resolvedIncludeLibrary =
-        includeLibrary ?? projectAiSummaryIncludeLibrary;
-
-    List<ProjectRisk> risks = [];
-    List<ProjectDecision> decisions = [];
-    List<ProjectPerson> people = [];
-    try {
-      risks = await getProjectRisks(projectId);
-    } catch (_) {}
-    try {
-      decisions = await getProjectDecisions(projectId);
-    } catch (_) {}
-    try {
-      people = await getProjectPeople(projectId);
-    } catch (_) {}
-
-    // Build document list with excerpts
-    const _kMaxCharsPerDoc = 3000;
-    const _kMaxTotalDocChars = 16000;
-    final contextDocs = <ProjectSummaryContextDoc>[];
-    final docPaths = <String, String?>{};
-
-    if (resolvedIncludeLibrary) {
-      final docs = await (db.select(
-        db.documents,
-      )..where((t) => t.projectId.equals(projectId))).get();
-
-      var totalChars = 0;
-      for (final doc in docs) {
-        docPaths[doc.id] = doc.storedPath;
-        String? excerpt;
-        if (totalChars < _kMaxTotalDocChars) {
-          excerpt = await _readDocumentExcerpt(doc, maxChars: _kMaxCharsPerDoc);
-          if (excerpt != null) {
-            final remaining = _kMaxTotalDocChars - totalChars;
-            if (excerpt.length > remaining) {
-              excerpt = excerpt.substring(0, remaining);
-            }
-            totalChars += excerpt.length;
-          }
-        }
-        final canOpen =
-            doc.storedPath != null &&
-            doc.storedPath!.isNotEmpty &&
-            const [
-              'md',
-              'txt',
-              'json',
-              'csv',
-              'pdf',
-              'docx',
-              'doc',
-            ].contains(doc.extension?.toLowerCase());
-        contextDocs.add(
-          ProjectSummaryContextDoc(
-            id: doc.id,
-            title: doc.title,
-            extension: doc.extension,
-            excerpt: excerpt,
-            storedPath: doc.storedPath,
-            canOpenInExplorer: canOpen,
-          ),
+    final packet =
+        evidencePacket ??
+        await buildProjectSummaryEvidencePacket(
+          projectId,
+          includeLibrary: includeLibrary,
         );
-      }
-    }
+    final context = packet.context;
+    final items = await getWorkItemsForProject(projectId);
+    final correlationId =
+        'project_summary_${DateTime.now().microsecondsSinceEpoch}';
 
-    final context = ProjectSummaryContext(
-      id: projectId,
-      title: proj?.title ?? projectId,
-      description: proj?.description,
-      desiredOutcome: proj?.desiredOutcome,
-      successCriteria: proj?.successCriteria,
-      status: proj?.status ?? 'active',
-      phase: proj?.phase,
-      priority: proj?.priority,
-      owner: proj?.owner,
-      workItems: items
-          .map(
-            (i) => ProjectSummaryContextWorkItem(
-              id: i.id,
-              title: i.title,
-              status: i.status,
-              priority: i.priority,
-              owner: i.owner,
-              blockedReason: i.blockedReason,
-              dueAt: i.dueAt,
-            ),
-          )
-          .toList(),
-      people: people
-          .map(
-            (p) => ProjectSummaryContextPerson(
-              id: p.id,
-              name: p.name,
-              role: p.role,
-              authority: p.authority,
-            ),
-          )
-          .toList(),
-      risks: risks
-          .map(
-            (r) => ProjectSummaryContextRisk(
-              id: r.id,
-              title: r.title,
-              severity: r.severity,
-              description: r.desc,
-            ),
-          )
-          .toList(),
-      decisions: decisions
-          .map(
-            (d) => ProjectSummaryContextDecision(
-              id: d.id,
-              title: d.title,
-              context: d.ctx,
-              decider: d.decider,
-            ),
-          )
-          .toList(),
-      documents: contextDocs,
+    await db.logEvent(
+      area: 'ai',
+      action: 'project_summary_started',
+      entityType: 'project_summary',
+      entityId: projectId,
+      correlationId: correlationId,
+      inputJson: jsonEncode(packet.toLogJson(model: model, trigger: trigger)),
     );
 
     ProjectSummaryOutcome outcome;
+    var usedFallback = false;
     try {
       final (:result, :parsed, :validation) = await svc
           .summarizeProjectStructured(context: context);
@@ -4781,9 +4930,10 @@ class AppState extends ChangeNotifier {
         inputText: result.input,
         structured: parsed,
         validationIssues: validation.issues,
-        documentPaths: docPaths,
+        documentPaths: packet.documentPaths,
       );
     } catch (e) {
+      usedFallback = true;
       // Fall back to old prose summary on unexpected error
       final blocked = items
           .where((i) => i.blockedReason != null)
@@ -4799,7 +4949,7 @@ class AppState extends ChangeNotifier {
           .take(5)
           .toList();
       final oldResult = await svc.summarizeProject(
-        projectTitle: proj?.title ?? projectId,
+        projectTitle: context.title,
         activeItems: active,
         blockedItems: blocked,
         completedRecently: done,
@@ -4807,25 +4957,70 @@ class AppState extends ChangeNotifier {
       outcome = ProjectSummaryOutcome(
         rawOutput: oldResult.output,
         inputText: oldResult.input,
-        documentPaths: docPaths,
+        documentPaths: packet.documentPaths,
       );
     }
 
+    String? draftId;
     // Persist as a draft so the project detail screen can load instantly next time.
     if (outcome.isSuccess) {
       try {
         // Replace any existing summary drafts for this project.
         await db.deleteProjectSummaryDrafts(projectId);
-        await db.saveDraft(
+        draftId = await db.saveDraft(
           kind: 'project_summary',
-          title: 'Project Summary — ${proj?.title ?? projectId}',
+          title: 'Project Summary - ${context.title}',
           body: outcome.rawOutput ?? '',
           inputJson: outcome.inputText,
           projectId: projectId,
         );
-      } catch (_) {}
+      } catch (error) {
+        await db.logEvent(
+          level: 'error',
+          area: 'ai',
+          action: 'project_summary_draft_save_failed',
+          entityType: 'project_summary',
+          entityId: projectId,
+          correlationId: correlationId,
+          error: error.toString(),
+          outputJson: jsonEncode({
+            'agent': 'atlas',
+            'projectId': projectId,
+            'model': model,
+            'trigger': trigger,
+          }),
+        );
+      }
     }
 
+    final validationCodes = outcome.validationIssues
+        .map((issue) => issue.code)
+        .toList(growable: false);
+    await db.logEvent(
+      level: outcome.isSuccess ? 'info' : 'warn',
+      area: 'ai',
+      action: outcome.isSuccess
+          ? 'project_summary_draft_saved'
+          : 'project_summary_failed',
+      entityType: 'project_summary',
+      entityId: projectId,
+      correlationId: correlationId,
+      outputJson: jsonEncode({
+        'agent': 'atlas',
+        'actor': {'kind': 'app', 'id': 'atlas', 'displayName': 'Atlas'},
+        'projectId': projectId,
+        'projectTitle': context.title,
+        'model': model,
+        'trigger': trigger,
+        'draftId': draftId,
+        'success': outcome.isSuccess,
+        'fallback': usedFallback,
+        'hasStructured': outcome.hasStructured,
+        'validationIssueCodes': validationCodes,
+        'rawOutputChars': outcome.rawOutput?.length ?? 0,
+        'evidence': packet.toLogJson(model: model, trigger: trigger),
+      }),
+    );
     return outcome;
   }
 

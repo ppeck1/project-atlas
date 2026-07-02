@@ -170,7 +170,7 @@ When Ollama is reachable, the model field becomes a **dropdown** populated with 
 
 AI actions available:
 - **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
-- **Project AI summaries** — opt-in via **Settings -> AI Summaries**; project summaries can use the global Ollama model or a summary-specific installed model, can default to Library evidence, and keep bulk refresh separately gated while invalid schema/claim output fails validation
+- **Project AI summaries** — opt-in via **Settings -> AI Summaries**; project summaries can use the global Ollama model or a summary-specific installed model, can default to Library evidence, preview the ranked evidence packet, log summary run provenance, and keep bulk refresh separately gated while invalid schema/claim output fails validation
 - **Project summary (prose)** — legacy prose summary; still available via `summarizeProject()` in OllamaService
 - **Email draft** — drafts an email for a specific work item (Work Item Detail)
 - **Task extract** — extracts tasks from free-form note text (Work Item Detail)

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -59,6 +60,17 @@ Map<String, Object?> _parseJsonObject(String raw) {
     throw const FormatException('Context must be a JSON object.');
   }
   return decoded.map((key, value) => MapEntry('$key', value));
+}
+
+Map<String, Object?> _tryParseJsonObject(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return const <String, Object?>{};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map) {
+      return decoded.map((key, value) => MapEntry('$key', value));
+    }
+  } catch (_) {}
+  return const <String, Object?>{};
 }
 
 String _libraryRouteForProject(
@@ -133,6 +145,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   String? _summaryText;
   ProjectSummaryOutcome? _summaryOutcome;
   DateTime? _summaryGeneratedAt;
+  ProjectSummaryEvidencePacket? _summaryEvidencePacket;
+  bool _summaryEvidenceLoading = false;
 
   List<WorkItem> _workItems = const [];
   List<LlmTaskQueueItem> _llmQueueItems = const [];
@@ -188,7 +202,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       _risks = risks;
       _decisions = decisions;
       _includeLibrary = summarySettings.includeLibrary;
+      _summaryEvidenceLoading = summarySettings.enabled;
+      if (!summarySettings.enabled) _summaryEvidencePacket = null;
     });
+
+    if (summarySettings.enabled) {
+      unawaited(
+        _loadSummaryEvidence(includeLibrary: summarySettings.includeLibrary),
+      );
+    }
 
     if (cachedDraft != null &&
         _summaryOutcome == null &&
@@ -204,6 +226,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         if (structured != null) {
           _summaryOutcome = ProjectSummaryOutcome(
             rawOutput: cachedDraft.body,
+            inputText: cachedDraft.inputJson,
             structured: structured,
             documentPaths: docPaths,
           );
@@ -214,6 +237,32 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         }
       });
     }
+  }
+
+  Future<void> _loadSummaryEvidence({bool? includeLibrary}) async {
+    if (!mounted) return;
+    final state = AppStateScope.of(context);
+    final resolvedIncludeLibrary = includeLibrary ?? _includeLibrary;
+    setState(() => _summaryEvidenceLoading = true);
+    try {
+      final packet = await state.buildProjectSummaryEvidencePacket(
+        widget.projectId,
+        includeLibrary: resolvedIncludeLibrary,
+      );
+      if (!mounted) return;
+      setState(() {
+        _summaryEvidencePacket = packet;
+        _summaryEvidenceLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _summaryEvidenceLoading = false);
+    }
+  }
+
+  void _setIncludeLibrary(bool value) {
+    setState(() => _includeLibrary = value);
+    unawaited(_loadSummaryEvidence(includeLibrary: value));
   }
 
   void _toggleSection(String key) =>
@@ -853,11 +902,23 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       _summaryText = null;
       _summaryOutcome = null;
       _summaryGeneratedAt = null;
+      _summaryEvidenceLoading = true;
     });
     try {
+      final packet = await state.buildProjectSummaryEvidencePacket(
+        widget.projectId,
+        includeLibrary: _includeLibrary,
+      );
+      if (!mounted) return;
+      setState(() {
+        _summaryEvidencePacket = packet;
+        _summaryEvidenceLoading = false;
+      });
       final outcome = await state.summarizeProjectFull(
         widget.projectId,
         includeLibrary: _includeLibrary,
+        evidencePacket: packet,
+        trigger: 'manual',
       );
       if (!mounted) return;
       final now = DateTime.now();
@@ -889,7 +950,12 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       if (!mounted) return;
       setState(() => _summaryText = 'Error: $e');
     } finally {
-      if (mounted) setState(() => _summaryLoading = false);
+      if (mounted) {
+        setState(() {
+          _summaryLoading = false;
+          _summaryEvidenceLoading = false;
+        });
+      }
     }
   }
 
@@ -1000,8 +1066,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   summaryText: _summaryText,
                   summaryOutcome: _summaryOutcome,
                   generatedAt: _summaryGeneratedAt,
+                  evidencePacket: _summaryEvidencePacket,
+                  evidenceLoading: _summaryEvidenceLoading,
                   onToggle: () => setState(() => _aiExpanded = !_aiExpanded),
-                  onToggleLibrary: (v) => setState(() => _includeLibrary = v),
+                  onToggleLibrary: _setIncludeLibrary,
                   onGenerate: _generateSummary,
                 ),
                 const SizedBox(height: 8),
@@ -2990,6 +3058,8 @@ class _AiPanel extends StatelessWidget {
   final String? summaryText;
   final ProjectSummaryOutcome? summaryOutcome;
   final DateTime? generatedAt;
+  final ProjectSummaryEvidencePacket? evidencePacket;
+  final bool evidenceLoading;
   final VoidCallback onToggle;
   final ValueChanged<bool> onToggleLibrary;
   final VoidCallback onGenerate;
@@ -3002,6 +3072,8 @@ class _AiPanel extends StatelessWidget {
     required this.summaryText,
     required this.summaryOutcome,
     required this.generatedAt,
+    required this.evidencePacket,
+    required this.evidenceLoading,
     required this.onToggle,
     required this.onToggleLibrary,
     required this.onGenerate,
@@ -3098,6 +3170,12 @@ class _AiPanel extends StatelessWidget {
           ),
           if (expanded) ...[
             const SizedBox(height: 12),
+            _EvidencePacketPreview(
+              packet: evidencePacket,
+              loading: evidenceLoading,
+              includeLibrary: includeLibrary,
+            ),
+            const SizedBox(height: 12),
             if (summaryLoading)
               const Row(
                 children: [
@@ -3160,6 +3238,8 @@ class _AiPanel extends StatelessWidget {
                   ),
                 ],
               ),
+            const SizedBox(height: 12),
+            _SummaryRunProvenance(projectId: projectId),
           ],
         ],
       ),
@@ -3168,6 +3248,276 @@ class _AiPanel extends StatelessWidget {
 }
 
 // ─── Structured summary renderer ─────────────────────────────────────────────
+
+class _EvidencePacketPreview extends StatelessWidget {
+  final ProjectSummaryEvidencePacket? packet;
+  final bool loading;
+  final bool includeLibrary;
+
+  const _EvidencePacketPreview({
+    required this.packet,
+    required this.loading,
+    required this.includeLibrary,
+  });
+
+  String _chars(int value) {
+    if (value >= 10000) return '${(value / 1000).round()}k';
+    if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)}k';
+    return '$value';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentPacket = packet;
+    final docs = currentPacket?.documents ?? const <ProjectSummaryContextDoc>[];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(6),
+        border: Border.all(color: _kLine),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.fact_check_outlined, size: 15, color: _kPrimary),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'Evidence packet',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white70,
+                  ),
+                ),
+              ),
+              if (loading)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else if (currentPacket != null)
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    _MiniPill(
+                      'Docs',
+                      '${currentPacket.includedDocumentCount}/${currentPacket.suppliedDocumentCount}',
+                    ),
+                    _MiniPill(
+                      'Excerpt',
+                      _chars(currentPacket.totalExcerptChars),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          if (!loading) ...[
+            const SizedBox(height: 8),
+            if (currentPacket == null)
+              const Text(
+                'No packet loaded.',
+                style: TextStyle(fontSize: 12, color: Colors.white38),
+              )
+            else if (!includeLibrary)
+              Text(
+                'Library disabled (${currentPacket.suppliedDocumentCount} linked document${currentPacket.suppliedDocumentCount == 1 ? '' : 's'} available).',
+                style: const TextStyle(fontSize: 12, color: Colors.white54),
+              )
+            else if (docs.isEmpty)
+              const Text(
+                'No linked Library documents.',
+                style: TextStyle(fontSize: 12, color: Colors.white54),
+              )
+            else
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: docs.take(6).map((doc) {
+                  final reason = doc.selectionReason ?? 'linked document';
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 30,
+                          child: Text(
+                            '#${doc.rank ?? '-'}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.white38,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                doc.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white70,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                '$reason - ${_chars(doc.excerptChars)} chars',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.white38,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryRunProvenance extends StatelessWidget {
+  final String projectId;
+
+  const _SummaryRunProvenance({required this.projectId});
+
+  Object? _field(Map<String, Object?> map, String key) => map[key];
+
+  Map<String, Object?> _nestedMap(Map<String, Object?> map, String key) {
+    final value = map[key];
+    if (value is Map) return value.map((k, v) => MapEntry('$k', v));
+    return const <String, Object?>{};
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return StreamBuilder<List<EventLogData>>(
+      stream: state.watchRecentEvents(),
+      builder: (context, snap) {
+        final rows = (snap.data ?? const <EventLogData>[])
+            .where(
+              (event) =>
+                  event.area == 'ai' &&
+                  event.entityType == 'project_summary' &&
+                  event.entityId == projectId &&
+                  const {
+                    'project_summary_draft_saved',
+                    'project_summary_failed',
+                  }.contains(event.action),
+            )
+            .take(3)
+            .toList(growable: false);
+        if (rows.isEmpty) return const SizedBox.shrink();
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white.withAlpha(6),
+            border: Border.all(color: _kLine),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.history, size: 15, color: _kPrimary),
+                  SizedBox(width: 6),
+                  Text(
+                    'Recent summary runs',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ...rows.map((event) {
+                final data = _tryParseJsonObject(event.outputJson);
+                final evidence = _nestedMap(data, 'evidence');
+                final success = data['success'] == true;
+                final model = (_field(data, 'model') ?? 'model n/a').toString();
+                final trigger = (_field(data, 'trigger') ?? 'manual')
+                    .toString();
+                final docs = (_field(evidence, 'includedDocumentCount') ?? '-')
+                    .toString();
+                final chars = (_field(evidence, 'totalExcerptChars') ?? '0')
+                    .toString();
+                final codes = data['validationIssueCodes'];
+                final codeText = codes is List && codes.isNotEmpty
+                    ? codes.map((code) => '$code').join(', ')
+                    : null;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        success
+                            ? Icons.check_circle_outline
+                            : Icons.error_outline,
+                        size: 14,
+                        color: success
+                            ? const Color(0xFF4CAF50)
+                            : const Color(0xFFFF8A80),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${success ? 'Saved' : 'Failed'} - $model - $trigger',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.white70,
+                              ),
+                            ),
+                            Text(
+                              '${_compactDateTime(event.timestamp)} - docs $docs - chars $chars${codeText == null ? '' : ' - $codeText'}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.white38,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
 
 class _StructuredSummaryView extends StatelessWidget {
   final String projectId;
