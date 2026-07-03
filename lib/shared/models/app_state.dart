@@ -2091,7 +2091,11 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteProjectMedia(String id) async {
+    final media = await db.getProjectMediaItem(id);
     await db.deleteProjectMedia(id);
+    if (media != null) {
+      await _deleteAppOwnedMediaFileBestEffort(media);
+    }
     notifyListeners();
   }
 
@@ -2238,6 +2242,33 @@ class AppState extends ChangeNotifier {
     }
     final copied = await source.copy(candidate);
     return copied.path;
+  }
+
+  Future<void> _deleteAppOwnedMediaFileBestEffort(
+    ProjectMediaItem media,
+  ) async {
+    try {
+      final mediaDir = await _projectMediaDirectory(media.projectId);
+      final storedPath = media.storedPath.trim();
+      if (storedPath.isEmpty) return;
+
+      final normalizedMediaDir = p.normalize(mediaDir.path);
+      final normalizedStoredPath = p.normalize(storedPath);
+      if (normalizedStoredPath == normalizedMediaDir ||
+          !p.isWithin(normalizedMediaDir, normalizedStoredPath)) {
+        return;
+      }
+
+      final file = File(normalizedStoredPath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } on FileSystemException catch (error) {
+      debugPrint(
+        '[Atlas] Failed to delete copied project media file '
+        '${media.storedPath}: $error',
+      );
+    }
   }
 
   String? _mergeMediaMetadata(String? rawJson, Map<String, Object?> extra) {
@@ -7845,6 +7876,17 @@ class AppState extends ChangeNotifier {
   }
 
   Future<(bool, String?)> sendTodayToTelegram() async {
+    final enabled = _metaBool(
+      await getSetting(AppDb.kTelegramEnabled),
+      fallback: false,
+    );
+    if (!enabled) {
+      return (
+        false,
+        'Telegram sending is disabled. Enable Telegram in Settings to send.',
+      );
+    }
+
     final svc = await _buildTelegram();
     if (svc == null) {
       return (

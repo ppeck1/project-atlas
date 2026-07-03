@@ -33,17 +33,19 @@ Project Ops Capsule v0.2 is installed as repo-local metadata under `.project/` w
 
 ## Screenshots
 
-These screenshots use demo data and reflect the current UI structure.
+These screenshots use demo data to show the current schema v19 operator workflow:
+daily focus, project runtime controls, local Operations review, Library-backed AI
+draft review, and opt-in AI summary settings.
 
-![Today screen](docs/screenshots/today.png)
+![Today dashboard with focus list, phone queue, and operator signals](docs/screenshots/today.png)
 
-![Projects screen](docs/screenshots/projects.png)
+![Projects list with filters, pinned categories, lifecycle tags, and runtime actions](docs/screenshots/projects.png)
 
-![Operations screen](docs/screenshots/operations.png)
+![Operations workspace with scan review, registry counts, and project health findings](docs/screenshots/operations.png)
 
-![Library screen](docs/screenshots/library.png)
+![Library view with documents, media, AI drafts, and agent proposal review](docs/screenshots/library.png)
 
-![Settings screen](docs/screenshots/settings.png)
+![Settings AI Summaries setup with Library evidence and bulk refresh gates](docs/screenshots/settings.png)
 
 Regenerate the README screenshots with:
 

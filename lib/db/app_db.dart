@@ -2188,6 +2188,7 @@ class AppDb extends _$AppDb {
   }
 
   Future<void> deleteProjectMedia(String id) async {
+    await _ensureMediaLinksTable();
     await transaction(() async {
       await (delete(mediaLinks)..where((t) => t.mediaId.equals(id))).go();
       await (delete(projectMedia)..where((t) => t.id.equals(id))).go();

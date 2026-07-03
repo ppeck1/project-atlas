@@ -367,6 +367,94 @@ This is the email body.''';
         expect(linkedMedia.map((item) => item.id), [mediaId]);
       },
     );
+
+    test(
+      'deleteProjectMedia removes copied media file, links, and row',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        await db.createProject('project-a', 'Alpha', DateTime(2026, 1, 1));
+        final stage = (await db.getStagesForProject('project-a')).single;
+        final workItemId = await db.addWorkItem(
+          stageId: stage.id,
+          title: 'Review screenshot',
+        );
+        final src = File(p.join(tempDir.path, 'delete-me.png'))
+          ..writeAsBytesSync([1, 2, 3, 4]);
+
+        final mediaId = await state.importProjectMediaFromPath(
+          'project-a',
+          src.path,
+        );
+        await state.attachProjectMediaToWorkItem(workItemId, mediaId);
+
+        final media = await db.getProjectMediaItem(mediaId);
+        expect(media, isNotNull);
+        final storedPath = media!.storedPath;
+        expect(storedPath, isNot(equals(src.path)));
+        expect(storedPath, contains('project_media'));
+        expect(File(storedPath).existsSync(), isTrue);
+        expect(
+          await db.getProjectMediaForEntity(
+            entityType: 'work_item',
+            entityId: workItemId,
+          ),
+          hasLength(1),
+        );
+
+        await state.deleteProjectMedia(mediaId);
+
+        expect(await db.getProjectMediaItem(mediaId), isNull);
+        expect(
+          await db.getProjectMediaForEntity(
+            entityType: 'work_item',
+            entityId: workItemId,
+          ),
+          isEmpty,
+        );
+        expect(File(storedPath).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'deleteProjectMedia does not throw when copied file is gone',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        await db.createProject('project-a', 'Alpha', DateTime(2026, 1, 1));
+        final src = File(p.join(tempDir.path, 'already-gone.png'))
+          ..writeAsBytesSync([1, 2, 3, 4]);
+
+        final mediaId = await state.importProjectMediaFromPath(
+          'project-a',
+          src.path,
+        );
+        final media = await db.getProjectMediaItem(mediaId);
+        expect(media, isNotNull);
+        await File(media!.storedPath).delete();
+
+        await expectLater(state.deleteProjectMedia(mediaId), completes);
+        expect(await db.getProjectMediaItem(mediaId), isNull);
+      },
+    );
+  });
+
+  group('sendTodayToTelegram', () {
+    test('returns disabled result without creating an outbox send', () async {
+      final state = AppState(db, enableBackgroundSummaryRefresh: false);
+      addTearDown(state.dispose);
+
+      await state.setSetting(AppDb.kTelegramBotToken, 'token');
+      await state.setSetting(AppDb.kTelegramChatId, 'chat');
+
+      final (ok, err) = await state.sendTodayToTelegram();
+
+      expect(ok, isFalse);
+      expect(err, contains('disabled'));
+      expect(await db.watchOutboxMessages().first, isEmpty);
+    });
   });
 
   group('exportOperationalBackupToJson', () {

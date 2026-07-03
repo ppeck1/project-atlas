@@ -2244,7 +2244,7 @@ Pressure flakes a useful edge.
       final cleanGit = payload['cleanGitArchive'] as Map<String, Object?>;
       expect(cleanGit['source'], 'local');
       expect(cleanGit['registryId'], 'child_registry');
-      expect(cleanGit['gitRoot'], child.path);
+      expect(cleanGit['gitRoot'], _isSameExistingPathAs(child.path));
     },
   );
 
@@ -2573,6 +2573,35 @@ Future<void> _runGit(Directory dir, List<String> args) async {
     reason:
         'git ${args.join(' ')} failed\nstdout: ${result.stdout}\nstderr: ${result.stderr}',
   );
+}
+
+Matcher _isSameExistingPathAs(String expectedPath) {
+  return predicate<Object?>((actual) {
+    if (actual is! String) {
+      return false;
+    }
+    try {
+      if (FileSystemEntity.identicalSync(actual, expectedPath)) {
+        return true;
+      }
+    } on FileSystemException {
+      // Fall back to normalized text comparison if the path cannot be resolved.
+    }
+    return _canonicalPathForComparison(actual) ==
+        _canonicalPathForComparison(expectedPath);
+  }, 'path equivalent to $expectedPath');
+}
+
+String _canonicalPathForComparison(String path) {
+  String canonical;
+  try {
+    canonical = Directory(path).resolveSymbolicLinksSync();
+  } on FileSystemException {
+    canonical = p.normalize(p.absolute(path));
+  }
+  return Platform.isWindows
+      ? canonical.replaceAll('/', r'\').toLowerCase()
+      : canonical;
 }
 
 Future<ProjectObservation> _scanOne(

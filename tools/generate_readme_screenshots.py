@@ -1,4 +1,5 @@
 from pathlib import Path
+from textwrap import wrap
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -6,380 +7,411 @@ from PIL import Image, ImageDraw, ImageFont
 OUT = Path("docs/screenshots")
 OUT.mkdir(parents=True, exist_ok=True)
 
-W, H = 1280, 760
-BG = "#0F1115"
-PANEL = "#151A22"
-LINE = "#273044"
-PRIMARY = "#79A7FF"
-TEXT = "#E8ECF4"
-MUTED = "#8A96A8"
-DIM = "#5F6B7A"
-GREEN = "#4CAF50"
-AMBER = "#FFC107"
-RED = "#F44336"
-ORANGE = "#FF9800"
-PURPLE = "#9C27B0"
-BLUE = "#2196F3"
-TEAL = "#00BCD4"
+W, H = 1440, 900
+
+COLORS = {
+    "page": "#F5F7FA",
+    "shell": "#FFFFFF",
+    "ink": "#172033",
+    "muted": "#667085",
+    "soft": "#98A2B3",
+    "line": "#D7DEE8",
+    "panel": "#FFFFFF",
+    "panel_alt": "#F9FAFB",
+    "nav": "#1F2937",
+    "nav_hot": "#2DD4BF",
+    "blue": "#2F80ED",
+    "teal": "#008B8B",
+    "green": "#239B56",
+    "amber": "#B7791F",
+    "red": "#C2413A",
+    "purple": "#7C3AED",
+    "slate": "#475467",
+    "cream": "#FFF8E7",
+    "rose": "#FCE7E7",
+    "mint": "#E7F8F2",
+    "sky": "#EAF2FF",
+    "violet": "#F1ECFF",
+    "peach": "#FFF0E0",
+}
 
 
-def load_font(path: str, size: int):
-    try:
-        return ImageFont.truetype(path, size)
-    except OSError:
-        return ImageFont.load_default()
+def load_font(name, size):
+    paths = [
+        f"C:/Windows/Fonts/{name}",
+        f"/usr/share/fonts/truetype/dejavu/{name}",
+    ]
+    for path in paths:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
 
 
-FONT = load_font("C:/Windows/Fonts/segoeui.ttf", 20)
-FONT_B = load_font("C:/Windows/Fonts/segoeuib.ttf", 20)
-FONT_S = load_font("C:/Windows/Fonts/segoeui.ttf", 15)
-FONT_XS = load_font("C:/Windows/Fonts/segoeui.ttf", 12)
-FONT_H = load_font("C:/Windows/Fonts/segoeuib.ttf", 32)
-FONT_METRIC = load_font("C:/Windows/Fonts/segoeuib.ttf", 42)
+FONT = load_font("segoeui.ttf", 20)
+FONT_SM = load_font("segoeui.ttf", 16)
+FONT_XS = load_font("segoeui.ttf", 13)
+FONT_B = load_font("segoeuib.ttf", 20)
+FONT_SB = load_font("segoeuib.ttf", 16)
+FONT_H = load_font("segoeuib.ttf", 34)
+FONT_H2 = load_font("segoeuib.ttf", 26)
+FONT_METRIC = load_font("segoeuib.ttf", 44)
 
 
-def rr(d, xy, r, fill, outline=None, width=1):
-    d.rounded_rectangle(xy, radius=r, fill=fill, outline=outline, width=width)
+def text_size(draw, value, font):
+    box = draw.textbbox((0, 0), value, font=font)
+    return box[2] - box[0], box[3] - box[1]
 
 
-def text(d, xy, value, fill=TEXT, font=FONT):
-    d.text(xy, value, fill=fill, font=font)
+def fit_text(draw, value, max_width, font):
+    value = str(value)
+    if text_size(draw, value, font)[0] <= max_width:
+        return value
+    suffix = "..."
+    lo, hi = 0, len(value)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if text_size(draw, value[:mid] + suffix, font)[0] <= max_width:
+            lo = mid
+        else:
+            hi = mid - 1
+    return value[:lo].rstrip() + suffix
 
 
-def nav(d, selected):
-    d.rectangle([0, 0, 72, H], fill=PANEL)
-    d.line([72, 0, 72, H], fill=LINE)
-    # Logo placeholder
-    rr(d, [18, 14, 54, 50], 10, BG, PRIMARY)
-    text(d, (22, 20), "PA", PRIMARY, FONT_XS)
-    text(d, (19, 56), "ATLAS", PRIMARY, FONT_XS)
-    items = [("Today", "T"), ("Projects", "P"), ("Ops", "O"), ("Library", "L")]
-    y = 104
-    for name, glyph in items:
-        is_selected = name == selected
-        if is_selected:
-            rr(d, [10, y - 8, 62, y + 48], 18, "#1B2B4A")
-        text(d, (31, y), glyph, PRIMARY if is_selected else MUTED, FONT_B)
-        text(d, (12, y + 28), name, PRIMARY if is_selected else MUTED, FONT_XS)
-        y += 78
-    settings_selected = selected == "Settings"
-    if settings_selected:
-        rr(d, [10, H - 92, 62, H - 36], 18, "#1B2B4A")
-    text(d, (18, H - 76), "S", PRIMARY if settings_selected else MUTED, FONT_B)
-    text(d, (10, H - 48), "Settings", PRIMARY if settings_selected else MUTED, FONT_XS)
+def draw_text(draw, xy, value, fill=None, font=None, max_width=None):
+    fill = fill or COLORS["ink"]
+    font = font or FONT
+    if max_width:
+        value = fit_text(draw, value, max_width, font)
+    draw.text(xy, value, fill=fill, font=font)
 
 
-def appbar(d, title, right=""):
-    d.rectangle([73, 0, W, 64], fill=BG)
-    text(d, (96, 18), title, TEXT, FONT_B)
-    if right:
-        text(d, (W - 210, 22), right, MUTED, FONT_S)
-    d.line([73, 64, W, 64], fill=LINE)
+def draw_wrapped(draw, xy, value, width, fill=None, font=None, lines=2, step=24):
+    fill = fill or COLORS["muted"]
+    font = font or FONT_SM
+    words_per_line = max(12, width // 9)
+    wrapped = []
+    for paragraph in str(value).split("\n"):
+        wrapped.extend(wrap(paragraph, width=words_per_line) or [""])
+    y = xy[1]
+    for index, line in enumerate(wrapped[:lines]):
+        if index == lines - 1 and len(wrapped) > lines:
+            line = fit_text(draw, line + "...", width, font)
+        draw_text(draw, (xy[0], y), line, fill, font, width)
+        y += step
 
 
-def metric(d, x, label, value, color):
-    rr(d, [x, 96, x + 260, 184], 14, PANEL, LINE)
-    bbox = d.textbbox((0, 0), str(value), font=FONT_METRIC)
-    text(d, (x + 130 - (bbox[2] - bbox[0]) / 2, 108), str(value), color, FONT_METRIC)
-    text(d, (x + 105, 154), label, MUTED, FONT_S)
+def rounded(draw, box, radius=12, fill=None, outline=None, width=1):
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
 
 
-def pill(d, x, y, label, color):
-    # Dark fill + colored outline keeps the colored label text readable
-    # (an alpha fill flattens to opaque on RGB images and hides the text).
-    width = len(label) * 8 + 18
-    rr(d, [x, y, x + width, y + 24], 4, "#10151E", color)
-    text(d, (x + 9, y + 4), label, color, FONT_XS)
-    return x + width + 10
+def pill(draw, x, y, label, color, bg=None):
+    bg = bg or COLORS["panel_alt"]
+    pad = 14
+    w = text_size(draw, label, FONT_XS)[0] + pad * 2
+    rounded(draw, [x, y, x + w, y + 28], 14, bg, color)
+    draw_text(draw, (x + pad, y + 7), label, color, FONT_XS)
+    return x + w + 8
+
+
+def button(draw, box, label, primary=False):
+    fill = COLORS["blue"] if primary else COLORS["panel"]
+    outline = COLORS["blue"] if primary else COLORS["line"]
+    color = "#FFFFFF" if primary else COLORS["slate"]
+    rounded(draw, box, 8, fill, outline)
+    tw, th = text_size(draw, label, FONT_SB)
+    x = box[0] + (box[2] - box[0] - tw) / 2
+    y = box[1] + (box[3] - box[1] - th) / 2 - 1
+    draw_text(draw, (x, y), label, color, FONT_SB)
+
+
+def base(selected, title, subtitle=None):
+    image = Image.new("RGB", (W, H), COLORS["page"])
+    draw = ImageDraw.Draw(image)
+    rounded(draw, [36, 28, W - 36, H - 28], 22, COLORS["shell"], COLORS["line"])
+    draw.rectangle([36, 50, 116, H - 50], fill=COLORS["nav"])
+    draw.rounded_rectangle([36, 28, 116, H - 28], radius=22, fill=COLORS["nav"])
+    draw.rectangle([94, 28, 116, H - 28], fill=COLORS["nav"])
+    draw_text(draw, (58, 54), "AT", COLORS["nav_hot"], FONT_B)
+    draw_text(draw, (54, 78), "LAS", "#CBD5E1", FONT_XS)
+    nav_items = [
+        ("Today", "T", "Today"),
+        ("Projects", "P", "Projects"),
+        ("Operations", "O", "Ops"),
+        ("Library", "L", "Library"),
+        ("Settings", "S", "Settings"),
+    ]
+    y = 144
+    for label, glyph, nav_label in nav_items:
+        active = label == selected
+        if active:
+            rounded(draw, [52, y - 14, 100, y + 44], 14, "#334155")
+            draw.rectangle([36, y - 3, 42, y + 33], fill=COLORS["nav_hot"])
+        draw_text(draw, (68, y), glyph, COLORS["nav_hot"] if active else "#CBD5E1", FONT_B)
+        draw_text(draw, (50, y + 31), nav_label, "#E2E8F0" if active else "#94A3B8", FONT_XS, 58)
+        y += 92
+    draw_text(draw, (154, 62), title, COLORS["ink"], FONT_H)
+    if subtitle:
+        draw_text(draw, (154, 106), subtitle, COLORS["muted"], FONT_SM, 780)
+    draw.line([132, 142, W - 64, 142], fill=COLORS["line"], width=1)
+    return image, draw
+
+
+def metric_card(draw, box, label, value, detail, color, bg):
+    rounded(draw, box, 14, bg, COLORS["line"])
+    draw_text(draw, (box[0] + 20, box[1] + 18), label, COLORS["muted"], FONT_SB, box[2] - box[0] - 40)
+    draw_text(draw, (box[0] + 20, box[1] + 48), value, color, FONT_METRIC)
+    draw_text(draw, (box[0] + 20, box[1] + 104), detail, COLORS["slate"], FONT_XS, box[2] - box[0] - 40)
+
+
+def table_header(draw, x, y, widths, labels):
+    xx = x
+    for width, label in zip(widths, labels):
+        draw_text(draw, (xx, y), label.upper(), COLORS["soft"], FONT_XS, width)
+        xx += width
+    draw.line([x, y + 28, x + sum(widths), y + 28], fill=COLORS["line"])
 
 
 def make_today():
-    im = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(im)
-    nav(d, "Today")
-    appbar(d, "Today", "Fri Jul 3")
-    metric(d, 96, "Doing", 2, AMBER)
-    metric(d, 376, "Overdue", 1, RED)
-    metric(d, 656, "Blocked", 1, PURPLE)
-    metric(d, 936, "Total", 7, TEXT)
-    sections = [
-        (
-            "Doing Now",
-            AMBER,
-            [
-                ("Update docs to schema v19", "README, HANDOFF, VARIABLE_MAP updated; screenshots refreshed", "HIGH", "7/3", False),
-                ("Run flutter test — full suite passing", "operations registry + runtime service + summary contract tests", "URGENT", "7/3", True),
-            ],
-        ),
-        (
-            "Overdue",
-            RED,
-            [("Review encryption plan", "SQLCipher passphrase before broader distribution", "HIGH", "6/30", False)],
-        ),
-        (
-            "Phone / Follow-up",
-            BLUE,
-            [("Send today list to phone", "Telegram outbound queue — tap to toggle phone queue", "NORMAL", "", True)],
-        ),
-        (
-            "High Priority",
-            ORANGE,
-            [
-                ("Configure runtime profile for Atlas", "Launch/test/capsule commands from Project Detail > Runtime", "HIGH", "", False),
-                ("Draft email for blocked task", "Ollama email draft — human review before save", "HIGH", "", False),
-                ("Review agent proposals in Library", "Pending atlas_agent_proposal drafts — approve or reject", "HIGH", "", False),
-            ],
-        ),
+    image, draw = base(
+        "Today",
+        "Today",
+        "Daily operating view: doing now, overdue, blocked, phone queue, and high-priority work.",
+    )
+    cards = [
+        ("Doing", "2", "Active work items", COLORS["blue"], COLORS["sky"]),
+        ("Overdue", "1", "Needs review today", COLORS["red"], COLORS["rose"]),
+        ("Blocked", "1", "Waiting on decision", COLORS["purple"], COLORS["violet"]),
+        ("Phone queue", "3", "Ready for Telegram", COLORS["teal"], COLORS["mint"]),
     ]
-    y = 220
-    for title, color, rows in sections:
-        text(d, (96, y), title, color, FONT_B)
-        y += 30
-        for name, desc, prio, due, phone in rows:
-            rr(d, [96, y, 1184, y + 70], 12, PANEL, LINE)
-            d.rectangle([116, y + 21, 142, y + 47], outline=MUTED, width=2)
-            text(d, (160, y + 12), name, TEXT, FONT_B)
-            text(d, (160, y + 40), desc, MUTED, FONT_S)
-            if prio not in ("NORMAL",):
-                pill(d, 1040, y + 14, prio, ORANGE if prio == "HIGH" else RED)
-            if due:
-                text(d, (1105, y + 42), due, ORANGE if due == "6/23" else RED, FONT_S)
-            if phone:
-                text(d, (1146, y + 14), "phone", BLUE, FONT_XS)
-            y += 82
-        y += 10
-    im.save(OUT / "today.png")
+    x = 154
+    for label, value, detail, color, bg in cards:
+        metric_card(draw, [x, 172, x + 286, 312], label, value, detail, color, bg)
+        x += 306
+
+    rounded(draw, [154, 342, 872, 814], 14, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (178, 366), "Focus list", COLORS["ink"], FONT_H2)
+    rows = [
+        ("Refresh README screenshots", "Docs", "Doing", "High"),
+        ("Review SQLCipher passphrase plan", "Security", "Overdue", "High"),
+        ("Approve Atlas agent proposal", "Library", "Blocked", "Review"),
+        ("Send current task list to phone", "Telegram", "Ready", "Normal"),
+        ("Validate runtime profile commands", "Projects", "Next", "High"),
+    ]
+    table_header(draw, 178, 412, [360, 120, 110, 90], ["Work item", "Area", "State", "Priority"])
+    y = 458
+    for item, area, state, priority in rows:
+        draw.line([178, y + 48, 846, y + 48], fill=COLORS["line"])
+        draw_text(draw, (178, y), item, COLORS["ink"], FONT_SB, 350)
+        draw_text(draw, (538, y), area, COLORS["slate"], FONT_SM, 110)
+        state_color = COLORS["green"] if state in ("Doing", "Ready") else COLORS["amber"] if state == "Next" else COLORS["red"]
+        pill(draw, 658, y - 4, state, state_color, COLORS["panel_alt"])
+        draw_text(draw, (778, y), priority, COLORS["muted"], FONT_SM, 80)
+        y += 68
+
+    rounded(draw, [900, 342, 1328, 814], 14, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (924, 366), "Operator signals", COLORS["ink"], FONT_H2)
+    signals = [
+        ("Human-in-loop AI", "Ollama drafts are advisory until reviewed."),
+        ("Local storage", "SQLite via Drift, schema version 19."),
+        ("Outbound only", "Telegram sends task lists and logs attempts."),
+        ("Attention filters", "Blocked, overdue, doing, and high priority stay visible."),
+    ]
+    y = 424
+    for title, body in signals:
+        rounded(draw, [924, y, 1304, y + 78], 10, COLORS["panel_alt"], COLORS["line"])
+        draw_text(draw, (944, y + 14), title, COLORS["ink"], FONT_SB, 330)
+        draw_wrapped(draw, (944, y + 40), body, 330, COLORS["muted"], FONT_XS, 2, 18)
+        y += 94
+    image.save(OUT / "today.png")
 
 
 def make_projects():
-    im = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(im)
-    nav(d, "Projects")
-    appbar(d, "Projects")
-    # Filter bar
-    rr(d, [96, 72, 300, 106], 8, BG, LINE)
-    text(d, (116, 82), "All statuses", MUTED, FONT_S)
-    rr(d, [316, 72, 500, 106], 8, BG, LINE)
-    text(d, (336, 82), "All phases", MUTED, FONT_S)
-    rr(d, [516, 72, 700, 106], 8, BG, LINE)
-    text(d, (536, 82), "All priorities", MUTED, FONT_S)
-    rr(d, [716, 72, 870, 106], 8, BG, LINE)
-    text(d, (736, 82), "All tags", MUTED, FONT_S)
-    rr(d, [886, 72, 1030, 106], 8, BG, LINE)
-    text(d, (906, 82), "All contexts", MUTED, FONT_S)
-    rr(d, [1040, 17, 1184, 50], 8, PRIMARY)
-    text(d, (1060, 24), "New project", BG, FONT_S)
-    # Category group header (pinned category)
-    text(d, (96, 122), "Development", PRIMARY, FONT_B)
-    pill(d, 240, 124, "pinned", PRIMARY)
-    text(d, (330, 126), "4 projects", DIM, FONT_S)
-    rows = [
-        ("Project Atlas", "Local-first personal project command center", "active", "ship", True, ["#work", "#dev"], True),
-        ("Document Library Integration", "Import local files and link to work items for AI context", "active", "build", False, ["#dev"], False),
-        ("Contact Directory", "Reusable people records linked across all owner fields", "active", "stabilize", False, ["#work"], False),
-        ("Telegram Outbox", "Outbound task list with HTML escaping and outbox logging", "paused", "stabilize", False, ["#work"], False),
+    image, draw = base(
+        "Projects",
+        "Projects",
+        "Category-grouped projects with pins, filters, runtime actions, lifecycle fields, and bundle export.",
+    )
+    filters = ["Status: Open", "Phase: Any", "Priority: High+", "Tags: Work", "Context: Local"]
+    x = 154
+    for item in filters:
+        rounded(draw, [x, 172, x + 190, 212], 9, COLORS["panel"], COLORS["line"])
+        draw_text(draw, (x + 16, 184), item, COLORS["slate"], FONT_SM, 158)
+        x += 206
+    button(draw, [1204, 172, 1328, 212], "New", True)
+
+    rounded(draw, [154, 242, 1328, 810], 14, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (178, 268), "Development", COLORS["ink"], FONT_H2)
+    pill(draw, 350, 270, "pinned category", COLORS["teal"], COLORS["mint"])
+    draw_text(draw, (178, 310), "Pinned projects sort first; lifecycle, tags, phase, and runtime controls remain visible.", COLORS["muted"], FONT_SM, 760)
+    projects = [
+        ("Project Atlas", "Local-first command center with Today, Operations, Library, and Settings workflows.", "Active", "Ship", "Runtime ready", COLORS["blue"]),
+        ("Project Ops Capsule", "Repo-local launch, test, documentation, and closeout evidence for governed projects.", "Review", "Audit", "Capsule", COLORS["purple"]),
+        ("Dev Launchpad", "Project-owned launch metadata and runtime-visible YAML alignment.", "Active", "Stabilize", "Launch/Test", COLORS["green"]),
+        ("Telegram Outbox", "Outbound phone handoff with escaped HTML and local attempt logging.", "Paused", "Support", "Outbox", COLORS["amber"]),
     ]
-    y = 158
-    for title, desc, status, phase, active, tags, has_runtime in rows:
-        rr(d, [96, y, 1184, y + 98], 14, PANEL, PRIMARY if active else LINE, 2 if active else 1)
-        rr(d, [116, y + 18, 154, y + 56], 10, "#1B2B4A" if active else "#243040")
-        text(d, (128, y + 26), "P", PRIMARY if active else MUTED, FONT_B)
-        text(d, (174, y + 14), title, TEXT, FONT_B)
-        text(d, (174, y + 43), desc, MUTED, FONT_S)
-        x = pill(d, 174, y + 70, status, GREEN if status == "active" else ORANGE)
-        x = pill(d, x, y + 70, phase, BLUE if phase in ("test", "build") else (GREEN if phase == "ship" else MUTED))
-        for tag in tags:
-            x = pill(d, x, y + 70, tag, TEAL)
-        if has_runtime:
-            x = pill(d, x, y + 70, "runtime: launch · test · capsule", GREEN)
-        if active:
-            pill(d, 1060, y + 18, "ACTIVE", PRIMARY)
-        text(d, (1156, y + 36), ">", DIM, FONT_B)
+    y = 356
+    for name, desc, status, phase, action, color in projects:
+        rounded(draw, [178, y, 1304, y + 92], 12, COLORS["panel_alt"], color if name == "Project Atlas" else COLORS["line"], 2 if name == "Project Atlas" else 1)
+        rounded(draw, [202, y + 20, 252, y + 70], 12, "#FFFFFF", COLORS["line"])
+        draw_text(draw, (219, y + 34), name[0], color, FONT_B)
+        draw_text(draw, (276, y + 16), name, COLORS["ink"], FONT_B, 300)
+        draw_wrapped(draw, (276, y + 44), desc, 500, COLORS["muted"], FONT_XS, 2, 18)
+        xx = 820
+        xx = pill(draw, xx, y + 18, status, color)
+        xx = pill(draw, xx, y + 18, phase, COLORS["slate"])
+        pill(draw, xx, y + 18, action, COLORS["teal"])
+        button(draw, [1150, y + 50, 1278, y + 80], "Open")
         y += 112
-    im.save(OUT / "projects.png")
-
-
-def make_library():
-    im = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(im)
-    nav(d, "Library")
-    d.rectangle([73, 0, W, 62], fill=PANEL)
-    text(d, (96, 18), "Library", TEXT, FONT_B)
-    rr(d, [220, 14, 650, 48], 8, BG, LINE)
-    text(d, (244, 22), "Search title and content...", DIM, FONT_S)
-    rr(d, [670, 14, 830, 48], 8, BG, LINE)
-    text(d, (690, 22), "All projects", MUTED, FONT_S)
-    rr(d, [846, 14, 976, 48], 8, BG, LINE)
-    text(d, (866, 22), "All types", MUTED, FONT_S)
-    text(d, (1000, 23), "6 items", DIM, FONT_S)
-    rr(d, [1084, 14, 1178, 48], 8, PRIMARY)
-    text(d, (1106, 22), "Import", BG, FONT_S)
-    d.line([73, 62, W, 62], fill=LINE)
-    d.rectangle([73, 63, 393, H], fill=BG)
-    d.line([393, 63, 393, H], fill=LINE)
-    entries = [
-        ("Project Atlas — Today Summary", "AI Draft", GREEN),
-        ("Contact import format spec", "MD", MUTED),
-        ("Schema v10 migration notes", "TXT", MUTED),
-        ("Launch checklist", "MD", MUTED),
-        ("Governance bottleneck review", "AI Draft", GREEN),
-    ]
-    y = 82
-    for i, (title, kind, color) in enumerate(entries):
-        if i == 0:
-            d.rectangle([73, y - 6, 393, y + 62], fill="#17233A")
-            d.rectangle([73, y - 6, 76, y + 62], fill=PRIMARY)
-        text(d, (96, y), title, PRIMARY if i == 0 else TEXT, FONT_S)
-        text(d, (96, y + 26), "Project Atlas", DIM, FONT_XS)
-        pill(d, 288, y + 4, kind, color)
-        y += 72
-    text(d, (430, 104), "Project Atlas — Today Summary", TEXT, FONT_H)
-    pill(d, 430, 152, "AI Draft - today_summary", GREEN)
-    text(d, (430, 190), "Jul 3, 2026  ·  Project Atlas", MUTED, FONT_S)
-    rr(d, [430, 234, 1178, 700], 8, PANEL, LINE)
-    body = [
-        "Today summary (schema v19):",
-        "- 2 items doing: runtime profiles shipped, docs refresh in progress.",
-        "- 1 overdue: encryption plan review (SQLCipher passphrase).",
-        "- Runtime actions available: launch, test, and capsule per project.",
-        "- Operations Project Health groups open enrichment findings.",
-        "- Agent proposals pending review in the Library filter.",
-        "- Media gallery: 3 images attached to Project Atlas.",
-        "Ollama output is advisory — saved only after human review.",
-    ]
-    yy = 262
-    for line in body:
-        text(d, (460, yy), line, TEXT if yy == 262 else MUTED, FONT_B if yy == 262 else FONT_S)
-        yy += 40
-    im.save(OUT / "library.png")
+    image.save(OUT / "projects.png")
 
 
 def make_operations():
-    im = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(im)
-    nav(d, "Ops")
-    d.rectangle([73, 0, W, 96], fill=PANEL)
-    text(d, (96, 18), "Operations", TEXT, FONT_B)
-    tabs = ["Scans", "Review Candidates", "Registered Projects", "Enrichment", "Project Health"]
-    x = 96
-    for i, tab in enumerate(tabs):
-        text(d, (x, 66), tab, PRIMARY if i == 1 else MUTED, FONT_S)
-        if i == 1:
-            d.line([x, 91, x + len(tab) * 9, 91], fill=PRIMARY, width=3)
-        x += len(tab) * 11 + 44
-    # Scan controls row
-    rr(d, [96, 112, 300, 146], 8, PRIMARY)
-    text(d, (120, 120), "Run manual scan", BG, FONT_S)
-    rr(d, [316, 112, 470, 146], 8, BG, LINE)
-    text(d, (336, 120), "Add folder...", MUTED, FONT_S)
-    text(d, (500, 121), "Last scan: Jul 3, 2026 — 14 observations, 3 candidates", DIM, FONT_S)
-    # Queue filter chips
-    x = 96
-    for i, chip in enumerate(["Needs action", "Known", "Ignored", "All"]):
-        width = len(chip) * 9 + 28
-        rr(d, [x, 162, x + width, 194], 16, "#1B2B4A" if i == 0 else BG, PRIMARY if i == 0 else LINE)
-        text(d, (x + 14, 169), chip, PRIMARY if i == 0 else MUTED, FONT_S)
-        x += width + 12
+    image, draw = base(
+        "Operations",
+        "Operations",
+        "Manual shallow scans, candidate triage, reviewed registry records, enrichment runs, and project health.",
+    )
+    tabs = ["Scans", "Review", "Registered", "Enrichment", "Project Health"]
+    x = 154
+    for tab in tabs:
+        active = tab == "Review"
+        rounded(draw, [x, 166, x + 158, 208], 10, COLORS["sky"] if active else COLORS["panel"], COLORS["blue"] if active else COLORS["line"])
+        draw_text(draw, (x + 20, 179), tab, COLORS["blue"] if active else COLORS["slate"], FONT_SB, 118)
+        x += 170
+    button(draw, [1136, 166, 1328, 208], "Run scan", True)
+
+    metric_card(draw, [154, 238, 414, 370], "Candidates", "3", "Need accept, link, or ignore", COLORS["amber"], COLORS["cream"])
+    metric_card(draw, [438, 238, 698, 370], "Registered", "18", "Filtered to needs action", COLORS["green"], COLORS["mint"])
+    metric_card(draw, [722, 238, 982, 370], "Open findings", "7", "Grouped by project health", COLORS["red"], COLORS["rose"])
+    metric_card(draw, [1006, 238, 1328, 370], "Scan policy", "2", "Default max depth", COLORS["teal"], COLORS["sky"])
+
+    rounded(draw, [154, 404, 1328, 816], 14, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (178, 430), "Review candidates", COLORS["ink"], FONT_H2)
+    chips = [("Needs action", COLORS["blue"]), ("Known", COLORS["slate"]), ("Ignored", COLORS["slate"]), ("All", COLORS["slate"])]
+    x = 980
+    for label, color in chips:
+        x = pill(draw, x, 432, label, color, COLORS["sky"] if label == "Needs action" else COLORS["panel_alt"])
     candidates = [
-        ("dev_launchpad", "C:\\dev\\dev_launchpad", "candidate", ORANGE,
-         "Strong root: pubspec.yaml, README.md, .git — depth 1"),
-        ("ops_capsule", "C:\\dev\\ops_capsule", "candidate", ORANGE,
-         "Strong root: project_manifest.json, capsule profile — depth 1"),
-        ("project-atlas", "C:\\dev\\project-atlas", "linked", GREEN,
-         "Linked to Atlas project — refresh available instead of re-triage"),
+        ("B:/dev/dev.launchpad", "Strong root: README, pubspec, .git. Import as project or link to existing record.", "candidate"),
+        ("B:/dev/Project_Atlas/project-atlas-main", "Already linked. Refresh docs, media, source rows, and runtime profile.", "linked"),
+        ("B:/dev/ops_capsule", "Capsule metadata present. Mark as governed support project after review.", "needs review"),
     ]
-    y = 212
-    for name, path, state, color, detail in candidates:
-        rr(d, [96, y, 1184, y + 118], 12, PANEL, LINE)
-        text(d, (116, y + 12), name, TEXT, FONT_B)
-        pill(d, 1080, y + 14, state, color)
-        text(d, (116, y + 42), path, MUTED, FONT_S)
-        text(d, (116, y + 66), detail, DIM, FONT_XS)
-        bx = 116
-        for label in ["Accept", "Link to project", "Ignore", "Needs review"]:
-            width = len(label) * 8 + 26
-            rr(d, [bx, y + 86, bx + width, y + 112], 6, BG, LINE)
-            text(d, (bx + 13, y + 91), label, MUTED, FONT_XS)
-            bx += width + 10
-        y += 132
-    # Bulk action bar
-    rr(d, [96, y + 4, 1184, y + 46], 10, "#17233A", PRIMARY)
-    text(d, (116, y + 14), "3 selected", PRIMARY, FONT_S)
-    text(d, (240, y + 14), "Bulk: Accept · Ignore · Needs review · Ignore descendants", MUTED, FONT_S)
-    im.save(OUT / "operations.png")
+    y = 500
+    for path, detail, state in candidates:
+        rounded(draw, [178, y, 1304, y + 86], 10, COLORS["panel_alt"], COLORS["line"])
+        draw_text(draw, (202, y + 14), path, COLORS["ink"], FONT_SB, 560)
+        draw_wrapped(draw, (202, y + 42), detail, 650, COLORS["muted"], FONT_XS, 2, 17)
+        color = COLORS["green"] if state == "linked" else COLORS["amber"] if state == "candidate" else COLORS["purple"]
+        pill(draw, 896, y + 18, state, color)
+        button(draw, [1038, y + 16, 1116, y + 50], "Accept")
+        button(draw, [1128, y + 16, 1204, y + 50], "Link")
+        button(draw, [1216, y + 16, 1284, y + 50], "Ignore")
+        y += 104
+    image.save(OUT / "operations.png")
+
+
+def make_library():
+    image, draw = base(
+        "Library",
+        "Library",
+        "Documents, media, and AI drafts with search, project filters, previews, and proposal review.",
+    )
+    rounded(draw, [154, 166, 620, 208], 10, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (178, 179), "Search title and content", COLORS["soft"], FONT_SM)
+    rounded(draw, [644, 166, 826, 208], 10, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (666, 179), "Project Atlas", COLORS["slate"], FONT_SM)
+    rounded(draw, [850, 166, 1008, 208], 10, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (872, 179), "AI Drafts", COLORS["slate"], FONT_SM)
+    button(draw, [1204, 166, 1328, 208], "Import", True)
+
+    rounded(draw, [154, 238, 482, 816], 14, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (178, 264), "Items", COLORS["ink"], FONT_H2)
+    entries = [
+        ("Project Atlas Today Summary", "AI Draft", COLORS["green"]),
+        ("Agent proposal: update status", "Proposal", COLORS["purple"]),
+        ("Runtime profile checklist", "Markdown", COLORS["blue"]),
+        ("Operations scan warning", "JSON", COLORS["amber"]),
+        ("Cover image capture", "Media", COLORS["teal"]),
+    ]
+    y = 316
+    for index, (name, kind, color) in enumerate(entries):
+        fill = COLORS["sky"] if index == 0 else COLORS["panel_alt"]
+        rounded(draw, [178, y, 458, y + 70], 10, fill, color if index == 0 else COLORS["line"])
+        draw_text(draw, (198, y + 12), name, COLORS["ink"], FONT_SB, 236)
+        draw_text(draw, (198, y + 40), kind, color, FONT_XS, 150)
+        y += 86
+
+    rounded(draw, [514, 238, 1328, 816], 14, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (542, 268), "Project Atlas Today Summary", COLORS["ink"], FONT_H2, 620)
+    x = pill(draw, 542, 314, "today_summary", COLORS["green"], COLORS["mint"])
+    x = pill(draw, x, 314, "Project Atlas", COLORS["blue"], COLORS["sky"])
+    pill(draw, x, 314, "human review", COLORS["purple"], COLORS["violet"])
+    draw_text(draw, (542, 368), "Preview", COLORS["ink"], FONT_B)
+    rounded(draw, [542, 406, 1292, 748], 12, COLORS["panel_alt"], COLORS["line"])
+    preview = [
+        ("Summary", "2 doing items, 1 overdue security review, and 1 blocked proposal need attention today."),
+        ("Evidence", "Library-backed project summaries use ranked document packets with warnings before save."),
+        ("Agent boundary", "Proposal-first writes are saved as reviewable drafts; approval remains in the desktop app."),
+        ("Media", "Project media can be attached to work items and queued LLM tasks for local context."),
+    ]
+    y = 434
+    for heading, body in preview:
+        draw_text(draw, (570, y), heading, COLORS["ink"], FONT_SB, 150)
+        draw_wrapped(draw, (700, y), body, 520, COLORS["muted"], FONT_SM, 2, 22)
+        y += 76
+    image.save(OUT / "library.png")
 
 
 def make_settings():
-    im = Image.new("RGB", (W, H), BG)
-    d = ImageDraw.Draw(im)
-    nav(d, "Settings")
-    d.rectangle([73, 0, W, 96], fill=PANEL)
-    text(d, (96, 18), "Settings", TEXT, FONT_B)
+    image, draw = base(
+        "Settings",
+        "Settings",
+        "Integrations, AI summary setup, activity log, export tools, contacts, backup, and admin controls.",
+    )
     tabs = ["Integrations", "AI Summaries", "Activity Log", "Export", "Workforce", "Admin"]
-    x = 96
-    for i, tab in enumerate(tabs):
-        text(d, (x, 66), tab, PRIMARY if i == 4 else MUTED, FONT_S)
-        if i == 4:
-            d.line([x, 91, x + len(tab) * 9, 91], fill=PRIMARY, width=3)
-        x += len(tab) * 11 + 44
-    # Workforce tab content
-    d.rectangle([73, 96, 413, H], fill=BG)
-    d.line([413, 96, 413, H], fill=LINE)
-    # Left panel header buttons
-    rr(d, [88, 110, 230, 144], 8, PRIMARY)
-    text(d, (104, 118), "+ New contact", BG, FONT_S)
-    rr(d, [244, 110, 360, 144], 8, BG, LINE)
-    text(d, (258, 118), "Import JSON", MUTED, FONT_S)
-    rr(d, [88, 152, 190, 182], 8, BG, LINE)
-    text(d, (100, 158), "Export JSON", MUTED, FONT_XS)
-    rr(d, [198, 152, 290, 182], 8, BG, LINE)
-    text(d, (208, 158), "Export CSV", MUTED, FONT_XS)
-    d.line([73, 192, 413, 192], fill=LINE)
-    contacts = [
-        ("Alice Smith", "Lead Engineer — Acme"),
-        ("Bob Jones", "PM — Internal"),
-        ("Carol Wu", "Vendor — Supplies"),
-        ("David Park", "Advisor"),
+    x = 154
+    for tab in tabs:
+        active = tab == "AI Summaries"
+        width = 150 if tab != "AI Summaries" else 170
+        rounded(draw, [x, 166, x + width, 208], 10, COLORS["violet"] if active else COLORS["panel"], COLORS["purple"] if active else COLORS["line"])
+        draw_text(draw, (x + 18, 179), tab, COLORS["purple"] if active else COLORS["slate"], FONT_SB, width - 36)
+        x += width + 12
+
+    rounded(draw, [154, 238, 654, 816], 14, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (178, 266), "Project AI summaries", COLORS["ink"], FONT_H2)
+    draw_wrapped(draw, (178, 310), "Opt-in project summaries use local Ollama models, Library evidence, packet previews, warnings, and schema validation.", 420, COLORS["muted"], FONT_SM, 3, 24)
+    controls = [
+        ("Enable project AI summaries", "Off by default"),
+        ("Include Library evidence", "On by default after opt-in"),
+        ("Bulk refresh", "Gated by separate confirmation"),
+        ("Invalid output", "Fails closed with reasons"),
     ]
-    cy = 204
-    for i, (name, sub) in enumerate(contacts):
-        if i == 0:
-            d.rectangle([73, cy - 4, 413, cy + 56], fill="#17233A")
-            d.rectangle([73, cy - 4, 76, cy + 56], fill=PRIMARY)
-        initial = name[0]
-        rr(d, [92, cy + 4, 128, cy + 44], 20, PRIMARY + "23")
-        text(d, (101, cy + 12), initial, PRIMARY, FONT_B)
-        text(d, (140, cy + 4), name, PRIMARY if i == 0 else TEXT, FONT_S)
-        text(d, (140, cy + 28), sub, DIM, FONT_XS)
-        cy += 64
-    # Right panel — contact detail
-    text(d, (444, 112), "Alice Smith", TEXT, FONT_H)
-    text(d, (444, 156), "Lead Engineer  ·  Acme", MUTED, FONT_S)
-    d.line([430, 190, 1178, 190], fill=LINE)
-    fields = [
-        ("Phone", "555-0100"),
-        ("Alternate", "555-0101"),
-        ("Email", "alice@acme.example"),
-        ("Website", "acme.example"),
-        ("Notes", "Primary technical contact for integration work."),
+    y = 404
+    for title, detail in controls:
+        rounded(draw, [178, y, 626, y + 76], 10, COLORS["panel_alt"], COLORS["line"])
+        draw.ellipse([202, y + 24, 230, y + 52], fill=COLORS["green"] if "Library" in title else COLORS["line"], outline=COLORS["line"])
+        draw_text(draw, (248, y + 16), title, COLORS["ink"], FONT_SB, 320)
+        draw_text(draw, (248, y + 44), detail, COLORS["muted"], FONT_XS, 320)
+        y += 92
+
+    rounded(draw, [686, 238, 1328, 816], 14, COLORS["panel"], COLORS["line"])
+    draw_text(draw, (714, 266), "Operator setup", COLORS["ink"], FONT_H2)
+    setup = [
+        ("Ollama host", "http://localhost:11434", COLORS["blue"]),
+        ("Summary model", "qwen3.5:9b or installed local model", COLORS["teal"]),
+        ("Evidence cap", "3000 chars per document, 16000 total", COLORS["amber"]),
+        ("Export tools", "Backup, Telegram task list, project bundle", COLORS["green"]),
+        ("Admin", "Open app data folder and inspect local storage", COLORS["slate"]),
     ]
-    fy = 204
-    for label, value in fields:
-        text(d, (444, fy), label, DIM, FONT_XS)
-        text(d, (590, fy), value, TEXT, FONT_S)
-        fy += 32
-    d.line([430, fy + 8, 1178, fy + 8], fill=LINE)
-    text(d, (444, fy + 20), "Responsibilities", TEXT, FONT_B)
-    rr(d, [430, fy + 50, 1178, fy + 90], 8, PANEL, LINE)
-    text(d, (450, fy + 62), "Projects owned (1)", MUTED, FONT_S)
-    text(d, (1150, fy + 62), "›", DIM, FONT_B)
-    rr(d, [430, fy + 100, 1178, fy + 140], 8, PANEL, LINE)
-    text(d, (450, fy + 112), "Project roles (2)", MUTED, FONT_S)
-    text(d, (1150, fy + 112), "›", DIM, FONT_B)
-    rr(d, [430, fy + 150, 1178, fy + 190], 8, PANEL, LINE)
-    text(d, (450, fy + 162), "Work items owned (3)", MUTED, FONT_S)
-    text(d, (1150, fy + 162), "›", DIM, FONT_B)
-    im.save(OUT / "settings.png")
+    y = 328
+    for label, value, color in setup:
+        rounded(draw, [714, y, 1292, y + 72], 10, COLORS["panel_alt"], COLORS["line"])
+        draw_text(draw, (738, y + 15), label, color, FONT_SB, 180)
+        draw_text(draw, (940, y + 15), value, COLORS["ink"], FONT_SM, 330)
+        y += 88
+    image.save(OUT / "settings.png")
 
 
 if __name__ == "__main__":
