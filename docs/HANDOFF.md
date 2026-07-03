@@ -10,7 +10,7 @@ Project Atlas is a public Flutter Windows desktop repo. The active app repo is t
 |---|---|
 | Run ID | 20260703-ci-screenshots-product-stabilization |
 | Run State | VALIDATED_LOCAL |
-| Last Verified At | 2026-07-03T10:36:44-04:00 |
+| Last Verified At | 2026-07-03T10:45:16-04:00 |
 | Validation State | pass |
 | Git Head | working tree based on `7c7d0eb Add project runtime profiles (schema v19); refresh docs and screenshots` |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
@@ -25,6 +25,7 @@ Project Atlas is a public Flutter Windows desktop repo. The active app repo is t
 - `flutter analyze`: pass, no issues found.
 - Full `flutter test`: pass, 188 tests passed.
 - `git diff --check`: pass, only normal CRLF conversion warnings.
+- GitHub Actions CI run `28667317914` for commit `ade5634`: pass, including Analyze, Test, and Windows release build.
 
 ## Latest Stabilization Pass
 
@@ -45,7 +46,7 @@ The local Atlas LLM queue was reconciled after the pushed code closeout. Four Pr
 - Manual UI smoke of the Settings -> AI Summaries tab is still useful to inspect layout and local Ollama model dropdown behavior.
 - Live Ollama sampling against real project-linked Library sets remains a separate review task; this work order intentionally keeps the regression harness deterministic.
 - Raw capsule run ledgers and outboxes are local-only for public-repo safety.
-- GitHub Actions still needs to be observed after the stabilization commit is pushed.
+- GitHub Actions passed for the stabilization commit; the only annotation was the upstream Node.js 20 deprecation notice from GitHub Actions.
 
 ## Project Atlas Status
 
@@ -57,8 +58,8 @@ BOH sync is outbox-first and evidence-only. The packet is queued locally at `.pr
 
 ## Git Status
 
-Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`. This handoff records the locally validated state before the stabilization commit is pushed.
+Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`. This handoff records the locally and remotely validated state after the stabilization commit was pushed.
 
 ## Next Best Action
 
-Commit and push the stabilization work, then watch the GitHub Actions run for the new commit. After CI is green, the next substantive product slice is either settings-backed runtime defaults or restore/import flows.
+The next substantive product slice is either settings-backed runtime defaults or restore/import flows.
