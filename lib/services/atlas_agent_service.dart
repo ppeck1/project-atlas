@@ -1041,7 +1041,9 @@ class AtlasAgentService {
         if (status == null || !projectStatuses.contains(status)) {
           throw StateError('Unsupported project status: $status');
         }
-        await state.updateProjectMeta(projectId, {'status': status});
+        await state.updateProjectMeta(projectId, {
+          'status': status,
+        }, actor: 'Atlas Agent');
         return projectId;
       case 'task_update':
         return _applyTaskProposal(proposal);
@@ -1130,7 +1132,7 @@ class AtlasAgentService {
       }
     }
     if (meta.isNotEmpty) {
-      await state.updateProjectMeta(projectId, meta);
+      await state.updateProjectMeta(projectId, meta, actor: 'Atlas Agent');
     }
     if (fields.containsKey('tags')) {
       final tagIds = await _ensureTagIds(_valueStringList(fields['tags']));

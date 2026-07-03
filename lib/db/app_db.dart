@@ -197,6 +197,170 @@ class ProjectEnrichmentRun {
   };
 }
 
+class ProjectHealthWarningGroup {
+  final String key;
+  final String category;
+  final String title;
+  final List<String> warnings;
+
+  const ProjectHealthWarningGroup({
+    required this.key,
+    required this.category,
+    required this.title,
+    required this.warnings,
+  });
+
+  int get count => warnings.length;
+  List<String> get examples => warnings.take(5).toList(growable: false);
+
+  Map<String, Object?> toJson() => {
+    'key': key,
+    'category': category,
+    'title': title,
+    'count': count,
+    'examples': examples,
+  };
+}
+
+List<ProjectHealthWarningGroup> groupProjectHealthWarnings(
+  Iterable<String> warnings,
+) {
+  final grouped = <String, _ProjectHealthWarningAccumulator>{};
+  for (final raw in warnings) {
+    final warning = raw.trim();
+    if (warning.isEmpty) continue;
+    final classification = _classifyProjectHealthWarning(warning);
+    grouped
+        .putIfAbsent(
+          classification.key,
+          () => _ProjectHealthWarningAccumulator(classification),
+        )
+        .warnings
+        .add(warning);
+  }
+  final groups = grouped.values
+      .map(
+        (entry) => ProjectHealthWarningGroup(
+          key: entry.classification.key,
+          category: entry.classification.category,
+          title: entry.classification.title,
+          warnings: List.unmodifiable(entry.warnings),
+        ),
+      )
+      .toList();
+  groups.sort((a, b) {
+    final category = _warningCategoryRank(
+      a.category,
+    ).compareTo(_warningCategoryRank(b.category));
+    if (category != 0) return category;
+    final count = b.count.compareTo(a.count);
+    if (count != 0) return count;
+    return a.title.compareTo(b.title);
+  });
+  return List.unmodifiable(groups);
+}
+
+class _ProjectHealthWarningAccumulator {
+  final _ProjectHealthWarningClassification classification;
+  final List<String> warnings = [];
+
+  _ProjectHealthWarningAccumulator(this.classification);
+}
+
+class _ProjectHealthWarningClassification {
+  final String key;
+  final String category;
+  final String title;
+
+  const _ProjectHealthWarningClassification({
+    required this.key,
+    required this.category,
+    required this.title,
+  });
+}
+
+_ProjectHealthWarningClassification _classifyProjectHealthWarning(
+  String warning,
+) {
+  final normalized = _warningClassificationText(warning);
+  if (normalized.startsWith('Artifact not imported as source:')) {
+    return const _ProjectHealthWarningClassification(
+      key: 'artifact_not_imported',
+      category: 'source_import',
+      title: 'Artifacts skipped as source files',
+    );
+  }
+  if (RegExp(
+    r'^Skipped \d+ source file\(s\) over 256 KB\.',
+  ).hasMatch(normalized)) {
+    return const _ProjectHealthWarningClassification(
+      key: 'large_source_files',
+      category: 'source_import',
+      title: 'Large source files skipped',
+    );
+  }
+  if (normalized.startsWith('Source file refresh plan capped')) {
+    return const _ProjectHealthWarningClassification(
+      key: 'source_refresh_cap',
+      category: 'source_import',
+      title: 'Source refresh action cap reached',
+    );
+  }
+  if (normalized.contains('registered local path is a remote URL')) {
+    return const _ProjectHealthWarningClassification(
+      key: 'remote_url_registry_path',
+      category: 'registry',
+      title: 'Registry rows skipped because path is a remote URL',
+    );
+  }
+  if (normalized.contains('registered local path does not exist') ||
+      normalized.contains('path does not exist')) {
+    return const _ProjectHealthWarningClassification(
+      key: 'missing_registry_path',
+      category: 'registry',
+      title: 'Registry rows skipped because path is missing',
+    );
+  }
+  return const _ProjectHealthWarningClassification(
+    key: 'other_project_warnings',
+    category: 'other',
+    title: 'Other project refresh warnings',
+  );
+}
+
+String _warningClassificationText(String warning) {
+  final trimmed = warning.trim();
+  if (_isKnownProjectHealthWarningShape(trimmed)) return trimmed;
+  final separator = trimmed.indexOf(': ');
+  if (separator <= 0 || separator == trimmed.length - 2) return trimmed;
+  final withoutProjectPrefix = trimmed.substring(separator + 2).trim();
+  return _isKnownProjectHealthWarningShape(withoutProjectPrefix)
+      ? withoutProjectPrefix
+      : trimmed;
+}
+
+bool _isKnownProjectHealthWarningShape(String warning) {
+  return warning.startsWith('Artifact not imported as source:') ||
+      RegExp(
+        r'^Skipped \d+ source file\(s\) over 256 KB\.',
+      ).hasMatch(warning) ||
+      warning.startsWith('Source file refresh plan capped') ||
+      warning.contains('registered local path is a remote URL') ||
+      warning.contains('registered local path does not exist') ||
+      warning.contains('path does not exist');
+}
+
+int _warningCategoryRank(String category) {
+  switch (category) {
+    case 'registry':
+      return 0;
+    case 'source_import':
+      return 1;
+    default:
+      return 2;
+  }
+}
+
 class ProjectEnrichmentFinding {
   final String id;
   final String runId;
@@ -473,6 +637,8 @@ Map<String, Object?> _decodeObjectMap(String? rawJson) {
     ProjectObservations,
     ProjectScanRuns,
     LocalProjectRefreshItems,
+    ProjectRuntimeProfiles,
+    ProjectRuntimeRuns,
   ],
 )
 class AppDb extends _$AppDb {
@@ -501,7 +667,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 18;
+  int get schemaVersion => 19;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -644,11 +810,22 @@ class AppDb extends _$AppDb {
           await m.createTable(mediaLinks);
         } catch (_) {}
       }
+      if (from < 19) {
+        for (final fn in <Future<void> Function()>[
+          () => m.createTable(projectRuntimeProfiles),
+          () => m.createTable(projectRuntimeRuns),
+        ]) {
+          try {
+            await fn();
+          } catch (_) {}
+        }
+      }
     },
     beforeOpen: (_) async {
       await _ensureProjectCompatibilityColumns();
       await _ensureWorkItemTagsTable();
       await _ensureMediaLinksTable();
+      await _ensureProjectRuntimeTables();
       await _ensureProjectGitRemotesTable();
       await _ensureProjectEnrichmentTables();
       await _ensureLlmTaskQueueTable();
@@ -860,6 +1037,57 @@ class AppDb extends _$AppDb {
     }
   }
 
+  Future<void> _ensureProjectRuntimeTables() async {
+    final statements = <String>[
+      '''CREATE TABLE IF NOT EXISTS project_runtime_profiles (
+        id TEXT NOT NULL PRIMARY KEY,
+        project_id TEXT NOT NULL UNIQUE,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        working_directory TEXT NULL,
+        launch_command TEXT NULL,
+        stop_command TEXT NULL,
+        test_commands_json TEXT NOT NULL DEFAULT '[]',
+        ports_json TEXT NOT NULL DEFAULT '[]',
+        urls_json TEXT NOT NULL DEFAULT '[]',
+        health_urls_json TEXT NOT NULL DEFAULT '[]',
+        notes TEXT NULL,
+        autostart INTEGER NOT NULL DEFAULT 0,
+        capsule_enabled INTEGER NOT NULL DEFAULT 1,
+        capsule_mode TEXT NOT NULL DEFAULT 'check',
+        capsule_source_path TEXT NULL,
+        capsule_profile TEXT NULL,
+        import_source TEXT NULL,
+        last_imported_at INTEGER NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )''',
+      '''CREATE TABLE IF NOT EXISTS project_runtime_runs (
+        id TEXT NOT NULL PRIMARY KEY,
+        profile_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        command TEXT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER NULL,
+        exit_code INTEGER NULL,
+        output_text TEXT NULL,
+        error_text TEXT NULL,
+        capsule_status TEXT NULL,
+        capsule_output_text TEXT NULL,
+        metadata_json TEXT NULL
+      )''',
+      'CREATE INDEX IF NOT EXISTS idx_project_runtime_runs_project_started '
+          'ON project_runtime_runs(project_id, started_at DESC)',
+    ];
+
+    for (final statement in statements) {
+      try {
+        await customStatement(statement);
+      } catch (_) {}
+    }
+  }
+
   // ── AppMeta helpers ───────────────────────────────────────────────────────
 
   Future<String?> getMetaString(String key) async {
@@ -1059,6 +1287,20 @@ class AppDb extends _$AppDb {
 
   Future<ProjectFull?> getProjectFull(String id) =>
       (select(projects)..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<Project?> getGeneralTasksProject() async {
+    final rows =
+        await (select(projects)
+              ..where(
+                (t) =>
+                    t.id.equals(kGeneralTasksProjectId) |
+                    t.description.equals(kGeneralTasksProjectDescription),
+              )
+              ..orderBy([(t) => OrderingTerm.asc(t.createdAt)])
+              ..limit(1))
+            .get();
+    return rows.isEmpty ? null : rows.single;
+  }
 
   Future<List<Project>> getSummaryEligibleProjects() => getProjectsFull().then(
     (rows) => rows
@@ -3163,8 +3405,19 @@ class AppDb extends _$AppDb {
 
   String _actorFromAttributionOutput(String? outputJson) {
     final output = _decodeObjectMap(outputJson);
+    final actor = output['actor'];
+    if (actor is Map) {
+      final displayName =
+          actor['displayName']?.toString() ?? actor['name']?.toString();
+      if (displayName != null && displayName.trim().isNotEmpty) {
+        return displayName.trim();
+      }
+    } else if (actor is String && actor.trim().isNotEmpty) {
+      return actor.trim();
+    }
     final agent = output['agent']?.toString().toLowerCase();
     if (agent == 'codex') return 'Codex';
+    if (agent == 'operator') return 'Operator';
     if (agent != null && agent.isNotEmpty) return agent;
     return 'Atlas';
   }
@@ -3174,6 +3427,12 @@ class AppDb extends _$AppDb {
             ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
             ..limit(limit))
           .watch();
+
+  Future<List<ProjectScanRun>> getProjectScanRuns({int limit = 50}) =>
+      (select(projectScanRuns)
+            ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
+            ..limit(limit))
+          .get();
 
   Future<ProjectScanRun?> getProjectScanRun(String id) => (select(
     projectScanRuns,
@@ -3269,6 +3528,14 @@ class AppDb extends _$AppDb {
             ..limit(limit))
           .watch();
 
+  Future<List<ProjectObservation>> getRecentProjectObservations({
+    int limit = 100,
+  }) =>
+      (select(projectObservations)
+            ..orderBy([(t) => OrderingTerm.desc(t.observedAt)])
+            ..limit(limit))
+          .get();
+
   Future<List<ProjectRegistryEntry>> getProjectRegistry() => (select(
     projectRegistry,
   )..orderBy([(t) => OrderingTerm.asc(t.displayName)])).get();
@@ -3280,6 +3547,51 @@ class AppDb extends _$AppDb {
   Future<ProjectRegistryEntry?> getProjectRegistryEntry(String id) => (select(
     projectRegistry,
   )..where((t) => t.id.equals(id))).getSingleOrNull();
+
+  Future<void> updateProjectRegistryEntryReviewState({
+    required String id,
+    required String reviewState,
+    String? notes,
+    bool clearAtlasProjectId = false,
+  }) async {
+    await (update(projectRegistry)..where((t) => t.id.equals(id))).write(
+      ProjectRegistryCompanion(
+        atlasProjectId: clearAtlasProjectId
+            ? const Value(null)
+            : const Value.absent(),
+        reviewState: Value(reviewState),
+        notes: notes == null ? const Value.absent() : Value(notes),
+        updatedAt: Value(DateTime.now()),
+        lastReviewedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<ProjectRegistryEntry> updateProjectRegistryEntryLocalPath({
+    required String id,
+    required String localPath,
+    String? gitRoot,
+    String? reviewState,
+    String? notes,
+  }) async {
+    await (update(projectRegistry)..where((t) => t.id.equals(id))).write(
+      ProjectRegistryCompanion(
+        localPath: Value(localPath),
+        gitRoot: Value(gitRoot),
+        reviewState: reviewState == null
+            ? const Value.absent()
+            : Value(reviewState),
+        notes: notes == null ? const Value.absent() : Value(notes),
+        updatedAt: Value(DateTime.now()),
+        lastReviewedAt: Value(DateTime.now()),
+      ),
+    );
+    final updated = await getProjectRegistryEntry(id);
+    if (updated == null) {
+      throw StateError('Project registry row not found: $id');
+    }
+    return updated;
+  }
 
   Future<ProjectRegistryEntry?> getProjectRegistryByPath(String path) =>
       (select(projectRegistry)
@@ -3453,6 +3765,172 @@ class AppDb extends _$AppDb {
             ]))
           .get();
 
+  Stream<ProjectRuntimeProfile?> watchProjectRuntimeProfile(String projectId) =>
+      (select(projectRuntimeProfiles)
+            ..where((t) => t.projectId.equals(projectId))
+            ..limit(1))
+          .watchSingleOrNull();
+
+  Future<ProjectRuntimeProfile?> getProjectRuntimeProfile(String projectId) =>
+      (select(projectRuntimeProfiles)
+            ..where((t) => t.projectId.equals(projectId))
+            ..limit(1))
+          .getSingleOrNull();
+
+  Future<ProjectRuntimeProfile> saveProjectRuntimeProfile({
+    required String projectId,
+    required bool enabled,
+    required String? workingDirectory,
+    required String? launchCommand,
+    required String? stopCommand,
+    required String testCommandsJson,
+    required String portsJson,
+    required String urlsJson,
+    required String healthUrlsJson,
+    required String? notes,
+    required bool autostart,
+    required bool capsuleEnabled,
+    required String capsuleMode,
+    required String? capsuleSourcePath,
+    required String? capsuleProfile,
+    String? importSource,
+    DateTime? lastImportedAt,
+  }) async {
+    final existing = await getProjectRuntimeProfile(projectId);
+    final now = DateTime.now();
+    final id = existing?.id ?? _newMicrosId('runtime');
+    await into(projectRuntimeProfiles).insertOnConflictUpdate(
+      ProjectRuntimeProfilesCompanion(
+        id: Value(id),
+        projectId: Value(projectId),
+        enabled: Value(enabled),
+        workingDirectory: Value(workingDirectory),
+        launchCommand: Value(launchCommand),
+        stopCommand: Value(stopCommand),
+        testCommandsJson: Value(testCommandsJson),
+        portsJson: Value(portsJson),
+        urlsJson: Value(urlsJson),
+        healthUrlsJson: Value(healthUrlsJson),
+        notes: Value(notes),
+        autostart: Value(autostart),
+        capsuleEnabled: Value(capsuleEnabled),
+        capsuleMode: Value(capsuleMode),
+        capsuleSourcePath: Value(capsuleSourcePath),
+        capsuleProfile: Value(capsuleProfile),
+        importSource: Value(importSource ?? existing?.importSource),
+        lastImportedAt: Value(lastImportedAt ?? existing?.lastImportedAt),
+        createdAt: Value(existing?.createdAt ?? now),
+        updatedAt: Value(now),
+      ),
+    );
+    final saved = await getProjectRuntimeProfile(projectId);
+    if (saved == null) {
+      throw StateError('Runtime profile was not saved for project $projectId.');
+    }
+    return saved;
+  }
+
+  Future<void> deleteProjectRuntimeProfile(String projectId) async {
+    await (delete(
+      projectRuntimeProfiles,
+    )..where((t) => t.projectId.equals(projectId))).go();
+  }
+
+  Stream<List<ProjectRuntimeRun>> watchProjectRuntimeRuns(
+    String projectId, {
+    int limit = 20,
+  }) =>
+      (select(projectRuntimeRuns)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
+            ..limit(limit))
+          .watch();
+
+  Future<List<ProjectRuntimeRun>> getProjectRuntimeRuns(
+    String projectId, {
+    int limit = 20,
+  }) =>
+      (select(projectRuntimeRuns)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
+            ..limit(limit))
+          .get();
+
+  Stream<List<ProjectRuntimeRun>> watchLatestRuntimeRunsForProjects({
+    int limit = 200,
+  }) =>
+      (select(projectRuntimeRuns)
+            ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
+            ..limit(limit))
+          .watch();
+
+  Future<ProjectRuntimeRun?> getLatestProjectRuntimeRun(
+    String projectId, {
+    String? action,
+  }) {
+    final query = select(projectRuntimeRuns)
+      ..where((t) => t.projectId.equals(projectId));
+    if (action != null) {
+      query.where((t) => t.action.equals(action));
+    }
+    query
+      ..orderBy([(t) => OrderingTerm.desc(t.startedAt)])
+      ..limit(1);
+    return query.getSingleOrNull();
+  }
+
+  Future<ProjectRuntimeRun> startProjectRuntimeRun({
+    required String profileId,
+    required String projectId,
+    required String action,
+    String? command,
+    String? metadataJson,
+  }) async {
+    final id = _newMicrosId('runtime_run');
+    await into(projectRuntimeRuns).insert(
+      ProjectRuntimeRunsCompanion(
+        id: Value(id),
+        profileId: Value(profileId),
+        projectId: Value(projectId),
+        action: Value(action),
+        command: Value(command),
+        status: const Value('running'),
+        startedAt: Value(DateTime.now()),
+        metadataJson: Value(metadataJson),
+      ),
+    );
+    return (select(
+      projectRuntimeRuns,
+    )..where((t) => t.id.equals(id))).getSingle();
+  }
+
+  Future<ProjectRuntimeRun> finishProjectRuntimeRun({
+    required String id,
+    required String status,
+    int? exitCode,
+    String? outputText,
+    String? errorText,
+    String? capsuleStatus,
+    String? capsuleOutputText,
+    String? metadataJson,
+  }) async {
+    await (update(projectRuntimeRuns)..where((t) => t.id.equals(id))).write(
+      ProjectRuntimeRunsCompanion(
+        status: Value(status),
+        completedAt: Value(DateTime.now()),
+        exitCode: Value(exitCode),
+        outputText: Value(outputText),
+        errorText: Value(errorText),
+        capsuleStatus: Value(capsuleStatus),
+        capsuleOutputText: Value(capsuleOutputText),
+        metadataJson: Value(metadataJson),
+      ),
+    );
+    return (select(
+      projectRuntimeRuns,
+    )..where((t) => t.id.equals(id))).getSingle();
+  }
+
   ProjectGitRemoteStatus _projectGitRemoteStatusFromRow(QueryRow row) =>
       ProjectGitRemoteStatus(
         id: row.data['id'] as String,
@@ -3496,6 +3974,14 @@ class AppDb extends _$AppDb {
       variables: [Variable<String>(projectId)],
     ).get();
     return rows.map(_projectGitRemoteStatusFromRow).toList(growable: false);
+  }
+
+  Future<void> deleteProjectGitRemoteStatuses(String projectId) async {
+    await _ensureProjectGitRemotesTable();
+    await customStatement(
+      'DELETE FROM project_git_remotes WHERE project_id = ?',
+      [projectId],
+    );
   }
 
   Future<ProjectGitRemoteStatus> upsertProjectGitRemoteStatus({
@@ -3797,6 +4283,40 @@ class AppDb extends _$AppDb {
         status,
         createdAt.millisecondsSinceEpoch,
       ],
+    );
+  }
+
+  Future<ProjectEnrichmentFinding?> getProjectEnrichmentFinding(
+    String id,
+  ) async {
+    final rows = await customSelect(
+      'SELECT * FROM project_enrichment_findings WHERE id = ? LIMIT 1',
+      variables: [Variable<String>(id)],
+    ).get();
+    return rows.isEmpty ? null : _projectEnrichmentFindingFromRow(rows.single);
+  }
+
+  Future<void> updateProjectEnrichmentFindingStatus({
+    required String id,
+    required String status,
+  }) async {
+    await _ensureProjectEnrichmentTables();
+    await customStatement(
+      'UPDATE project_enrichment_findings SET status = ? WHERE id = ?',
+      [status, id],
+    );
+  }
+
+  Future<void> refreshProjectEnrichmentRunOpenFindings(String runId) async {
+    await _ensureProjectEnrichmentTables();
+    await customStatement(
+      '''UPDATE project_enrichment_runs
+         SET open_findings = (
+           SELECT COUNT(*) FROM project_enrichment_findings
+           WHERE run_id = ? AND status = 'open'
+         )
+         WHERE id = ?''',
+      [runId, runId],
     );
   }
 

@@ -16,9 +16,9 @@ void main() {
   });
 
   test(
-    'schema v18 creates project, media-link, queue, and operations tables',
+    'schema v19 creates project, media-link, runtime, queue, and operations tables',
     () async {
-      expect(db.schemaVersion, 18);
+      expect(db.schemaVersion, 19);
 
       final tables = await db
           .customSelect(
@@ -39,6 +39,8 @@ void main() {
       expect(tableNames, contains('project_enrichment_steps'));
       expect(tableNames, contains('project_enrichment_proposals'));
       expect(tableNames, contains('llm_task_queue'));
+      expect(tableNames, contains('project_runtime_profiles'));
+      expect(tableNames, contains('project_runtime_runs'));
     },
   );
 

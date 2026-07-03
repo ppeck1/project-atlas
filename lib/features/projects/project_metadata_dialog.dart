@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../db/app_db.dart';
+import '../../services/project_runtime_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/models/project_metadata.dart';
@@ -67,7 +68,23 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
   late final TextEditingController _titleCtrl;
   late final TextEditingController _ownerCtrl;
   late final TextEditingController _categoryCtrl;
+  late final TextEditingController _runtimeWorkingDirCtrl;
+  late final TextEditingController _runtimeLaunchCtrl;
+  late final TextEditingController _runtimeStopCtrl;
+  late final TextEditingController _runtimeTestsCtrl;
+  late final TextEditingController _runtimePortsCtrl;
+  late final TextEditingController _runtimeUrlsCtrl;
+  late final TextEditingController _runtimeHealthCtrl;
+  late final TextEditingController _runtimeNotesCtrl;
+  late final TextEditingController _capsuleSourceCtrl;
+  late final TextEditingController _capsuleProfileCtrl;
   late bool _customCategory;
+  bool _runtimeEnabled = false;
+  bool _runtimeLoaded = false;
+  bool _runtimeImporting = false;
+  bool _runtimeAutostart = false;
+  bool _capsuleEnabled = true;
+  String _capsuleMode = 'check';
   bool _saving = false;
   String? _error;
 
@@ -78,7 +95,28 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
     _titleCtrl = TextEditingController(text: widget.project.title);
     _ownerCtrl = TextEditingController(text: widget.project.owner ?? '');
     _categoryCtrl = TextEditingController(text: category ?? '');
+    _runtimeWorkingDirCtrl = TextEditingController();
+    _runtimeLaunchCtrl = TextEditingController();
+    _runtimeStopCtrl = TextEditingController();
+    _runtimeTestsCtrl = TextEditingController();
+    _runtimePortsCtrl = TextEditingController();
+    _runtimeUrlsCtrl = TextEditingController();
+    _runtimeHealthCtrl = TextEditingController();
+    _runtimeNotesCtrl = TextEditingController();
+    _capsuleSourceCtrl = TextEditingController(
+      text: defaultProjectOpsCapsulePath,
+    );
+    _capsuleProfileCtrl = TextEditingController(text: 'software_project');
     _customCategory = category != null && !widget.categories.contains(category);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_runtimeLoaded) {
+      _runtimeLoaded = true;
+      _loadRuntimeProfile();
+    }
   }
 
   @override
@@ -86,6 +124,16 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
     _titleCtrl.dispose();
     _ownerCtrl.dispose();
     _categoryCtrl.dispose();
+    _runtimeWorkingDirCtrl.dispose();
+    _runtimeLaunchCtrl.dispose();
+    _runtimeStopCtrl.dispose();
+    _runtimeTestsCtrl.dispose();
+    _runtimePortsCtrl.dispose();
+    _runtimeUrlsCtrl.dispose();
+    _runtimeHealthCtrl.dispose();
+    _runtimeNotesCtrl.dispose();
+    _capsuleSourceCtrl.dispose();
+    _capsuleProfileCtrl.dispose();
     super.dispose();
   }
 
@@ -192,6 +240,8 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
               ),
               if (widget.includeOwnerField)
                 ContactOwnerField(controller: _ownerCtrl),
+              const SizedBox(height: 8),
+              _runtimeSection(state),
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 Align(
@@ -225,6 +275,155 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
     );
   }
 
+  Future<void> _loadRuntimeProfile() async {
+    final state = AppStateScope.of(context);
+    final profile = await state.getProjectRuntimeProfile(widget.project.id);
+    if (!mounted || profile == null) return;
+    _applyRuntimeDraft(ProjectRuntimeProfileDraft.fromProfile(profile));
+  }
+
+  Widget _runtimeSection(AppState state) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(6),
+        border: Border.all(color: _dialogLine),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: ExpansionTile(
+          initiallyExpanded: _runtimeEnabled,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          leading: const Icon(Icons.rocket_launch_outlined, size: 18),
+          title: const Text('Software runtime'),
+          trailing: Switch(
+            value: _runtimeEnabled,
+            onChanged: _saving
+                ? null
+                : (value) => setState(() => _runtimeEnabled = value),
+          ),
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _runtimeImporting || _saving
+                    ? null
+                    : () => _importRuntimeFromDevLaunchpad(state),
+                icon: _runtimeImporting
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download_outlined, size: 16),
+                label: const Text('Import Dev Launchpad'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _field(_runtimeWorkingDirCtrl, 'Working directory'),
+            _field(_runtimeLaunchCtrl, 'Launch command'),
+            _field(_runtimeStopCtrl, 'Stop command'),
+            _multiField(_runtimeTestsCtrl, 'Test commands'),
+            Row(
+              children: [
+                Expanded(child: _field(_runtimePortsCtrl, 'Ports')),
+                const SizedBox(width: 10),
+                Expanded(child: _field(_runtimeHealthCtrl, 'Health URLs')),
+              ],
+            ),
+            _multiField(_runtimeUrlsCtrl, 'URLs'),
+            _multiField(_runtimeNotesCtrl, 'Runtime notes'),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              value: _runtimeAutostart,
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _runtimeAutostart = value),
+              title: const Text('Autostart'),
+            ),
+            const Divider(height: 18, color: _dialogLine),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              value: _capsuleEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _capsuleEnabled = value),
+              title: const Text('Project Ops Capsule'),
+            ),
+            DropdownButtonFormField<String>(
+              value: normalizeCapsuleMode(_capsuleMode),
+              decoration: const InputDecoration(labelText: 'Capsule mode'),
+              items: const [
+                DropdownMenuItem(value: 'off', child: Text('off')),
+                DropdownMenuItem(value: 'check', child: Text('check')),
+                DropdownMenuItem(
+                  value: 'strict_check',
+                  child: Text('strict check'),
+                ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _capsuleMode = value ?? 'check'),
+            ),
+            _field(_capsuleSourceCtrl, 'Capsule source path'),
+            _field(_capsuleProfileCtrl, 'Capsule profile'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _importRuntimeFromDevLaunchpad(AppState state) async {
+    setState(() {
+      _runtimeImporting = true;
+      _error = null;
+    });
+    try {
+      final profile = await state.importRuntimeProfileFromDevLaunchpad(
+        widget.project.id,
+      );
+      if (!mounted) return;
+      if (profile == null) {
+        setState(() => _error = 'No matching Dev Launchpad app was found.');
+        return;
+      }
+      _applyRuntimeDraft(ProjectRuntimeProfileDraft.fromProfile(profile));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = 'Import failed: $error');
+    } finally {
+      if (mounted) setState(() => _runtimeImporting = false);
+    }
+  }
+
+  void _applyRuntimeDraft(ProjectRuntimeProfileDraft draft) {
+    setState(() {
+      _runtimeEnabled = draft.enabled;
+      _runtimeWorkingDirCtrl.text = draft.workingDirectory ?? '';
+      _runtimeLaunchCtrl.text = draft.launchCommand ?? '';
+      _runtimeStopCtrl.text = draft.stopCommand ?? '';
+      _runtimeTestsCtrl.text = draft.testCommands.join('\n');
+      _runtimePortsCtrl.text = draft.ports.join(', ');
+      _runtimeUrlsCtrl.text = draft.urls
+          .map(
+            (url) =>
+                url.label == url.url ? url.url : '${url.label} | ${url.url}',
+          )
+          .join('\n');
+      _runtimeHealthCtrl.text = draft.healthUrls.join('\n');
+      _runtimeNotesCtrl.text = draft.notes ?? '';
+      _runtimeAutostart = draft.autostart;
+      _capsuleEnabled = draft.capsuleEnabled;
+      _capsuleMode = normalizeCapsuleMode(draft.capsuleMode);
+      _capsuleSourceCtrl.text =
+          draft.capsuleSourcePath ?? defaultProjectOpsCapsulePath;
+      _capsuleProfileCtrl.text = draft.capsuleProfile ?? 'software_project';
+    });
+  }
+
   String _selectedCategoryValue() {
     if (_customCategory) return _categoryCustom;
     final category = normalizeProjectCategory(_categoryCtrl.text);
@@ -251,6 +450,27 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
         'priority': normalizePriorityValue(_priority),
         'owner': _blankToNull(_ownerCtrl.text),
       });
+      await state.saveProjectRuntimeProfileDraft(
+        widget.project.id,
+        ProjectRuntimeProfileDraft(
+          enabled: _runtimeEnabled,
+          workingDirectory: _blankToNull(_runtimeWorkingDirCtrl.text),
+          launchCommand: _blankToNull(_runtimeLaunchCtrl.text),
+          stopCommand: _blankToNull(_runtimeStopCtrl.text),
+          testCommands: _lines(_runtimeTestsCtrl.text),
+          ports: _ports(_runtimePortsCtrl.text),
+          urls: _runtimeUrls(_runtimeUrlsCtrl.text),
+          healthUrls: _lines(_runtimeHealthCtrl.text),
+          notes: _blankToNull(_runtimeNotesCtrl.text),
+          autostart: _runtimeAutostart,
+          capsuleEnabled: _capsuleEnabled,
+          capsuleMode: normalizeCapsuleMode(_capsuleMode),
+          capsuleSourcePath:
+              _blankToNull(_capsuleSourceCtrl.text) ??
+              defaultProjectOpsCapsulePath,
+          capsuleProfile: _blankToNull(_capsuleProfileCtrl.text),
+        ),
+      );
       if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
       if (!mounted) return;
@@ -312,7 +532,46 @@ Widget _field(TextEditingController ctrl, String label) {
   );
 }
 
+Widget _multiField(TextEditingController ctrl, String label) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: TextField(
+      controller: ctrl,
+      minLines: 2,
+      maxLines: 5,
+      decoration: InputDecoration(labelText: label),
+    ),
+  );
+}
+
 String? _blankToNull(String value) {
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+List<String> _lines(String value) => value
+    .split(RegExp(r'[\r\n]+'))
+    .map((line) => line.trim())
+    .where((line) => line.isNotEmpty)
+    .toList(growable: false);
+
+List<int> _ports(String value) => value
+    .split(RegExp(r'[\s,;]+'))
+    .map((item) => int.tryParse(item.trim()))
+    .whereType<int>()
+    .toList(growable: false);
+
+List<RuntimeUrl> _runtimeUrls(String value) {
+  return _lines(value)
+      .map((line) {
+        final parts = line.split('|');
+        if (parts.length >= 2) {
+          final label = parts.first.trim();
+          final url = parts.sublist(1).join('|').trim();
+          return RuntimeUrl(label: label.isEmpty ? url : label, url: url);
+        }
+        return RuntimeUrl(label: line, url: line);
+      })
+      .where((item) => item.url.trim().isNotEmpty)
+      .toList(growable: false);
 }

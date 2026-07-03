@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../db/app_db.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../services/local_project_refresh_service.dart';
+import '../../services/project_runtime_service.dart' as runtime;
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/models/project_metadata.dart';
@@ -22,6 +23,9 @@ const _projectsTabCategorySortKey = 'projects_tab::category_sort';
 const _projectsTabProjectSortKey = 'projects_tab::project_sort';
 const _projectsTabPinnedCategoriesKey = 'projects_tab::pinned_categories';
 const _projectsTabPinnedProjectsKey = 'projects_tab::pinned_projects';
+const _projectsTabCollapsedSectionsKey = 'projects_tab::collapsed_sections';
+const _projectsTabVisibleCategoriesKey = 'projects_tab::visible_categories';
+const _pinnedSectionId = 'section::pinned';
 const _defaultCategorySort = 'name_az';
 const _defaultProjectSort = 'name_az';
 
@@ -88,16 +92,18 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   String? _projectUploadProgress;
   String _categorySort = _defaultCategorySort;
   String _projectSort = _defaultProjectSort;
-  final Set<String> _collapsedCategories = <String>{};
+  final Set<String> _collapsedSections = <String>{};
   final Set<String> _pinnedCategories = <String>{};
   final Set<String> _pinnedProjects = <String>{};
+  final Set<String> _visibleCategories = <String>{};
   bool _loadedOrderingPreferences = false;
 
   bool get _hasFilters =>
       _tagFilterId != null ||
       _statusFilter != null ||
       _phaseFilter != null ||
-      _priorityFilter != null;
+      _priorityFilter != null ||
+      _visibleCategories.isNotEmpty;
 
   @override
   void didChangeDependencies() {
@@ -114,6 +120,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       state.getSetting(_projectsTabProjectSortKey),
       state.getSetting(_projectsTabPinnedCategoriesKey),
       state.getSetting(_projectsTabPinnedProjectsKey),
+      state.getSetting(_projectsTabCollapsedSectionsKey),
+      state.getSetting(_projectsTabVisibleCategoriesKey),
     ]);
     if (!mounted) return;
     setState(() {
@@ -133,6 +141,12 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       _pinnedProjects
         ..clear()
         ..addAll(_decodeStringSetSetting(values[3]));
+      _collapsedSections
+        ..clear()
+        ..addAll(_decodeStringSetSetting(values[4]));
+      _visibleCategories
+        ..clear()
+        ..addAll(_decodeStringSetSetting(values[5]));
     });
   }
 
@@ -183,6 +197,32 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       }
     });
     await _saveStringSetSetting(_projectsTabPinnedProjectsKey, _pinnedProjects);
+  }
+
+  Future<void> _setVisibleCategories(Set<String> categories) async {
+    setState(() {
+      _visibleCategories
+        ..clear()
+        ..addAll(categories);
+    });
+    await _saveStringSetSetting(
+      _projectsTabVisibleCategoriesKey,
+      _visibleCategories,
+    );
+  }
+
+  Future<void> _toggleSectionCollapse(String sectionId, bool collapsed) async {
+    setState(() {
+      if (collapsed) {
+        _collapsedSections.add(sectionId);
+      } else {
+        _collapsedSections.remove(sectionId);
+      }
+    });
+    await _saveStringSetSetting(
+      _projectsTabCollapsedSectionsKey,
+      _collapsedSections,
+    );
   }
 
   Future<void> _saveStringSetSetting(String key, Set<String> values) async {
@@ -912,10 +952,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             onPressed: () async {
               final title = await showCreateProjectDialog(context);
               if (title == null || title.trim().isEmpty) return;
-              await state.createProject(title.trim());
-              final active = state.activeProject;
-              if (context.mounted && active != null) {
-                context.go('/projects/${active.id}');
+              final projectId = await state.createProject(title.trim());
+              if (context.mounted && projectId != null) {
+                context.go('/projects/$projectId');
               }
             },
             icon: const Icon(Icons.add),
@@ -952,6 +991,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       final projectTags =
                           projectTagSnap.data ?? const <String, List<Tag>>{};
                       final filtered = _filterProjects(projects, projectTags);
+                      final availableCategories = _availableCategories(
+                        projects,
+                      );
                       return StreamBuilder<
                         Map<String, ProjectUpdateAttribution>
                       >(
@@ -973,6 +1015,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                 statusFilter: _statusFilter,
                                 phaseFilter: _phaseFilter,
                                 priorityFilter: _priorityFilter,
+                                visibleCategories: _visibleCategories,
+                                availableCategories: availableCategories,
                                 categorySort: _categorySort,
                                 projectSort: _projectSort,
                                 hasFilters: _hasFilters,
@@ -984,122 +1028,120 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                     setState(() => _phaseFilter = v),
                                 onPriorityChanged: (v) =>
                                     setState(() => _priorityFilter = v),
+                                onCategoriesChanged: _setVisibleCategories,
                                 onCategorySortChanged: _setCategorySort,
                                 onProjectSortChanged: _setProjectSort,
-                                onClear: () => setState(() {
-                                  _tagFilterId = null;
-                                  _statusFilter = null;
-                                  _phaseFilter = null;
-                                  _priorityFilter = null;
-                                }),
+                                onClear: () {
+                                  setState(() {
+                                    _tagFilterId = null;
+                                    _statusFilter = null;
+                                    _phaseFilter = null;
+                                    _priorityFilter = null;
+                                    _visibleCategories.clear();
+                                  });
+                                  unawaited(
+                                    _saveStringSetSetting(
+                                      _projectsTabVisibleCategoriesKey,
+                                      _visibleCategories,
+                                    ),
+                                  );
+                                },
                                 totalCount: projects.length,
                                 filteredCount: filtered.length,
                               ),
                               const Divider(height: 1, color: _kLine),
                               Expanded(
-                                child: projects.isEmpty
-                                    ? const _EmptyProjects()
-                                    : filtered.isEmpty
-                                    ? const Center(
-                                        child: Text(
-                                          'No projects match the current filters.',
-                                          style: TextStyle(
-                                            color: Colors.white54,
-                                          ),
-                                        ),
-                                      )
-                                    : StreamBuilder<Project?>(
-                                        stream: state.watchActiveProject(),
-                                        builder: (context, activeSnap) {
-                                          if (activeSnap.hasError) {
-                                            return _ProjectsLoadError(
-                                              error: activeSnap.error,
-                                            );
-                                          }
-                                          final activeId = activeSnap.data?.id;
-                                          final grouped = _groupProjects(
-                                            filtered,
-                                            projectUpdates,
+                                child: StreamBuilder<Project?>(
+                                  stream: state.watchActiveProject(),
+                                  builder: (context, activeSnap) {
+                                    if (activeSnap.hasError) {
+                                      return _ProjectsLoadError(
+                                        error: activeSnap.error,
+                                      );
+                                    }
+                                    final activeId = activeSnap.data?.id;
+                                    return FutureBuilder<Project?>(
+                                      future: state.getGeneralTasksProject(),
+                                      builder: (context, generalSnap) {
+                                        if (generalSnap.hasError) {
+                                          return _ProjectsLoadError(
+                                            error: generalSnap.error,
                                           );
-                                          return ListView.builder(
-                                            padding: const EdgeInsets.all(16),
-                                            itemCount: grouped.length,
-                                            itemBuilder: (context, i) {
-                                              final group = grouped[i];
-                                              final collapsed =
-                                                  _collapsedCategories.contains(
-                                                    group.title,
-                                                  );
-                                              return _ProjectCategorySection(
+                                        }
+                                        final generalProject = generalSnap.data;
+                                        final pinnedProjects =
+                                            _pinnedSectionProjects(
+                                              filtered,
+                                              generalProject,
+                                              projectUpdates,
+                                            );
+                                        final pinnedIds = pinnedProjects
+                                            .map((p) => p.id)
+                                            .toSet();
+                                        final grouped = _groupProjects(
+                                          filtered
+                                              .where(
+                                                (p) =>
+                                                    !pinnedIds.contains(p.id),
+                                              )
+                                              .toList(growable: false),
+                                          projectUpdates,
+                                        );
+                                        if (projects.isEmpty &&
+                                            pinnedProjects.isEmpty) {
+                                          return const _EmptyProjects();
+                                        }
+                                        if (filtered.isEmpty &&
+                                            pinnedProjects.isEmpty) {
+                                          return const Center(
+                                            child: Text(
+                                              'No projects match the current filters.',
+                                              style: TextStyle(
+                                                color: Colors.white54,
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                        return ListView(
+                                          padding: const EdgeInsets.all(16),
+                                          children: [
+                                            if (pinnedProjects.isNotEmpty)
+                                              _projectSection(
+                                                title: 'Pinned',
+                                                sectionId: _pinnedSectionId,
+                                                projects: pinnedProjects,
+                                                pinnedCategory: false,
+                                                activeId: activeId,
+                                                projectTags: projectTags,
+                                                projectUpdates: projectUpdates,
+                                                allProjects: projects,
+                                              ),
+                                            for (final group in grouped)
+                                              _projectSection(
                                                 title: group.title,
-                                                count: group.projects.length,
-                                                collapsed: collapsed,
-                                                pinned: _pinnedCategories
-                                                    .contains(group.title),
-                                                onTogglePin: () =>
+                                                sectionId: _categorySectionId(
+                                                  group.title,
+                                                ),
+                                                projects: group.projects,
+                                                pinnedCategory:
+                                                    _pinnedCategories.contains(
+                                                      group.title,
+                                                    ),
+                                                activeId: activeId,
+                                                projectTags: projectTags,
+                                                projectUpdates: projectUpdates,
+                                                allProjects: projects,
+                                                onToggleCategoryPin: () =>
                                                     _toggleCategoryPin(
                                                       group.title,
                                                     ),
-                                                onToggle: () => setState(() {
-                                                  if (collapsed) {
-                                                    _collapsedCategories.remove(
-                                                      group.title,
-                                                    );
-                                                  } else {
-                                                    _collapsedCategories.add(
-                                                      group.title,
-                                                    );
-                                                  }
-                                                }),
-                                                children: [
-                                                  for (final p
-                                                      in group.projects)
-                                                    _ProjectTile(
-                                                      project: p,
-                                                      tags:
-                                                          projectTags[p.id] ??
-                                                          const <Tag>[],
-                                                      updateAttribution:
-                                                          projectUpdates[p.id],
-                                                      isSelected:
-                                                          p.id == activeId,
-                                                      isPinned: _pinnedProjects
-                                                          .contains(p.id),
-                                                      onTogglePin: () =>
-                                                          _toggleProjectPin(
-                                                            p.id,
-                                                          ),
-                                                      onExport: () =>
-                                                          _exportProjectBundle(
-                                                            p,
-                                                          ),
-                                                      onMerge: () =>
-                                                          _mergeProject(
-                                                            p,
-                                                            projects,
-                                                          ),
-                                                      onEditMeta: () =>
-                                                          _editProjectMetadata(
-                                                            p,
-                                                          ),
-                                                      onTap: () async {
-                                                        await state
-                                                            .setActiveById(
-                                                              p.id,
-                                                            );
-                                                        if (context.mounted) {
-                                                          context.go(
-                                                            '/projects/${p.id}',
-                                                          );
-                                                        }
-                                                      },
-                                                    ),
-                                                ],
-                                              );
-                                            },
-                                          );
-                                        },
-                                      ),
+                                              ),
+                                          ],
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
                               ),
                             ],
                           );
@@ -1119,6 +1161,69 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _projectSection({
+    required String title,
+    required String sectionId,
+    required List<Project> projects,
+    required bool pinnedCategory,
+    required String? activeId,
+    required Map<String, List<Tag>> projectTags,
+    required Map<String, ProjectUpdateAttribution> projectUpdates,
+    required List<Project> allProjects,
+    VoidCallback? onToggleCategoryPin,
+  }) {
+    final collapsed = _collapsedSections.contains(sectionId);
+    return _ProjectCategorySection(
+      title: title,
+      count: projects.length,
+      collapsed: collapsed,
+      pinned: pinnedCategory,
+      canPin: onToggleCategoryPin != null,
+      onTogglePin: onToggleCategoryPin,
+      onToggle: () => _toggleSectionCollapse(sectionId, !collapsed),
+      children: [
+        for (final p in projects)
+          _projectTile(
+            project: p,
+            activeId: activeId,
+            tags: projectTags[p.id] ?? const <Tag>[],
+            updateAttribution: projectUpdates[p.id],
+            allProjects: allProjects,
+          ),
+      ],
+    );
+  }
+
+  Widget _projectTile({
+    required Project project,
+    required String? activeId,
+    required List<Tag> tags,
+    required ProjectUpdateAttribution? updateAttribution,
+    required List<Project> allProjects,
+  }) {
+    final isGeneralProject =
+        project.id == AppDb.kGeneralTasksProjectId ||
+        project.description == AppDb.kGeneralTasksProjectDescription;
+    return _ProjectTile(
+      project: project,
+      tags: tags,
+      updateAttribution: updateAttribution,
+      isSelected: project.id == activeId,
+      isPinned: _pinnedProjects.contains(project.id) || isGeneralProject,
+      canPin: !isGeneralProject,
+      onTogglePin: () => _toggleProjectPin(project.id),
+      onExport: () => _exportProjectBundle(project),
+      onMerge: () => _mergeProject(project, allProjects),
+      onEditMeta: () => _editProjectMetadata(project),
+      onTap: () async {
+        final state = AppStateScope.of(context);
+        await state.setActiveById(project.id);
+        if (!mounted) return;
+        context.go('/projects/${project.id}');
+      },
     );
   }
 
@@ -1155,9 +1260,41 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               normalizePriorityValue(p.priority) != _priorityFilter) {
             return false;
           }
+          if (_visibleCategories.isNotEmpty &&
+              !_visibleCategories.contains(projectCategoryLabel(p.category))) {
+            return false;
+          }
           return true;
         })
         .toList(growable: false);
+  }
+
+  List<String> _availableCategories(List<Project> projects) {
+    return projects
+        .map((project) => projectCategoryLabel(project.category))
+        .toSet()
+        .toList(growable: false)
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  }
+
+  List<Project> _pinnedSectionProjects(
+    List<Project> filtered,
+    Project? generalProject,
+    Map<String, ProjectUpdateAttribution> projectUpdates,
+  ) {
+    final pinned = <Project>[];
+    final seen = <String>{};
+    if (generalProject != null && seen.add(generalProject.id)) {
+      pinned.add(generalProject);
+    }
+    final regularPinned =
+        filtered
+            .where((project) => _pinnedProjects.contains(project.id))
+            .where((project) => seen.add(project.id))
+            .toList(growable: false)
+          ..sort((a, b) => _compareProjects(a, b, projectUpdates));
+    pinned.addAll(regularPinned);
+    return pinned;
   }
 
   List<_ProjectCategoryGroup> _groupProjects(
@@ -1310,6 +1447,8 @@ class _ProjectCategoryGroup {
 
   const _ProjectCategoryGroup({required this.title, required this.projects});
 }
+
+String _categorySectionId(String category) => 'category::$category';
 
 String _normalizeSortSetting(
   String? value,
@@ -1624,6 +1763,8 @@ class _FilterBar extends StatelessWidget {
   final String? statusFilter;
   final String? phaseFilter;
   final String? priorityFilter;
+  final Set<String> visibleCategories;
+  final List<String> availableCategories;
   final String categorySort;
   final String projectSort;
   final bool hasFilters;
@@ -1631,6 +1772,7 @@ class _FilterBar extends StatelessWidget {
   final ValueChanged<String?> onStatusChanged;
   final ValueChanged<String?> onPhaseChanged;
   final ValueChanged<String?> onPriorityChanged;
+  final ValueChanged<Set<String>> onCategoriesChanged;
   final ValueChanged<String?> onCategorySortChanged;
   final ValueChanged<String?> onProjectSortChanged;
   final VoidCallback onClear;
@@ -1643,6 +1785,8 @@ class _FilterBar extends StatelessWidget {
     required this.statusFilter,
     required this.phaseFilter,
     required this.priorityFilter,
+    required this.visibleCategories,
+    required this.availableCategories,
     required this.categorySort,
     required this.projectSort,
     required this.hasFilters,
@@ -1650,6 +1794,7 @@ class _FilterBar extends StatelessWidget {
     required this.onStatusChanged,
     required this.onPhaseChanged,
     required this.onPriorityChanged,
+    required this.onCategoriesChanged,
     required this.onCategorySortChanged,
     required this.onProjectSortChanged,
     required this.onClear,
@@ -1723,6 +1868,11 @@ class _FilterBar extends StatelessWidget {
             ],
             onChanged: onPriorityChanged,
           ),
+          _CategoryVisibilityButton(
+            selectedCategories: visibleCategories,
+            availableCategories: availableCategories,
+            onChanged: onCategoriesChanged,
+          ),
           _Dropdown<String>(
             value: categorySort,
             width: 190,
@@ -1765,12 +1915,107 @@ class _FilterBar extends StatelessWidget {
   }
 }
 
+class _CategoryVisibilityButton extends StatelessWidget {
+  final Set<String> selectedCategories;
+  final List<String> availableCategories;
+  final ValueChanged<Set<String>> onChanged;
+
+  const _CategoryVisibilityButton({
+    required this.selectedCategories,
+    required this.availableCategories,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedAvailable = selectedCategories
+        .where(availableCategories.contains)
+        .toSet();
+    final label = selectedAvailable.isEmpty
+        ? 'All categories'
+        : selectedAvailable.length == 1
+        ? selectedAvailable.single
+        : '${selectedAvailable.length} categories';
+    return SizedBox(
+      width: 180,
+      height: 38,
+      child: OutlinedButton.icon(
+        onPressed: availableCategories.isEmpty
+            ? null
+            : () => _showCategoryDialog(context),
+        icon: const Icon(Icons.category_outlined, size: 16),
+        label: Text(label, overflow: TextOverflow.ellipsis),
+      ),
+    );
+  }
+
+  Future<void> _showCategoryDialog(BuildContext context) async {
+    final draft = selectedCategories
+        .where(availableCategories.contains)
+        .toSet();
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Visible categories'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CheckboxListTile(
+                    value: draft.isEmpty,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: const Text('All categories'),
+                    onChanged: (_) => setLocal(draft.clear),
+                  ),
+                  const Divider(),
+                  for (final category in availableCategories)
+                    CheckboxListTile(
+                      value: draft.contains(category),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: Text(category),
+                      onChanged: (checked) => setLocal(() {
+                        if (checked == true) {
+                          draft.add(category);
+                        } else {
+                          draft.remove(category);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(<String>{}),
+              child: const Text('Show all'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop({...draft}),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) onChanged(result);
+  }
+}
+
 class _ProjectTile extends StatelessWidget {
   final Project project;
   final List<Tag> tags;
   final ProjectUpdateAttribution? updateAttribution;
   final bool isSelected;
   final bool isPinned;
+  final bool canPin;
   final VoidCallback onTogglePin;
   final VoidCallback onExport;
   final VoidCallback onMerge;
@@ -1783,6 +2028,7 @@ class _ProjectTile extends StatelessWidget {
     required this.updateAttribution,
     required this.isSelected,
     required this.isPinned,
+    this.canPin = true,
     required this.onTogglePin,
     required this.onExport,
     required this.onMerge,
@@ -1910,21 +2156,23 @@ class _ProjectTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              IconButton(
-                tooltip: isPinned ? 'Unpin project' : 'Pin project',
-                onPressed: onTogglePin,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 34,
-                  height: 34,
+              _RuntimeProjectActions(project: project),
+              if (canPin)
+                IconButton(
+                  tooltip: isPinned ? 'Unpin project' : 'Pin project',
+                  onPressed: onTogglePin,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 34,
+                    height: 34,
+                  ),
+                  padding: EdgeInsets.zero,
+                  icon: Icon(
+                    isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                    size: 18,
+                    color: isPinned ? _kPrimary : Colors.white54,
+                  ),
                 ),
-                padding: EdgeInsets.zero,
-                icon: Icon(
-                  isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                  size: 18,
-                  color: isPinned ? _kPrimary : Colors.white54,
-                ),
-              ),
               IconButton(
                 tooltip: 'Edit metadata',
                 onPressed: onEditMeta,
@@ -1967,6 +2215,252 @@ class _ProjectTile extends StatelessWidget {
   }
 }
 
+class _RuntimeProjectActions extends StatefulWidget {
+  final Project project;
+
+  const _RuntimeProjectActions({required this.project});
+
+  @override
+  State<_RuntimeProjectActions> createState() => _RuntimeProjectActionsState();
+}
+
+class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
+  bool _launching = false;
+  bool _testing = false;
+  bool _checkingCapsule = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return StreamBuilder<ProjectRuntimeProfile?>(
+      stream: state.watchProjectRuntimeProfile(widget.project.id),
+      builder: (context, profileSnap) {
+        final profile = profileSnap.data;
+        if (profile == null || !profile.enabled) {
+          return const SizedBox.shrink();
+        }
+        final tests = runtime.decodeStringList(profile.testCommandsJson);
+        return StreamBuilder<List<ProjectRuntimeRun>>(
+          stream: state.watchProjectRuntimeRuns(widget.project.id, limit: 5),
+          builder: (context, runSnap) {
+            final runs = runSnap.data ?? const <ProjectRuntimeRun>[];
+            final latestTest = _latestRuntimeRun(runs, 'test');
+            final latestCapsule = _latestRuntimeRun(runs, 'capsule');
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _RuntimeIconButton(
+                  tooltip: 'Launch project',
+                  busy: _launching,
+                  icon: Icons.rocket_launch_outlined,
+                  color: _runtimeRunColor(_latestRuntimeRun(runs, 'launch')),
+                  onPressed: () => _runRuntimeAction(
+                    action: 'launch',
+                    body: () => state.launchProjectRuntime(widget.project.id),
+                  ),
+                ),
+                _RuntimeIconButton(
+                  tooltip: tests.isEmpty ? 'No test command' : 'Run tests',
+                  busy: _testing,
+                  icon: Icons.fact_check_outlined,
+                  color: _runtimeRunColor(latestTest),
+                  onPressed: tests.isEmpty
+                      ? null
+                      : () => _runRuntimeAction(
+                          action: 'test',
+                          body: () =>
+                              state.runProjectRuntimeTest(widget.project.id),
+                          showResult: true,
+                        ),
+                ),
+                _RuntimeIconButton(
+                  tooltip: profile.capsuleEnabled
+                      ? 'Run capsule check'
+                      : 'Capsule disabled',
+                  busy: _checkingCapsule,
+                  icon: Icons.health_and_safety_outlined,
+                  color: _runtimeRunColor(latestCapsule),
+                  onPressed: profile.capsuleEnabled
+                      ? () => _runRuntimeAction(
+                          action: 'capsule',
+                          body: () =>
+                              state.runProjectRuntimeCapsule(widget.project.id),
+                          showResult: true,
+                        )
+                      : null,
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _runRuntimeAction({
+    required String action,
+    required Future<ProjectRuntimeRun> Function() body,
+    bool showResult = false,
+  }) async {
+    if (_isBusy(action)) return;
+    setState(() => _setBusy(action, true));
+    try {
+      final run = await body();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_runtimeRunMessage(action, run))));
+      if (showResult && mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (_) => _RuntimeRunDialog(run: run),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${_runtimeActionLabel(action)} failed: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _setBusy(action, false));
+    }
+  }
+
+  bool _isBusy(String action) => switch (action) {
+    'launch' => _launching,
+    'test' => _testing,
+    'capsule' => _checkingCapsule,
+    _ => false,
+  };
+
+  void _setBusy(String action, bool value) {
+    switch (action) {
+      case 'launch':
+        _launching = value;
+        break;
+      case 'test':
+        _testing = value;
+        break;
+      case 'capsule':
+        _checkingCapsule = value;
+        break;
+    }
+  }
+}
+
+class _RuntimeIconButton extends StatelessWidget {
+  final String tooltip;
+  final bool busy;
+  final IconData icon;
+  final Color color;
+  final VoidCallback? onPressed;
+
+  const _RuntimeIconButton({
+    required this.tooltip,
+    required this.busy,
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: busy ? null : onPressed,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+      padding: EdgeInsets.zero,
+      icon: busy
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(
+              icon,
+              size: 18,
+              color: onPressed == null ? Colors.white24 : color,
+            ),
+    );
+  }
+}
+
+class _RuntimeRunDialog extends StatelessWidget {
+  final ProjectRuntimeRun run;
+
+  const _RuntimeRunDialog({required this.run});
+
+  @override
+  Widget build(BuildContext context) {
+    final output = [
+      if ((run.capsuleStatus ?? '').isNotEmpty) 'Capsule: ${run.capsuleStatus}',
+      if ((run.command ?? '').isNotEmpty) 'Command: ${run.command}',
+      if (run.exitCode != null) 'Exit code: ${run.exitCode}',
+      if ((run.outputText ?? '').isNotEmpty) '\nOutput:\n${run.outputText}',
+      if ((run.errorText ?? '').isNotEmpty) '\nError:\n${run.errorText}',
+      if ((run.capsuleOutputText ?? '').isNotEmpty)
+        '\nCapsule output:\n${run.capsuleOutputText}',
+    ].join('\n');
+    return AlertDialog(
+      title: Text('${_runtimeActionLabel(run.action)} result'),
+      content: SizedBox(
+        width: 720,
+        height: 460,
+        child: SelectableText(
+          output.trim().isEmpty ? run.status : output.trim(),
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
+ProjectRuntimeRun? _latestRuntimeRun(
+  List<ProjectRuntimeRun> runs,
+  String action,
+) {
+  for (final run in runs) {
+    if (run.action == action) return run;
+  }
+  return null;
+}
+
+Color _runtimeRunColor(ProjectRuntimeRun? run) {
+  if (run == null) return Colors.white54;
+  return switch (run.status) {
+    'succeeded' || 'started' => const Color(0xFF4CAF50),
+    'running' => _kPrimary,
+    'failed' => const Color(0xFFFF8A80),
+    _ => Colors.white54,
+  };
+}
+
+String _runtimeActionLabel(String action) => switch (action) {
+  'launch' => 'Launch',
+  'test' => 'Test',
+  'capsule' => 'Capsule',
+  _ => action,
+};
+
+String _runtimeRunMessage(String action, ProjectRuntimeRun run) {
+  final label = _runtimeActionLabel(action);
+  final capsule = (run.capsuleStatus ?? '').isEmpty
+      ? ''
+      : ' Capsule: ${run.capsuleStatus}.';
+  if (run.status == 'started') return '$label started.$capsule';
+  if (run.status == 'succeeded') return '$label succeeded.$capsule';
+  return '$label ${run.status}.$capsule';
+}
+
 String _formatProjectUpdateAttribution(ProjectUpdateAttribution attribution) {
   final actor = attribution.updatedBy.trim().isEmpty
       ? 'Atlas'
@@ -2005,8 +2499,9 @@ class _ProjectCategorySection extends StatelessWidget {
   final int count;
   final bool collapsed;
   final bool pinned;
+  final bool canPin;
   final VoidCallback onToggle;
-  final VoidCallback onTogglePin;
+  final VoidCallback? onTogglePin;
   final List<Widget> children;
 
   const _ProjectCategorySection({
@@ -2014,6 +2509,7 @@ class _ProjectCategorySection extends StatelessWidget {
     required this.count,
     required this.collapsed,
     required this.pinned,
+    this.canPin = true,
     required this.onToggle,
     required this.onTogglePin,
     required this.children,
@@ -2055,22 +2551,24 @@ class _ProjectCategorySection extends StatelessWidget {
                     ),
                   ),
                   _Pill(label: '$count', color: Colors.white54),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: pinned ? 'Unpin category' : 'Pin category',
-                    onPressed: onTogglePin,
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 30,
-                      height: 30,
+                  if (canPin) ...[
+                    const SizedBox(width: 4),
+                    IconButton(
+                      tooltip: pinned ? 'Unpin category' : 'Pin category',
+                      onPressed: onTogglePin,
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 30,
+                        height: 30,
+                      ),
+                      padding: EdgeInsets.zero,
+                      icon: Icon(
+                        pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                        size: 16,
+                        color: pinned ? _kPrimary : Colors.white54,
+                      ),
                     ),
-                    padding: EdgeInsets.zero,
-                    icon: Icon(
-                      pinned ? Icons.push_pin : Icons.push_pin_outlined,
-                      size: 16,
-                      color: pinned ? _kPrimary : Colors.white54,
-                    ),
-                  ),
+                  ],
                 ],
               ),
             ),

@@ -635,6 +635,62 @@ Persisted queue for MCP/local harness LLM jobs attached to Atlas projects and op
 
 ---
 
+### `project_runtime_profiles`
+
+Per-project software runtime configuration (v19). One row per project (`UNIQUE(project_id)`). Also created via `CREATE TABLE IF NOT EXISTS` in the startup repair path.
+
+| Column | Type | Default | Notes / Quirks |
+|--------|------|---------|----------------|
+| `id` | TEXT PK | | Profile ID. |
+| `project_id` | TEXT UNIQUE | | FK to `projects`. One profile per project. |
+| `enabled` | INTEGER | 0 | Runtime actions are hidden/disabled until the operator enables the profile. |
+| `working_directory` | TEXT? | null | Directory used for launch/test/capsule commands. |
+| `launch_command` | TEXT? | null | Operator-entered shell command for Launch. |
+| `stop_command` | TEXT? | null | Operator-entered shell command for Stop. |
+| `test_commands_json` | TEXT | `[]` | JSON array of test command strings. |
+| `ports_json` | TEXT | `[]` | JSON array of ints (informational). |
+| `urls_json` | TEXT | `[]` | JSON array of `{label, url}` objects. |
+| `health_urls_json` | TEXT | `[]` | JSON array of URLs polled after launch. |
+| `notes` | TEXT? | null | Free-text runtime notes. |
+| `autostart` | INTEGER | 0 | Reserved; no background autostart loop is implemented. |
+| `capsule_enabled` | INTEGER | 1 | Whether the Project Ops Capsule action is offered. |
+| `capsule_mode` | TEXT | `check` | Capsule invocation mode. |
+| `capsule_source_path` | TEXT? | null | Local capsule checkout path. |
+| `capsule_profile` | TEXT? | null | Capsule profile name. |
+| `import_source` | TEXT? | null | e.g. `dev_launchpad` when imported from a Dev Launchpad YAML. |
+| `last_imported_at` | INTEGER? | null | Last import timestamp. |
+| `created_at` / `updated_at` | INTEGER | | Milliseconds since epoch. |
+
+**Written by:** `AppState.saveProjectRuntimeProfileDraft()` (project metadata dialog "Software runtime" section) and `AppState.importRuntimeProfileFromDevLaunchpad()`.
+**Read by:** `watchProjectRuntimeProfile()` / `getProjectRuntimeProfile()` — Project Detail > Runtime section and the Projects list runtime quick actions.
+**Quirks:** Commands are operator-entered local shell commands executed through `powershell.exe` by `ProjectRuntimeService`; the app does not invent or auto-run commands (autostart is stored but not acted on). Dev Launchpad import defaults reference machine-specific paths and must be reconfigured per machine.
+
+---
+
+### `project_runtime_runs`
+
+Append-style history of runtime actions (v19). Indexed by `(project_id, started_at DESC)`.
+
+| Column | Type | Default | Notes / Quirks |
+|--------|------|---------|----------------|
+| `id` | TEXT PK | | Run ID. |
+| `profile_id` | TEXT | | FK to `project_runtime_profiles`. |
+| `project_id` | TEXT | | FK to `projects`. |
+| `action` | TEXT | | `launch`, `test`, or `capsule`. |
+| `command` | TEXT? | null | The command that was executed. |
+| `status` | TEXT | | e.g. `running`, `success`, `failed`, `timeout`. |
+| `started_at` / `completed_at` | INTEGER / INTEGER? | | Milliseconds since epoch. |
+| `exit_code` | INTEGER? | null | Process exit code when available. |
+| `output_text` / `error_text` | TEXT? | null | Captured stdout/stderr excerpts. |
+| `capsule_status` / `capsule_output_text` | TEXT? | null | Capsule step outcome when the action ran the capsule. |
+| `metadata_json` | TEXT? | null | Extra context (health check results, etc.). |
+
+**Written by:** `AppState.launchProjectRuntime()`, `runProjectRuntimeTest()`, `runProjectRuntimeCapsule()` via `ProjectRuntimeService`.
+**Read by:** `watchProjectRuntimeRuns()` (Project Detail "Recent runtime runs"), `watchLatestRuntimeRunsForProjects()` (Projects list status colors on the quick-action icons).
+**Quirks:** Launch opens a visible PowerShell window via `Start-Process` and then polls configured health URLs; tests run headless with timeouts (default up to 30 minutes). Run rows are history, not a supervisor — Atlas does not track or kill long-lived processes beyond the recorded run.
+
+---
+
 ## 2. AppState (ChangeNotifier)
 
 Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive streams plus business logic.
@@ -924,6 +980,24 @@ Manual, read-only local project scanner used only by Operations.
 
 ---
 
+### ProjectRuntimeService (`lib/services/project_runtime_service.dart`)
+
+Executes operator-configured runtime actions for a project and records each run in `project_runtime_runs`.
+
+| Member | Notes |
+|--------|-------|
+| `ProjectRuntimeProfileDraft` | Editable draft model round-tripped by the project metadata dialog ("Software runtime" section). |
+| `RuntimeUrl` | `{label, url}` pair stored in `urls_json`. |
+| `decodeStringList()` / `decodeIntList()` / `decodeRuntimeUrls()` | JSON column decoders shared with the UI. |
+| Launch | Starts the launch command in a visible `powershell.exe` window via `Start-Process`, then polls configured health URLs (default 90s window) before marking the run healthy. |
+| Test | Runs each test command headless through `powershell.exe` with a timeout (default up to 30 minutes) and captures output/exit code. |
+| Capsule | Invokes the Project Ops Capsule tooling with the configured mode/profile and records capsule status/output on the run row. |
+| Dev Launchpad import | Parses a local `dev_launchpad.yaml` to prefill a profile draft; default source paths are machine-specific constants and must be reconfigured per machine. |
+
+**Boundary:** commands come from the operator-edited profile only. The service does not schedule, watch, or restart anything in the background; `autostart` is stored but unused.
+
+**AppState surface:** `watchProjectRuntimeProfile()`, `getProjectRuntimeProfile()`, `saveProjectRuntimeProfileDraft()`, `importRuntimeProfileFromDevLaunchpad()`, `launchProjectRuntime()`, `runProjectRuntimeTest()`, `runProjectRuntimeCapsule()`, `watchProjectRuntimeRuns()`, `watchLatestRuntimeRunsForProjects()`.
+
 ### Project Summary DB Methods (`lib/db/app_db.dart`)
 
 | Method | Returns | Notes |
@@ -1209,6 +1283,7 @@ ProjectsScreen project tile -> merge action
 | 16 | `project_enrichment_steps`, `project_enrichment_proposals` added | Worker-level enrichment step/proposal ledger for agent-array and loop workflow runs; raw SQL compatibility tables. |
 | 17 | `llm_task_queue` added | Persisted MCP/local harness queue with claim/complete/fail lifecycle, operator edit/cancel/requeue controls, and optional review-draft handoff linkage. |
 | 18 | `projects.category`, `media_links` added | Free-text project grouping plus reusable project media attachments for work items and queued LLM tasks. |
+| 19 | `project_runtime_profiles`, `project_runtime_runs` added | Per-project software runtime profiles (launch/stop/test commands, ports, URLs, health checks, capsule settings, Dev Launchpad import) and runtime action run history. Also created via `CREATE TABLE IF NOT EXISTS` in the startup repair path. |
 
 **Migration strategy:** `onCreate` calls `createAll()`. `onUpgrade` applies changes sequentially by version. `addColumn` calls are wrapped in typed `on SqliteException` catches (v4+) that only swallow duplicate-column errors and rethrow anything else. New tables use `CREATE TABLE IF NOT EXISTS` in the startup repair path.
 
@@ -1228,5 +1303,6 @@ ProjectsScreen project tile -> merge action
 | `stages.is_bottleneck` vs `app_meta` | Dual storage | GovernanceScreen reads `app_meta`; table column is historical. |
 | Document/media file cleanup | Stored media files not deleted on media record delete | Manual via Open app data folder. `deleteDocument()` removes the copied document file; `deleteProjectMedia()` removes DB/link rows but leaves the copied media file. |
 | `telegram_enabled` flag | Set but not enforced | `sendTodayToTelegram()` does not check this flag before sending. |
+| Runtime profile defaults | Machine-specific constants | `project_runtime_service.dart` ships Dev Launchpad / capsule / Python default paths for the original development machine. Configure per-machine values in the project metadata dialog; a settings-backed default is future work. |
 | PDF in-app rendering | External viewer only | `DocumentPreview` shows an "Open in system viewer" button for `.pdf`. `pdfx`/PDFium integration is a planned future milestone. |
 | `.doc` (legacy Word) | External viewer only | No text extraction for binary `.doc` format. Only `.docx` (OOXML) supports paragraph text extraction. |

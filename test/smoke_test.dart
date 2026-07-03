@@ -67,6 +67,7 @@ void main() {
           watched.map((project) => project.id),
           isNot(contains('legacy-general-tasks')),
         );
+        expect((await db.getGeneralTasksProject())?.id, 'legacy-general-tasks');
       },
     );
 
@@ -78,11 +79,113 @@ void main() {
       final project = await state.getProjectForWorkItem(workItemId);
       final activeItems = await db.getAllActiveWorkItems();
       final projects = await db.getProjectsFull();
+      final generalProject = await db.getGeneralTasksProject();
 
       expect(project, isNull);
       expect(activeItems.map((item) => item.id), contains(workItemId));
       expect(projects, isEmpty);
+      expect(generalProject, isNotNull);
+      expect(
+        generalProject!.description,
+        AppDb.kGeneralTasksProjectDescription,
+      );
     });
+
+    test(
+      'manual project creation activates and returns the new project',
+      () async {
+        await db.createProject('old-project', 'Old Project', DateTime(2026));
+        await db.setActiveProjectId('old-project');
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        final newProjectId = await state.createProject('New Project');
+        final saved = await db.getProjectFull(newProjectId!);
+
+        expect(saved?.title, 'New Project');
+        expect(await db.getMetaString(AppDb.kActiveProjectId), newProjectId);
+      },
+    );
+
+    test(
+      'contact continuity seeds actors and assigns owner to visible projects',
+      () async {
+        await db.createProject('alpha', 'Alpha', DateTime(2026, 1, 1));
+        await db.createProject('beta', 'Beta', DateTime(2026, 1, 2));
+        await db.createProject(
+          'legacy-general-tasks',
+          'General Tasks',
+          DateTime(2026, 1, 3),
+        );
+        await db.updateProjectMeta('legacy-general-tasks', {
+          'description': AppDb.kGeneralTasksProjectDescription,
+        });
+        await db.saveContact(
+          id: 'duplicate-paul-1',
+          name: 'Paul Peck',
+          notes: 'Existing duplicate A',
+        );
+        await db.saveContact(
+          id: 'duplicate-paul-2',
+          name: 'Paul Peck',
+          notes: 'Existing duplicate B',
+        );
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+        await state.saveProjectAiSummarySettings(
+          const ProjectAiSummarySettings(model: 'mistral-small3.2:24b'),
+        );
+
+        final result = await state.ensureContactContinuity();
+
+        final alpha = await db.getProjectFull('alpha');
+        final beta = await db.getProjectFull('beta');
+        final hidden = await db.getProjectFull('legacy-general-tasks');
+        final alphaPeople = await db.getProjectPeople('alpha');
+        final betaPeople = await db.getProjectPeople('beta');
+        final contacts = await db.getContacts();
+        final events = await db.getRecentEvents();
+
+        expect(result.projectsConsidered, 2);
+        expect(result.projectOwnersUpdated, 2);
+        expect(result.projectPeopleAdded, 2);
+        expect(result.duplicateContactsRemoved, 1);
+        expect(alpha!.owner, 'Paul Peck');
+        expect(beta!.owner, 'Paul Peck');
+        expect(hidden!.owner, isNull);
+        expect(
+          alphaPeople.map((person) => '${person.name}:${person.role}'),
+          contains('Paul Peck:Owner'),
+        );
+        expect(
+          betaPeople.map((person) => '${person.name}:${person.authority}'),
+          contains('Paul Peck:Accountable'),
+        );
+        expect(contacts.map((contact) => contact.name), contains('Paul Peck'));
+        expect(
+          contacts.where((contact) => contact.name == 'Paul Peck'),
+          hasLength(1),
+        );
+        expect(contacts.map((contact) => contact.name), contains('Atlas'));
+        expect(
+          contacts.map((contact) => contact.name),
+          contains('Atlas Agent'),
+        );
+        expect(contacts.map((contact) => contact.name), contains('Codex'));
+        expect(
+          contacts.map((contact) => contact.name),
+          contains('Model: mistral-small3.2:24b'),
+        );
+        expect(
+          events.map((event) => event.action),
+          contains('contact_continuity_seeded'),
+        );
+
+        final rerun = await state.ensureContactContinuity();
+        expect(rerun.projectOwnersUpdated, 0);
+        expect(rerun.projectPeopleAdded, 0);
+      },
+    );
 
     test(
       'project AI summary settings persist and update cached gates',

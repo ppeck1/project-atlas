@@ -132,7 +132,7 @@ class _OperationsScreenState extends State<OperationsScreen>
             Tab(text: 'Scan Runs'),
             Tab(text: 'Review Candidates'),
             Tab(text: 'Registered Projects'),
-            Tab(text: 'Enrichment'),
+            Tab(text: 'Project Health'),
             Tab(text: 'Warnings'),
           ],
         ),
@@ -881,8 +881,19 @@ class _EnrichmentRunsTab extends StatefulWidget {
   State<_EnrichmentRunsTab> createState() => _EnrichmentRunsTabState();
 }
 
+enum _ProjectHealthMode { analyze, apply }
+
+enum _ProjectHealthScope { allProjects, selectedProject }
+
 class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
   bool _running = false;
+  _ProjectHealthMode _healthMode = _ProjectHealthMode.analyze;
+  _ProjectHealthScope _healthScope = _ProjectHealthScope.allProjects;
+  String? _selectedProjectId;
+  bool _refreshLinkedProjects = true;
+  bool _includeSourceDocuments = true;
+  bool _refreshIdentity = true;
+  bool _createProposals = true;
   Timer? _elapsedTicker;
   Future<List<ProjectEnrichmentRun>>? _runsFuture;
 
@@ -913,34 +924,76 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
     }
   }
 
-  Future<void> _runEnrichment(BuildContext context) async {
+  String? _resolvedSelectedProjectId(List<Project> projects) {
+    if (_healthScope != _ProjectHealthScope.selectedProject) return null;
+    final selected = _selectedProjectId?.trim();
+    if (selected != null &&
+        selected.isNotEmpty &&
+        projects.any((project) => project.id == selected)) {
+      return selected;
+    }
+    final activeId = AppStateScope.of(context).activeProject?.id;
+    if (activeId != null && projects.any((project) => project.id == activeId)) {
+      return activeId;
+    }
+    return projects.isEmpty ? null : projects.first.id;
+  }
+
+  Future<void> _runProjectHealth(
+    BuildContext context, {
+    required List<Project> projects,
+    bool advancedFullRun = false,
+  }) async {
     if (_running) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Run project enrichment'),
-        content: const Text(
-          'Atlas will refresh linked project records, import eligible documents/media/source files/cards, and record findings. Source repositories are not modified.',
+    final selectedProjectId = _resolvedSelectedProjectId(projects);
+    final scopedProjectIds = _healthScope == _ProjectHealthScope.selectedProject
+        ? selectedProjectId == null
+              ? const <String>[]
+              : <String>[selectedProjectId]
+        : null;
+    if (_healthScope == _ProjectHealthScope.selectedProject &&
+        selectedProjectId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select a project for this health run.')),
+      );
+      return;
+    }
+    if (advancedFullRun) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Run advanced enrichment'),
+          content: const Text(
+            'Atlas will refresh linked project records, import eligible documents/media/source files/cards, apply deterministic identity updates, and record findings. Source repositories are not modified.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              icon: const Icon(Icons.auto_fix_high, size: 16),
+              label: const Text('Run'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            icon: const Icon(Icons.auto_fix_high, size: 16),
-            label: const Text('Run'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !context.mounted) return;
+      );
+      if (confirmed != true || !context.mounted) return;
+    }
     setState(() => _running = true);
     try {
+      final analyzeOnly =
+          !advancedFullRun && _healthMode == _ProjectHealthMode.analyze;
       final result = await AppStateScope.of(context).runProjectEnrichment(
-        refreshLinkedProjects: true,
-        includeSourceDocuments: true,
+        refreshLinkedProjects: advancedFullRun ? true : _refreshLinkedProjects,
+        includeSourceDocuments: advancedFullRun
+            ? true
+            : _includeSourceDocuments,
+        analyzeOnly: analyzeOnly,
+        refreshIdentity: advancedFullRun ? true : _refreshIdentity,
+        createProposals: advancedFullRun ? true : _createProposals,
+        projectIds: scopedProjectIds,
         refreshSummaries: false,
         forceSummaries: false,
         betweenProjects: Duration.zero,
@@ -949,7 +1002,7 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Enrichment ${result.run.status}: ${result.run.openFindings} open findings across ${result.run.linkedProjects} linked projects.',
+            'Project health ${result.run.status}: ${result.run.openFindings} open findings across ${result.run.linkedProjects} linked projects.',
           ),
         ),
       );
@@ -957,7 +1010,7 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
       if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Enrichment failed: $error')));
+      ).showSnackBar(SnackBar(content: Text('Project health failed: $error')));
     } finally {
       if (mounted) {
         setState(() {
@@ -985,7 +1038,7 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
         if (snap.hasError) {
           return _EmptyState(
             icon: Icons.error_outline,
-            title: 'Enrichment runs failed to load.',
+            title: 'Project health runs failed to load.',
             details: '${snap.error}',
           );
         }
@@ -999,17 +1052,60 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
           separatorBuilder: (_, __) => const SizedBox(height: 8),
           itemBuilder: (context, index) {
             if (index == 0) {
-              return _EnrichmentControlPanel(
-                busy: busy,
-                runCount: runs.length,
-                status: state.projectEnrichmentStatus,
-                progress: state.projectEnrichmentProgress,
-                progressLabel: state.projectEnrichmentProgressLabel,
-                elapsed: elapsed,
-                onRun: () => _runEnrichment(context),
+              return FutureBuilder<List<Project>>(
+                future: state.getVisibleProjects(),
+                builder: (context, projectSnap) {
+                  final projects = projectSnap.data ?? const <Project>[];
+                  return _EnrichmentControlPanel(
+                    busy: busy,
+                    runCount: runs.length,
+                    status: state.projectEnrichmentStatus,
+                    progress: state.projectEnrichmentProgress,
+                    progressLabel: state.projectEnrichmentProgressLabel,
+                    elapsed: elapsed,
+                    projects: projects,
+                    loadingProjects:
+                        projectSnap.connectionState == ConnectionState.waiting,
+                    mode: _healthMode,
+                    scope: _healthScope,
+                    selectedProjectId: _resolvedSelectedProjectId(projects),
+                    refreshLinkedProjects: _refreshLinkedProjects,
+                    includeSourceDocuments: _includeSourceDocuments,
+                    refreshIdentity: _refreshIdentity,
+                    createProposals: _createProposals,
+                    onModeChanged: (mode) => setState(() => _healthMode = mode),
+                    onScopeChanged: (scope) =>
+                        setState(() => _healthScope = scope),
+                    onProjectChanged: (id) =>
+                        setState(() => _selectedProjectId = id),
+                    onRefreshLinkedChanged: (value) =>
+                        setState(() => _refreshLinkedProjects = value),
+                    onIncludeSourceChanged: (value) =>
+                        setState(() => _includeSourceDocuments = value),
+                    onRefreshIdentityChanged: (value) =>
+                        setState(() => _refreshIdentity = value),
+                    onCreateProposalsChanged: (value) =>
+                        setState(() => _createProposals = value),
+                    onRun: () => _runProjectHealth(context, projects: projects),
+                    onAdvancedRun: () => _runProjectHealth(
+                      context,
+                      projects: projects,
+                      advancedFullRun: true,
+                    ),
+                  );
+                },
               );
             }
-            return _EnrichmentRunTile(run: runs[index - 1]);
+            return _EnrichmentRunTile(
+              run: runs[index - 1],
+              onChanged: () {
+                setState(() {
+                  _runsFuture = AppStateScope.of(
+                    context,
+                  ).getProjectEnrichmentRuns(limit: 50);
+                });
+              },
+            );
           },
         );
       },
@@ -1024,7 +1120,24 @@ class _EnrichmentControlPanel extends StatelessWidget {
   final double? progress;
   final String? progressLabel;
   final Duration? elapsed;
+  final List<Project> projects;
+  final bool loadingProjects;
+  final _ProjectHealthMode mode;
+  final _ProjectHealthScope scope;
+  final String? selectedProjectId;
+  final bool refreshLinkedProjects;
+  final bool includeSourceDocuments;
+  final bool refreshIdentity;
+  final bool createProposals;
+  final ValueChanged<_ProjectHealthMode> onModeChanged;
+  final ValueChanged<_ProjectHealthScope> onScopeChanged;
+  final ValueChanged<String?> onProjectChanged;
+  final ValueChanged<bool> onRefreshLinkedChanged;
+  final ValueChanged<bool> onIncludeSourceChanged;
+  final ValueChanged<bool> onRefreshIdentityChanged;
+  final ValueChanged<bool> onCreateProposalsChanged;
   final VoidCallback onRun;
+  final VoidCallback onAdvancedRun;
 
   const _EnrichmentControlPanel({
     required this.busy,
@@ -1033,15 +1146,189 @@ class _EnrichmentControlPanel extends StatelessWidget {
     required this.progress,
     required this.progressLabel,
     required this.elapsed,
+    required this.projects,
+    required this.loadingProjects,
+    required this.mode,
+    required this.scope,
+    required this.selectedProjectId,
+    required this.refreshLinkedProjects,
+    required this.includeSourceDocuments,
+    required this.refreshIdentity,
+    required this.createProposals,
+    required this.onModeChanged,
+    required this.onScopeChanged,
+    required this.onProjectChanged,
+    required this.onRefreshLinkedChanged,
+    required this.onIncludeSourceChanged,
+    required this.onRefreshIdentityChanged,
+    required this.onCreateProposalsChanged,
     required this.onRun,
+    required this.onAdvancedRun,
   });
 
   @override
   Widget build(BuildContext context) {
+    final applying = mode == _ProjectHealthMode.apply;
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              const Icon(Icons.health_and_safety_outlined, color: _primary),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Project Health',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+              ),
+              _Pill(label: '$runCount runs'),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SegmentedButton<_ProjectHealthMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: _ProjectHealthMode.analyze,
+                    icon: Icon(Icons.manage_search_outlined),
+                    label: Text('Analyze'),
+                  ),
+                  ButtonSegment(
+                    value: _ProjectHealthMode.apply,
+                    icon: Icon(Icons.playlist_add_check_outlined),
+                    label: Text('Apply'),
+                  ),
+                ],
+                selected: {mode},
+                onSelectionChanged: busy
+                    ? null
+                    : (values) => onModeChanged(values.first),
+              ),
+              const _Pill(label: 'Atlas-only'),
+              const _Pill(label: 'No repo mutation'),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: 260,
+                child: DropdownButtonFormField<_ProjectHealthScope>(
+                  value: scope,
+                  decoration: const InputDecoration(
+                    labelText: 'Scope',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: _ProjectHealthScope.allProjects,
+                      child: Text('All projects'),
+                    ),
+                    DropdownMenuItem(
+                      value: _ProjectHealthScope.selectedProject,
+                      child: Text('Selected project'),
+                    ),
+                  ],
+                  onChanged: busy || loadingProjects
+                      ? null
+                      : (value) {
+                          if (value != null) onScopeChanged(value);
+                        },
+                ),
+              ),
+              if (scope == _ProjectHealthScope.selectedProject)
+                SizedBox(
+                  width: 320,
+                  child: DropdownButtonFormField<String>(
+                    value: selectedProjectId,
+                    decoration: const InputDecoration(
+                      labelText: 'Project',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      for (final project in projects)
+                        DropdownMenuItem(
+                          value: project.id,
+                          child: Text(
+                            project.title,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: busy ? null : onProjectChanged,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 0,
+            children: [
+              SizedBox(
+                width: 260,
+                child: CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  enabled: applying && !busy,
+                  value: refreshLinkedProjects,
+                  title: const Text('Refresh library records'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  onChanged: (value) => onRefreshLinkedChanged(value ?? false),
+                ),
+              ),
+              SizedBox(
+                width: 260,
+                child: CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  enabled: applying && refreshLinkedProjects && !busy,
+                  value: includeSourceDocuments,
+                  title: const Text('Include source files/cards'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  onChanged: (value) => onIncludeSourceChanged(value ?? false),
+                ),
+              ),
+              SizedBox(
+                width: 260,
+                child: CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  enabled: applying && !busy,
+                  value: refreshIdentity,
+                  title: const Text('Apply identity/tags'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  onChanged: (value) =>
+                      onRefreshIdentityChanged(value ?? false),
+                ),
+              ),
+              SizedBox(
+                width: 260,
+                child: CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  enabled: applying && !busy,
+                  value: createProposals,
+                  title: const Text('Create proposals'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  onChanged: (value) =>
+                      onCreateProposalsChanged(value ?? false),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -1055,12 +1342,24 @@ class _EnrichmentControlPanel extends StatelessWidget {
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.auto_fix_high),
-                label: Text(busy ? 'Running' : 'Run enrichment'),
+                    : Icon(
+                        applying
+                            ? Icons.playlist_add_check_outlined
+                            : Icons.manage_search_outlined,
+                      ),
+                label: Text(
+                  busy
+                      ? 'Running'
+                      : applying
+                      ? 'Apply selected'
+                      : 'Analyze health',
+                ),
               ),
-              _Pill(label: '$runCount runs'),
-              const _Pill(label: 'Atlas-only'),
-              const _Pill(label: 'No repo mutation'),
+              OutlinedButton.icon(
+                onPressed: busy ? null : onAdvancedRun,
+                icon: const Icon(Icons.auto_fix_high),
+                label: const Text('Advanced full run'),
+              ),
             ],
           ),
           if (busy) ...[
@@ -1077,7 +1376,7 @@ class _EnrichmentControlPanel extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    status ?? 'Enrichment is running.',
+                    status ?? 'Project health is running.',
                     style: const TextStyle(color: _text87),
                   ),
                 ),
@@ -1101,16 +1400,131 @@ class _EnrichmentControlPanel extends StatelessWidget {
   }
 }
 
-class _EnrichmentRunTile extends StatelessWidget {
+class _EnrichmentRunTile extends StatefulWidget {
   final ProjectEnrichmentRun run;
+  final VoidCallback onChanged;
 
-  const _EnrichmentRunTile({required this.run});
+  const _EnrichmentRunTile({required this.run, required this.onChanged});
+
+  @override
+  State<_EnrichmentRunTile> createState() => _EnrichmentRunTileState();
+}
+
+class _EnrichmentRunTileState extends State<_EnrichmentRunTile> {
+  ProjectEnrichmentRun? _latestRun;
+  Future<List<ProjectEnrichmentFinding>>? _findingsFuture;
+  List<ProjectEnrichmentFinding>? _cachedFindings;
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(covariant _EnrichmentRunTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.run.id != widget.run.id) {
+      _latestRun = null;
+      _findingsFuture = null;
+      _cachedFindings = null;
+      _expanded = false;
+    } else if (oldWidget.run != widget.run) {
+      _latestRun = widget.run;
+    }
+  }
+
+  Future<List<ProjectEnrichmentFinding>> _loadFindings() {
+    final runId = widget.run.id;
+    final future = AppStateScope.of(
+      context,
+    ).getProjectEnrichmentFindingsForRun(runId);
+    unawaited(
+      future
+          .then((findings) {
+            if (mounted && widget.run.id == runId) {
+              _cachedFindings = findings;
+            }
+          })
+          .catchError((_) {}),
+    );
+    return future;
+  }
+
+  void _refreshDetails() {
+    unawaited(_refreshDetailsInPlace());
+  }
+
+  Future<void> _refreshDetailsInPlace() async {
+    final state = AppStateScope.of(context);
+    final updatedRunFuture = state.getProjectEnrichmentRun(widget.run.id);
+    final findingsFuture = state.getProjectEnrichmentFindingsForRun(
+      widget.run.id,
+    );
+    setState(() => _findingsFuture = findingsFuture);
+    try {
+      final updatedRun = await updatedRunFuture;
+      final findings = await findingsFuture;
+      if (!mounted) return;
+      setState(() {
+        _latestRun = updatedRun ?? widget.run;
+        _cachedFindings = findings;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Project Health refresh failed: $error')),
+      );
+    }
+  }
+
+  Future<void> _copyRunJson(BuildContext context) async {
+    final json = await AppStateScope.of(
+      context,
+    ).buildProjectHealthRunExportJson(widget.run.id);
+    await Clipboard.setData(ClipboardData(text: json));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Project Health run JSON copied.')),
+    );
+  }
+
+  Future<void> _exportRunJson(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export Project Health run JSON',
+      fileName: '${widget.run.id}_project_health.json',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    if (path == null || path.trim().isEmpty) return;
+    final outputPath = path.toLowerCase().endsWith('.json')
+        ? path
+        : '$path.json';
+    final json = await state.buildProjectHealthRunExportJson(widget.run.id);
+    await File(outputPath).writeAsString(json);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Project Health run exported: $outputPath')),
+    );
+  }
+
+  Future<void> _saveRunJson(BuildContext context) async {
+    final path = await AppStateScope.of(
+      context,
+    ).saveProjectHealthRunExportToAppFolder(widget.run.id);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Project Health run saved: $path')));
+  }
 
   @override
   Widget build(BuildContext context) {
+    final run = _latestRun ?? widget.run;
     final warnings = run.warnings;
+    final findingsFuture = _findingsFuture ??= _loadFindings();
     return _Panel(
       child: ExpansionTile(
+        key: PageStorageKey<String>('project_health_run_${run.id}'),
+        initiallyExpanded: _expanded,
+        maintainState: true,
+        onExpansionChanged: (expanded) => setState(() => _expanded = expanded),
         tilePadding: EdgeInsets.zero,
         childrenPadding: const EdgeInsets.only(top: 8),
         title: Text(
@@ -1133,29 +1547,37 @@ class _EnrichmentRunTile extends StatelessWidget {
           ),
         ),
         children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _copyRunJson(context),
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('Copy JSON'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _exportRunJson(context),
+                icon: const Icon(Icons.download_outlined, size: 16),
+                label: const Text('Export JSON'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _saveRunJson(context),
+                icon: const Icon(Icons.folder_outlined, size: 16),
+                label: const Text('Save to app folder'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           if (warnings.isNotEmpty)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0x22FF9800),
-                border: Border.all(color: const Color(0x55FF9800)),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                warnings.take(6).join('\n'),
-                style: const TextStyle(color: Colors.amber, fontSize: 12),
-              ),
-            ),
+            _ProjectHealthWarningsSection(warnings: warnings),
           _EnrichmentStepsSection(runId: run.id),
           const SizedBox(height: 8),
           _EnrichmentProposalsSection(runId: run.id),
           const SizedBox(height: 8),
           FutureBuilder<List<ProjectEnrichmentFinding>>(
-            future: AppStateScope.of(
-              context,
-            ).getProjectEnrichmentFindingsForRun(run.id),
+            future: findingsFuture,
+            initialData: _cachedFindings,
             builder: (context, snap) {
               if (snap.hasError) {
                 return Text(
@@ -1163,8 +1585,12 @@ class _EnrichmentRunTile extends StatelessWidget {
                   style: const TextStyle(color: Colors.orangeAccent),
                 );
               }
-              final findings = snap.data ?? const <ProjectEnrichmentFinding>[];
-              if (snap.connectionState == ConnectionState.waiting) {
+              final findings =
+                  snap.data ??
+                  _cachedFindings ??
+                  const <ProjectEnrichmentFinding>[];
+              if (snap.connectionState == ConnectionState.waiting &&
+                  findings.isEmpty) {
                 return const Padding(
                   padding: EdgeInsets.all(12),
                   child: CircularProgressIndicator(),
@@ -1179,7 +1605,10 @@ class _EnrichmentRunTile extends StatelessWidget {
                   ),
                 );
               }
-              return _EnrichmentFindingsSection(findings: findings);
+              return _EnrichmentFindingsSection(
+                findings: findings,
+                onChanged: _refreshDetails,
+              );
             },
           ),
         ],
@@ -1291,27 +1720,127 @@ class _EnrichmentProposalsSection extends StatelessWidget {
           return const SizedBox.shrink();
         }
         if (proposals.isEmpty) return const SizedBox.shrink();
+        final openProposals = proposals
+            .where((proposal) => proposal.status == 'proposed')
+            .toList(growable: false);
+        if (openProposals.isEmpty) return const SizedBox.shrink();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Correction proposals',
-              style: TextStyle(fontWeight: FontWeight.w700),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Correction proposals',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                _Pill(label: '${openProposals.length} proposed'),
+              ],
             ),
             const SizedBox(height: 6),
-            for (final proposal in proposals.take(25))
+            for (final proposal in openProposals.take(20))
               _EnrichmentProposalRow(proposal: proposal),
-            if (proposals.length > 25)
+            if (openProposals.length > 20)
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text(
-                  '${proposals.length - 25} more proposals recorded.',
+                  '${openProposals.length - 20} more proposed corrections recorded.',
                   style: const TextStyle(color: _text54, fontSize: 12),
                 ),
               ),
           ],
         );
       },
+    );
+  }
+}
+
+class _ProjectHealthWarningsSection extends StatelessWidget {
+  final List<String> warnings;
+
+  const _ProjectHealthWarningsSection({required this.warnings});
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = groupProjectHealthWarnings(warnings);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0x22FF9800),
+        border: Border.all(color: const Color(0x55FF9800)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _Pill(label: '${warnings.length} warnings'),
+              _Pill(label: '${groups.length} groups'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Warning summary',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          for (final group in groups.take(8))
+            _ProjectHealthWarningGroupRow(group: group),
+          if (groups.length > 8)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '${groups.length - 8} more warning groups included in export.',
+                style: const TextStyle(color: _text54, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectHealthWarningGroupRow extends StatelessWidget {
+  final ProjectHealthWarningGroup group;
+
+  const _ProjectHealthWarningGroupRow({required this.group});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _Pill(label: '${group.count}'),
+              _Pill(label: group.category),
+              Text(
+                group.title,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          for (final example in group.examples.take(2))
+            Text(
+              example,
+              style: const TextStyle(color: _text54, fontSize: 11),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1323,6 +1852,7 @@ class _EnrichmentProposalRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final contextLines = _proposalContextLines(proposal);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 6),
@@ -1350,6 +1880,11 @@ class _EnrichmentProposalRow extends StatelessWidget {
             proposal.title,
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
+          if (contextLines.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            for (final line in contextLines.take(4))
+              Text(line, style: const TextStyle(color: _text54, fontSize: 12)),
+          ],
           if ((proposal.detail ?? '').isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
@@ -1365,19 +1900,47 @@ class _EnrichmentProposalRow extends StatelessWidget {
 
 class _EnrichmentFindingsSection extends StatelessWidget {
   final List<ProjectEnrichmentFinding> findings;
+  final VoidCallback onChanged;
 
-  const _EnrichmentFindingsSection({required this.findings});
+  const _EnrichmentFindingsSection({
+    required this.findings,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
     final visibleFindings = findings
-        .where((finding) => finding.category != 'ai_summary')
+        .where(
+          (finding) =>
+              finding.status == 'open' && finding.category != 'ai_summary',
+        )
         .toList(growable: false);
-    if (visibleFindings.isEmpty) return const SizedBox.shrink();
+    final hiddenCount = findings
+        .where(
+          (finding) =>
+              finding.status != 'open' || finding.category == 'ai_summary',
+        )
+        .length;
+    if (visibleFindings.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          hiddenCount == 0
+              ? 'No open findings.'
+              : 'No open findings. $hiddenCount resolved, dismissed, or hidden finding(s) are not shown.',
+          style: const TextStyle(color: _text54, fontSize: 12),
+        ),
+      );
+    }
     final groups = _groupOpenEnrichmentFindings(visibleFindings);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Text(
+          '$hiddenCount resolved, dismissed, or hidden finding(s) are not shown.',
+          style: const TextStyle(color: _text54, fontSize: 12),
+        ),
+        const SizedBox(height: 6),
         if (groups.isNotEmpty) ...[
           const Text(
             'Open findings summary',
@@ -1385,7 +1948,13 @@ class _EnrichmentFindingsSection extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           for (final group in groups.take(12))
-            _EnrichmentFindingGroupRow(group: group),
+            _EnrichmentFindingGroupRow(
+              key: ValueKey<String>(
+                'project_health_finding_group_${group.severity}_${group.category}_${group.title}_${group.detail ?? ''}',
+              ),
+              group: group,
+              onChanged: onChanged,
+            ),
           if (groups.length > 12)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -1401,13 +1970,17 @@ class _EnrichmentFindingsSection extends StatelessWidget {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 6),
-        for (final finding in visibleFindings.take(80))
-          _EnrichmentFindingRow(finding: finding),
-        if (visibleFindings.length > 80)
+        for (final finding in visibleFindings.take(50))
+          _EnrichmentFindingRow(
+            key: ValueKey<String>('project_health_finding_${finding.id}'),
+            finding: finding,
+            onChanged: onChanged,
+          ),
+        if (visibleFindings.length > 50)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              '${visibleFindings.length - 80} more individual findings recorded.',
+              '${visibleFindings.length - 50} more open findings recorded. Use export for the full list.',
               style: const TextStyle(color: _text54, fontSize: 12),
             ),
           ),
@@ -1434,14 +2007,172 @@ class _EnrichmentFindingGroup {
   int get count => findings.length;
 }
 
+List<String> _proposalContextLines(ProjectEnrichmentProposal proposal) {
+  final payload = proposal.payload;
+  final finding = payload['finding'];
+  final evidence = finding is Map ? finding['evidence'] : null;
+  final recommended = payload['recommendedAction']?.toString().trim();
+  final lines = <String>[];
+  if (evidence is Map) {
+    final projectTitle = evidence['projectTitle']?.toString().trim();
+    final displayName = evidence['registryDisplayName']?.toString().trim();
+    final localPath = evidence['localPath']?.toString().trim();
+    final reviewState = evidence['reviewState']?.toString().trim();
+    if (projectTitle != null && projectTitle.isNotEmpty) {
+      lines.add('Project: $projectTitle');
+    }
+    if (displayName != null && displayName.isNotEmpty) {
+      lines.add('Registry: $displayName');
+    }
+    if (localPath != null && localPath.isNotEmpty) {
+      lines.add(localPath);
+    }
+    if (reviewState != null && reviewState.isNotEmpty) {
+      lines.add('State: $reviewState');
+    }
+  }
+  if (recommended != null && recommended.isNotEmpty) {
+    lines.add('Suggested: $recommended');
+  }
+  return lines;
+}
+
 class _EnrichmentFindingGroupRow extends StatelessWidget {
   final _EnrichmentFindingGroup group;
+  final VoidCallback onChanged;
 
-  const _EnrichmentFindingGroupRow({required this.group});
+  const _EnrichmentFindingGroupRow({
+    super.key,
+    required this.group,
+    required this.onChanged,
+  });
+
+  Future<void> _dismissGroup(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Dismiss finding group?'),
+        content: Text(
+          'This dismisses ${group.count} open finding(s) in this group and logs the batch action. It does not change linked projects or registry rows.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.done_all_outlined, size: 16),
+            label: const Text('Dismiss group'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await AppStateScope.of(context).dismissProjectEnrichmentFindings(
+        findingIds: group.findings.map((finding) => finding.id),
+        note: 'Dismissed repeated Project Health finding group.',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${group.count} finding(s) dismissed.')),
+      );
+      onChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Group dismiss failed: $error')));
+    }
+  }
+
+  Future<void> _suppressGroup(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Suppress future findings?'),
+        content: Text(
+          'Atlas will suppress ${group.count} matching finding(s) in future Project Health runs. Current rows will be marked suppressed and logged.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.visibility_off_outlined, size: 16),
+            label: const Text('Suppress future'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await AppStateScope.of(context).suppressProjectHealthFindings(
+        findingIds: group.findings.map((finding) => finding.id),
+        note: 'Suppressed repeated Project Health finding group.',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${group.count} future finding(s) suppressed.')),
+      );
+      onChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Group suppression failed: $error')),
+      );
+    }
+  }
+
+  Future<void> _markGroupReviewed(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Mark registry rows reviewed?'),
+        content: Text(
+          'Atlas will mark ${group.count} needs-review registry row(s) reviewed, dismiss these findings, and log the decision.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.fact_check_outlined, size: 16),
+            label: const Text('Mark reviewed'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await AppStateScope.of(context).markProjectHealthRegistryFindingsReviewed(
+        findingIds: group.findings.map((finding) => finding.id),
+        note: 'Marked repeated Project Health registry review group reviewed.',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${group.count} registry row(s) reviewed.')),
+      );
+      onChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Mark reviewed failed: $error')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final examples = _findingGroupExamples(group.findings);
+    final canMarkReviewed =
+        group.category == 'registry' &&
+        group.title.toLowerCase().contains('still needs review');
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 6),
@@ -1490,6 +2221,29 @@ class _EnrichmentFindingGroupRow extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (canMarkReviewed)
+                FilledButton.icon(
+                  onPressed: () => _markGroupReviewed(context),
+                  icon: const Icon(Icons.fact_check_outlined, size: 16),
+                  label: const Text('Mark all reviewed'),
+                ),
+              OutlinedButton.icon(
+                onPressed: () => _dismissGroup(context),
+                icon: const Icon(Icons.done_all_outlined, size: 16),
+                label: const Text('Dismiss group'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _suppressGroup(context),
+                icon: const Icon(Icons.visibility_off_outlined, size: 16),
+                label: const Text('Suppress future'),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -1498,14 +2252,259 @@ class _EnrichmentFindingGroupRow extends StatelessWidget {
 
 class _EnrichmentFindingRow extends StatelessWidget {
   final ProjectEnrichmentFinding finding;
+  final VoidCallback onChanged;
 
-  const _EnrichmentFindingRow({required this.finding});
+  const _EnrichmentFindingRow({
+    super.key,
+    required this.finding,
+    required this.onChanged,
+  });
+
+  Future<void> _dismiss(BuildContext context) async {
+    await AppStateScope.of(
+      context,
+    ).dismissProjectEnrichmentFinding(findingId: finding.id);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Finding dismissed.')));
+    onChanged();
+  }
+
+  Future<void> _suppress(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Suppress future finding?'),
+        content: const Text(
+          'Atlas will hide matching Project Health findings in future runs and mark this one suppressed. This does not change project data.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.visibility_off_outlined, size: 16),
+            label: const Text('Suppress future'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await AppStateScope.of(context).suppressProjectHealthFinding(
+        findingId: finding.id,
+        note: 'Suppressed from Project Health.',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Future matching finding suppressed.')),
+      );
+      onChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Suppress failed: $error')));
+    }
+  }
+
+  Future<void> _ignoreRegistry(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ignore registry row?'),
+        content: const Text(
+          'Atlas will mark this registry row ignored and log the decision. This does not delete local files.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.visibility_off_outlined, size: 16),
+            label: const Text('Ignore'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await AppStateScope.of(context).dismissProjectEnrichmentFinding(
+      findingId: finding.id,
+      ignoreRegistryEntry: true,
+      note: 'Marked no longer part of project from Project Health.',
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Registry row ignored and logged.')),
+    );
+    onChanged();
+  }
+
+  Future<void> _linkToProject(BuildContext context) async {
+    try {
+      final state = AppStateScope.of(context);
+      final projects = await state.getProjectsFull();
+      if (!context.mounted) return;
+      if (projects.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No Atlas projects are available.')),
+        );
+        return;
+      }
+      final projectId = await showDialog<String>(
+        context: context,
+        builder: (_) => _ProjectLinkDialog(projects: projects),
+      );
+      if (projectId == null || projectId.isEmpty || !context.mounted) return;
+      await state.linkProjectHealthRegistryFindingToProject(
+        findingId: finding.id,
+        projectId: projectId,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Finding linked.')));
+      onChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Link failed: $error')));
+    }
+  }
+
+  Future<void> _createProject(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Create Atlas project?'),
+        content: const Text(
+          'Atlas will create a project from this registry row, link it, dismiss this finding, and log the action. Source refresh can still be run separately.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      final projectId = await AppStateScope.of(
+        context,
+      ).importProjectHealthRegistryFindingAsProject(findingId: finding.id);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Project created and linked: $projectId')),
+      );
+      onChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Create failed: $error')));
+    }
+  }
+
+  Future<void> _replaceFolder(BuildContext context) async {
+    final path = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Choose replacement project folder',
+    );
+    if (path == null || path.trim().isEmpty || !context.mounted) return;
+    try {
+      final updated = await AppStateScope.of(context)
+          .replaceProjectHealthRegistryFindingFolder(
+            findingId: finding.id,
+            selectedPath: path,
+          );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Registry folder updated: ${updated.localPath}'),
+        ),
+      );
+      onChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Folder replacement failed: $error')),
+      );
+    }
+  }
+
+  Future<void> _markReviewed(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Mark registry row reviewed?'),
+        content: const Text(
+          'Atlas will mark this registry row reviewed, dismiss this finding, and log the decision.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.fact_check_outlined, size: 16),
+            label: const Text('Mark reviewed'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await AppStateScope.of(context).markProjectHealthRegistryFindingReviewed(
+        findingId: finding.id,
+        note: 'Marked reviewed from Project Health.',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Registry row reviewed and logged.')),
+      );
+      onChanged();
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Mark reviewed failed: $error')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final evidence = finding.evidence;
     final projectTitle = evidence['projectTitle']?.toString();
+    final registryDisplayName = evidence['registryDisplayName']?.toString();
     final localPath = evidence['localPath']?.toString();
+    final evidenceLines = _findingEvidenceLines(finding);
+    final title = finding.title.toLowerCase();
+    final canIgnoreRegistry =
+        finding.registryId != null &&
+        finding.registryId!.trim().isNotEmpty &&
+        finding.category == 'registry';
+    final canLinkRegistry =
+        canIgnoreRegistry &&
+        (title.contains('not linked to an atlas project') ||
+            title.contains('still needs review'));
+    final canMarkReviewed =
+        canIgnoreRegistry && title.contains('still needs review');
+    final canReplaceFolder =
+        canIgnoreRegistry &&
+        (title.contains('local path does not exist') ||
+            title.contains('remote url'));
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 6),
@@ -1527,6 +2526,8 @@ class _EnrichmentFindingRow extends StatelessWidget {
               _Pill(label: finding.category),
               if (projectTitle != null && projectTitle.isNotEmpty)
                 _Pill(label: projectTitle),
+              if (registryDisplayName != null && registryDisplayName.isNotEmpty)
+                _Pill(label: registryDisplayName),
             ],
           ),
           const SizedBox(height: 8),
@@ -1548,6 +2549,63 @@ class _EnrichmentFindingRow extends StatelessWidget {
               style: const TextStyle(color: _text54, fontSize: 11),
             ),
           ],
+          for (final line in evidenceLines) ...[
+            const SizedBox(height: 4),
+            SelectableText(
+              line,
+              style: const TextStyle(color: _text54, fontSize: 11),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (canMarkReviewed)
+                FilledButton.icon(
+                  onPressed: () => _markReviewed(context),
+                  icon: const Icon(Icons.fact_check_outlined, size: 16),
+                  label: const Text('Mark reviewed'),
+                ),
+              if (canLinkRegistry)
+                OutlinedButton.icon(
+                  onPressed: () => _linkToProject(context),
+                  icon: const Icon(Icons.link, size: 16),
+                  label: const Text('Link to project'),
+                ),
+              if (canLinkRegistry)
+                FilledButton.icon(
+                  onPressed: () => _createProject(context),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Create project'),
+                ),
+              if (canReplaceFolder)
+                OutlinedButton.icon(
+                  onPressed: () => _replaceFolder(context),
+                  icon: const Icon(
+                    Icons.drive_folder_upload_outlined,
+                    size: 16,
+                  ),
+                  label: const Text('Replace folder'),
+                ),
+              OutlinedButton.icon(
+                onPressed: () => _dismiss(context),
+                icon: const Icon(Icons.done_outline, size: 16),
+                label: const Text('Dismiss'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _suppress(context),
+                icon: const Icon(Icons.visibility_off_outlined, size: 16),
+                label: const Text('Suppress future'),
+              ),
+              if (canIgnoreRegistry)
+                OutlinedButton.icon(
+                  onPressed: () => _ignoreRegistry(context),
+                  icon: const Icon(Icons.visibility_off_outlined, size: 16),
+                  label: const Text('Ignore registry row'),
+                ),
+            ],
+          ),
         ],
       ),
     );
@@ -1614,6 +2672,7 @@ List<String> _findingGroupExamples(List<ProjectEnrichmentFinding> findings) {
     final evidence = finding.evidence;
     final raw =
         evidence['projectTitle'] ??
+        evidence['registryDisplayName'] ??
         evidence['displayName'] ??
         evidence['localPath'];
     final label = _compactFindingExample(raw?.toString());
@@ -1622,6 +2681,48 @@ List<String> _findingGroupExamples(List<ProjectEnrichmentFinding> findings) {
     if (examples.length >= 3) break;
   }
   return examples;
+}
+
+List<String> _findingEvidenceLines(ProjectEnrichmentFinding finding) {
+  final evidence = finding.evidence;
+  final lines = <String>[];
+  final linkedNames = _stringListFromEvidence(evidence['linkedDisplayNames']);
+  if (linkedNames.isNotEmpty) {
+    lines.add('Linked rows: ${linkedNames.take(12).join(' / ')}');
+    if (linkedNames.length > 12) {
+      lines.add('${linkedNames.length - 12} more linked row(s).');
+    }
+  }
+  final linkedPaths = _stringListFromEvidence(evidence['linkedLocalPaths']);
+  if (linkedPaths.isNotEmpty) {
+    for (final path in linkedPaths.take(4)) {
+      lines.add('Linked path: $path');
+    }
+    if (linkedPaths.length > 4) {
+      lines.add('${linkedPaths.length - 4} more linked path(s).');
+    }
+  }
+  final dirtyCount = evidence['dirtyCount']?.toString().trim();
+  if (dirtyCount != null && dirtyCount.isNotEmpty) {
+    lines.add('Dirty files observed: $dirtyCount');
+  }
+  final remoteUrl = evidence['remoteUrl']?.toString().trim();
+  if (remoteUrl != null && remoteUrl.isNotEmpty) {
+    lines.add('Remote: $remoteUrl');
+  }
+  return lines;
+}
+
+List<String> _stringListFromEvidence(Object? value) {
+  if (value is Iterable) {
+    return value
+        .map((item) => item?.toString().trim())
+        .whereType<String>()
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? const [] : [text];
 }
 
 String? _compactFindingExample(String? value) {
@@ -2002,6 +3103,79 @@ class _RegistryTile extends StatelessWidget {
 class _WarningsTab extends StatelessWidget {
   const _WarningsTab();
 
+  Future<void> _copyWarningsJson(BuildContext context) async {
+    final json = await AppStateScope.of(
+      context,
+    ).buildOperationsWarningsExportJson();
+    await Clipboard.setData(ClipboardData(text: json));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Warnings JSON copied.')));
+  }
+
+  Future<void> _exportWarningsJson(BuildContext context) async {
+    final json = await AppStateScope.of(
+      context,
+    ).buildOperationsWarningsExportJson();
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export warnings JSON',
+      fileName: 'operations_warnings.json',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    if (path == null || path.trim().isEmpty) return;
+    final outputPath = path.toLowerCase().endsWith('.json')
+        ? path
+        : '$path.json';
+    await File(outputPath).writeAsString(json);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Warnings JSON exported: $outputPath')),
+    );
+  }
+
+  Future<void> _saveWarningsToAppFolder(BuildContext context) async {
+    final path = await AppStateScope.of(
+      context,
+    ).saveOperationsWarningsToAppFolder();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Warnings JSON saved: $path')));
+  }
+
+  Future<void> _openWarningsFolder(BuildContext context) async {
+    await AppStateScope.of(context).openOperationsWarningsFolder();
+  }
+
+  Future<void> _handleWarningsAction(
+    BuildContext context,
+    String action,
+  ) async {
+    try {
+      switch (action) {
+        case 'copy':
+          await _copyWarningsJson(context);
+          break;
+        case 'export':
+          await _exportWarningsJson(context);
+          break;
+        case 'save':
+          await _saveWarningsToAppFolder(context);
+          break;
+        case 'open_folder':
+          await _openWarningsFolder(context);
+          break;
+      }
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Warnings export failed: $error')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
@@ -2047,20 +3221,74 @@ class _WarningsTab extends StatelessWidget {
                 title: 'No warnings recorded.',
               );
             }
-            return ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: rows.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, index) => _Panel(
-                child: SelectableText(
-                  rows[index],
-                  style: const TextStyle(color: Colors.orangeAccent),
+            return Column(
+              children: [
+                _WarningsToolbar(
+                  count: rows.length,
+                  onAction: (action) => _handleWarningsAction(context, action),
                 ),
-              ),
+                const Divider(height: 1, color: _line),
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: rows.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) => _Panel(
+                      child: SelectableText(
+                        rows[index],
+                        style: const TextStyle(color: Colors.orangeAccent),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             );
           },
         );
       },
+    );
+  }
+}
+
+class _WarningsToolbar extends StatelessWidget {
+  final int count;
+  final ValueChanged<String> onAction;
+
+  const _WarningsToolbar({required this.count, required this.onAction});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: _panel,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          _Pill(label: '$count warnings'),
+          OutlinedButton.icon(
+            onPressed: () => onAction('copy'),
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('Copy JSON'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => onAction('export'),
+            icon: const Icon(Icons.file_download_outlined, size: 16),
+            label: const Text('Export JSON'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => onAction('save'),
+            icon: const Icon(Icons.save_alt, size: 16),
+            label: const Text('Save to app folder'),
+          ),
+          IconButton(
+            tooltip: 'Open warnings folder',
+            onPressed: () => onAction('open_folder'),
+            icon: const Icon(Icons.folder_open_outlined),
+          ),
+        ],
+      ),
     );
   }
 }

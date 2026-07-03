@@ -14,6 +14,7 @@ import '../../services/local_git_visibility_service.dart';
 import '../../services/local_project_refresh_service.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../services/ollama_service.dart';
+import '../../services/project_runtime_service.dart';
 import '../../services/project_summary_models.dart';
 import '../../services/telegram_service.dart';
 
@@ -83,6 +84,9 @@ class ProjectBundleExportPreview {
   final String projectId;
   final String projectTitle;
   final bool includeFiles;
+  final bool includeLatestSummary;
+  final bool includeEventLogs;
+  final bool includeCleanGitArchive;
   final int stages;
   final int workItems;
   final int workItemNotes;
@@ -97,6 +101,9 @@ class ProjectBundleExportPreview {
   final bool hasRegistry;
   final int observations;
   final int refreshItems;
+  final int latestSummaryDrafts;
+  final int eventLogs;
+  final bool cleanGitArchiveReady;
   final List<String> warnings;
 
   const ProjectBundleExportPreview({
@@ -104,6 +111,9 @@ class ProjectBundleExportPreview {
     required this.projectId,
     required this.projectTitle,
     required this.includeFiles,
+    required this.includeLatestSummary,
+    required this.includeEventLogs,
+    required this.includeCleanGitArchive,
     required this.stages,
     required this.workItems,
     required this.workItemNotes,
@@ -118,6 +128,9 @@ class ProjectBundleExportPreview {
     required this.hasRegistry,
     required this.observations,
     required this.refreshItems,
+    required this.latestSummaryDrafts,
+    required this.eventLogs,
+    required this.cleanGitArchiveReady,
     required this.warnings,
   });
 
@@ -134,10 +147,45 @@ class ProjectBundleExportPreview {
       decisions +
       (hasRegistry ? 1 : 0) +
       observations +
-      refreshItems;
+      refreshItems +
+      latestSummaryDrafts +
+      eventLogs;
 
   int get copiedFileCount =>
       includeFiles ? copiedDocumentFiles + copiedMediaFiles : 0;
+}
+
+class ContactContinuityResult {
+  final String ownerContactId;
+  final String ownerName;
+  final int contactsSeeded;
+  final int projectsConsidered;
+  final int projectOwnersUpdated;
+  final int projectPeopleAdded;
+  final int projectPeopleUpdated;
+  final int duplicateContactsRemoved;
+
+  const ContactContinuityResult({
+    required this.ownerContactId,
+    required this.ownerName,
+    required this.contactsSeeded,
+    required this.projectsConsidered,
+    required this.projectOwnersUpdated,
+    required this.projectPeopleAdded,
+    required this.projectPeopleUpdated,
+    required this.duplicateContactsRemoved,
+  });
+
+  Map<String, Object?> toJson() => {
+    'ownerContactId': ownerContactId,
+    'ownerName': ownerName,
+    'contactsSeeded': contactsSeeded,
+    'projectsConsidered': projectsConsidered,
+    'projectOwnersUpdated': projectOwnersUpdated,
+    'projectPeopleAdded': projectPeopleAdded,
+    'projectPeopleUpdated': projectPeopleUpdated,
+    'duplicateContactsRemoved': duplicateContactsRemoved,
+  };
 }
 
 class ProjectSummaryRefreshResult {
@@ -208,6 +256,144 @@ class ProjectEnrichmentRunResult {
   };
 }
 
+class ProjectHealthFindingSuppression {
+  final String fingerprint;
+  final String? projectId;
+  final String? registryId;
+  final String category;
+  final String title;
+  final String? detail;
+  final String? localPath;
+  final String actor;
+  final String? note;
+  final DateTime suppressedAt;
+
+  const ProjectHealthFindingSuppression({
+    required this.fingerprint,
+    this.projectId,
+    this.registryId,
+    required this.category,
+    required this.title,
+    this.detail,
+    this.localPath,
+    required this.actor,
+    this.note,
+    required this.suppressedAt,
+  });
+
+  factory ProjectHealthFindingSuppression.fromJson(Map<String, Object?> json) {
+    final suppressedAtRaw = json['suppressedAt']?.toString();
+    return ProjectHealthFindingSuppression(
+      fingerprint: json['fingerprint']?.toString() ?? '',
+      projectId: _cleanNullableString(json['projectId']),
+      registryId: _cleanNullableString(json['registryId']),
+      category: json['category']?.toString() ?? 'unknown',
+      title: json['title']?.toString() ?? 'Suppressed finding',
+      detail: _cleanNullableString(json['detail']),
+      localPath: _cleanNullableString(json['localPath']),
+      actor: json['actor']?.toString() ?? 'Operator',
+      note: _cleanNullableString(json['note']),
+      suppressedAt: suppressedAtRaw == null
+          ? DateTime.fromMillisecondsSinceEpoch(0)
+          : DateTime.tryParse(suppressedAtRaw) ??
+                DateTime.fromMillisecondsSinceEpoch(0),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'fingerprint': fingerprint,
+    'projectId': projectId,
+    'registryId': registryId,
+    'category': category,
+    'title': title,
+    'detail': detail,
+    'localPath': localPath,
+    'actor': actor,
+    'note': note,
+    'suppressedAt': suppressedAt.toIso8601String(),
+  };
+}
+
+String? _cleanNullableString(Object? value) {
+  final text = value?.toString().trim();
+  if (text == null || text.isEmpty) return null;
+  return text;
+}
+
+typedef GithubArchiveFetcher =
+    Future<List<int>> Function(GithubRemoteIdentity identity, String ref);
+
+class _ProjectGitArchive {
+  final List<int> bytes;
+  final String archivePath;
+  final Map<String, Object?> metadata;
+
+  const _ProjectGitArchive({
+    required this.bytes,
+    required this.archivePath,
+    required this.metadata,
+  });
+}
+
+class _GithubArchiveCandidate {
+  final GithubRemoteIdentity identity;
+  final String ref;
+  final ProjectGitRemoteStatus? status;
+
+  const _GithubArchiveCandidate({
+    required this.identity,
+    required this.ref,
+    required this.status,
+  });
+}
+
+class _LocalGitArchiveCandidate {
+  final ProjectRegistryEntry registry;
+  final LocalGitVisibilityReport report;
+
+  const _LocalGitArchiveCandidate({
+    required this.registry,
+    required this.report,
+  });
+}
+
+Future<List<int>> _downloadPublicGithubArchive(
+  GithubRemoteIdentity identity,
+  String ref,
+) async {
+  final safeRef = ref.trim();
+  if (safeRef.isEmpty) {
+    throw StateError('GitHub archive ref is required.');
+  }
+  final uri = Uri.https(
+    'codeload.github.com',
+    '/${identity.owner}/${identity.repo}/zip/$safeRef',
+  );
+  final client = HttpClient();
+  try {
+    final request = await client
+        .getUrl(uri)
+        .timeout(const Duration(seconds: 8));
+    final response = await request.close().timeout(const Duration(seconds: 20));
+    if (response.statusCode != HttpStatus.ok) {
+      throw HttpException(
+        'GitHub archive request returned HTTP ${response.statusCode}.',
+        uri: uri,
+      );
+    }
+    final bytes = <int>[];
+    await for (final chunk in response) {
+      bytes.addAll(chunk);
+    }
+    if (bytes.isEmpty) {
+      throw HttpException('GitHub archive response was empty.', uri: uri);
+    }
+    return bytes;
+  } finally {
+    client.close(force: true);
+  }
+}
+
 class _ProjectEnrichmentFindingDraft {
   final String? projectId;
   final String? registryId;
@@ -257,6 +443,9 @@ class _ProjectIdentityEnrichmentResult {
 /// App-wide state wrapper around [AppDb].
 class AppState extends ChangeNotifier {
   final AppDb db;
+  final GithubArchiveFetcher _githubArchiveFetcher;
+  static const String _projectHealthSuppressionsMetaKey =
+      'project_health_finding_suppressions_v1';
   static const Set<String> _safeLocalProjectDocNames = {
     'README.md',
     'ACTIVE_TASK.md',
@@ -361,7 +550,12 @@ class AppState extends ChangeNotifier {
     return '$current/$total';
   }
 
-  AppState(this.db, {bool enableBackgroundSummaryRefresh = true}) {
+  AppState(
+    this.db, {
+    bool enableBackgroundSummaryRefresh = true,
+    GithubArchiveFetcher? githubArchiveFetcher,
+  }) : _githubArchiveFetcher =
+           githubArchiveFetcher ?? _downloadPublicGithubArchive {
     _watchProjectAiSummarySettings();
     _activeProjectSub = db.watchActiveProject().listen(
       (p) {
@@ -475,12 +669,13 @@ class AppState extends ChangeNotifier {
   Stream<Project?> watchProject(String id) => db.watchProject(id);
   Stream<Project?> watchActiveProject() => db.watchActiveProject();
 
-  Future<void> createProject(String title) async {
+  Future<String?> createProject(String title) async {
     final t = title.trim();
-    if (t.isEmpty) return;
+    if (t.isEmpty) return null;
     final id = DateTime.now().microsecondsSinceEpoch.toString();
     debugPrint('[Atlas] AppState.createProject: "$t" id=$id');
     await db.createProject(id, t, DateTime.now());
+    await db.setActiveProjectId(id);
     await db.logEvent(
       area: 'ui',
       action: 'create_project',
@@ -490,6 +685,7 @@ class AppState extends ChangeNotifier {
     );
     notifyListeners();
     debugPrint('[Atlas] AppState.createProject: done, notified listeners');
+    return id;
   }
 
   Future<void> setActiveById(String id) async {
@@ -1031,14 +1227,187 @@ class AppState extends ChangeNotifier {
   Stream<List<ProjectFull>> watchProjectsFull() => db.watchProjectsFull();
   Future<List<ProjectFull>> getProjectsFull() => db.getProjectsFull();
   Future<ProjectFull?> getProjectFull(String id) => db.getProjectFull(id);
+  Future<Project?> getGeneralTasksProject() => db.getGeneralTasksProject();
   Stream<Map<String, ProjectUpdateAttribution>>
   watchProjectUpdateAttributions() => db.watchProjectUpdateAttributions();
   Future<Map<String, ProjectUpdateAttribution>>
   getProjectUpdateAttributions() => db.getProjectUpdateAttributions();
 
-  Future<void> updateProjectMeta(String id, Map<String, Object?> fields) async {
+  Future<void> updateProjectMeta(
+    String id,
+    Map<String, Object?> fields, {
+    String actor = 'Operator',
+  }) async {
+    final before = await db.getProjectFull(id);
     await db.updateProjectMeta(id, fields);
+    final after = await db.getProjectFull(id);
+    final changes = _projectMetaChanges(before, after, fields.keys);
+    if (changes.isNotEmpty) {
+      await db.logEvent(
+        area: 'projects',
+        action: 'project_metadata_updated',
+        entityType: 'project',
+        entityId: id,
+        inputJson: jsonEncode({'requestedFields': fields.keys.toList()}),
+        outputJson: jsonEncode({
+          'agent': actor,
+          'actor': {'type': _actorTypeForLabel(actor), 'displayName': actor},
+          'changedFieldCount': changes.length,
+          'changedFields': changes,
+        }),
+      );
+    }
     notifyListeners();
+  }
+
+  Map<String, Object?> _projectMetaChanges(
+    Project? before,
+    Project? after,
+    Iterable<String> fieldKeys,
+  ) {
+    if (before == null || after == null) return const <String, Object?>{};
+    final beforeJson = before.toJson();
+    final afterJson = after.toJson();
+    final result = <String, Object?>{};
+    for (final key in fieldKeys) {
+      final oldValue = beforeJson[key];
+      final newValue = afterJson[key];
+      if (oldValue == newValue) continue;
+      result[key] = {'from': oldValue, 'to': newValue};
+    }
+    return result;
+  }
+
+  String _actorTypeForLabel(String actor) {
+    final normalized = actor.trim().toLowerCase();
+    if (normalized == 'atlas agent' ||
+        normalized == 'codex' ||
+        normalized.startsWith('model:')) {
+      return 'ai';
+    }
+    if (normalized == 'atlas') return 'system';
+    return 'operator';
+  }
+
+  Stream<ProjectRuntimeProfile?> watchProjectRuntimeProfile(String projectId) =>
+      db.watchProjectRuntimeProfile(projectId);
+
+  Future<ProjectRuntimeProfile?> getProjectRuntimeProfile(String projectId) =>
+      db.getProjectRuntimeProfile(projectId);
+
+  Stream<List<ProjectRuntimeRun>> watchProjectRuntimeRuns(
+    String projectId, {
+    int limit = 20,
+  }) => db.watchProjectRuntimeRuns(projectId, limit: limit);
+
+  Stream<List<ProjectRuntimeRun>> watchLatestRuntimeRunsForProjects({
+    int limit = 200,
+  }) => db.watchLatestRuntimeRunsForProjects(limit: limit);
+
+  Future<ProjectRuntimeProfile> saveProjectRuntimeProfileDraft(
+    String projectId,
+    ProjectRuntimeProfileDraft draft,
+  ) async {
+    final profile = await db.saveProjectRuntimeProfile(
+      projectId: projectId,
+      enabled: draft.enabled,
+      workingDirectory: _metaString(draft.workingDirectory),
+      launchCommand: _metaString(draft.launchCommand),
+      stopCommand: _metaString(draft.stopCommand),
+      testCommandsJson: encodeStringList(draft.testCommands),
+      portsJson: encodeIntList(draft.ports),
+      urlsJson: encodeRuntimeUrls(draft.urls),
+      healthUrlsJson: encodeStringList(draft.healthUrls),
+      notes: _metaString(draft.notes),
+      autostart: draft.autostart,
+      capsuleEnabled: draft.capsuleEnabled,
+      capsuleMode: normalizeCapsuleMode(draft.capsuleMode),
+      capsuleSourcePath:
+          _metaString(draft.capsuleSourcePath) ?? defaultProjectOpsCapsulePath,
+      capsuleProfile: _metaString(draft.capsuleProfile),
+      importSource: _metaString(draft.importSource),
+      lastImportedAt: draft.lastImportedAt,
+    );
+    await db.logEvent(
+      area: 'runtime',
+      action: 'runtime_profile_saved',
+      entityType: 'project',
+      entityId: projectId,
+      outputJson: jsonEncode({'enabled': draft.enabled}),
+    );
+    notifyListeners();
+    return profile;
+  }
+
+  Future<void> deleteProjectRuntimeProfile(String projectId) async {
+    await db.deleteProjectRuntimeProfile(projectId);
+    await db.logEvent(
+      area: 'runtime',
+      action: 'runtime_profile_deleted',
+      entityType: 'project',
+      entityId: projectId,
+    );
+    notifyListeners();
+  }
+
+  Future<ProjectRuntimeProfile?> importRuntimeProfileFromDevLaunchpad(
+    String projectId, {
+    String yamlPath = defaultDevLaunchpadYamlPath,
+    DevLaunchpadRuntimeImporter importer = const DevLaunchpadRuntimeImporter(),
+  }) async {
+    final project = await db.getProjectFull(projectId);
+    if (project == null) throw StateError('Project not found: $projectId');
+    final draft = await importer.readProfileForProject(
+      projectTitle: project.title,
+      yamlPath: yamlPath,
+    );
+    if (draft == null) return null;
+    final profile = await saveProjectRuntimeProfileDraft(projectId, draft);
+    await db.logEvent(
+      area: 'runtime',
+      action: 'runtime_profile_imported',
+      entityType: 'project',
+      entityId: projectId,
+      inputJson: yamlPath,
+      outputJson: jsonEncode({'matched': project.title}),
+    );
+    return profile;
+  }
+
+  Future<ProjectRuntimeRun> launchProjectRuntime(String projectId) async {
+    final profile = await _runtimeProfileForAction(projectId);
+    final run = await ProjectRuntimeService(db: db).runLaunch(profile);
+    notifyListeners();
+    return run;
+  }
+
+  Future<ProjectRuntimeRun> runProjectRuntimeTest(
+    String projectId, {
+    String? command,
+  }) async {
+    final profile = await _runtimeProfileForAction(projectId);
+    final run = await ProjectRuntimeService(
+      db: db,
+    ).runTest(profile, command: command);
+    notifyListeners();
+    return run;
+  }
+
+  Future<ProjectRuntimeRun> runProjectRuntimeCapsule(String projectId) async {
+    final profile = await _runtimeProfileForAction(projectId);
+    final run = await ProjectRuntimeService(db: db).runCapsule(profile);
+    notifyListeners();
+    return run;
+  }
+
+  Future<ProjectRuntimeProfile> _runtimeProfileForAction(
+    String projectId,
+  ) async {
+    final profile = await db.getProjectRuntimeProfile(projectId);
+    if (profile == null || !profile.enabled) {
+      throw StateError('Runtime profile is not enabled for this project.');
+    }
+    return profile;
   }
 
   Future<void> softDeleteProject(String id, String reason) async {
@@ -1052,6 +1421,253 @@ class AppState extends ChangeNotifier {
 
   Stream<List<Contact>> watchContacts() => db.watchContacts();
   Future<List<Contact>> getContacts() => db.getContacts();
+
+  Future<ContactContinuityResult> ensureContactContinuity({
+    String ownerName = 'Paul Peck',
+    String? ownerEmail,
+    bool assignVisibleProjectsToOwner = true,
+    bool ensureOwnerPeopleRows = true,
+    bool seedSystemActors = true,
+  }) async {
+    final cleanOwnerName = _metaString(ownerName) ?? 'Paul Peck';
+    final seeds = <_ContactSeed>[
+      _ContactSeed(
+        id: 'contact_operator_paul_peck',
+        name: cleanOwnerName,
+        title: 'Owner / Operator',
+        email: ownerEmail,
+        notes:
+            'Primary Project Atlas owner. Seeded for project ownership continuity.',
+      ),
+      if (seedSystemActors) ...[
+        const _ContactSeed(
+          id: 'contact_system_atlas',
+          name: 'Atlas',
+          title: 'Project Atlas system actor',
+          notes:
+              'System actor used for app-originated project updates and logs.',
+        ),
+        const _ContactSeed(
+          id: 'contact_system_atlas_agent',
+          name: 'Atlas Agent',
+          title: 'AI-assisted project actor',
+          notes:
+              'System actor used when approved Atlas agent proposals update project state.',
+        ),
+        const _ContactSeed(
+          id: 'contact_system_codex',
+          name: 'Codex',
+          title: 'AI coding agent',
+          notes:
+              'System actor used for Codex-assisted code and project updates.',
+        ),
+      ],
+    ];
+    final modelContact = await _currentModelContactSeed();
+    if (seedSystemActors && modelContact != null) {
+      seeds.add(modelContact);
+    }
+
+    var contactsSeeded = 0;
+    String? ownerContactId;
+    for (final seed in seeds) {
+      final contactId = await _upsertContinuityContact(seed);
+      contactsSeeded++;
+      if (seed.name == cleanOwnerName) ownerContactId = contactId;
+    }
+    final duplicateContactsRemoved = await _deduplicateContinuityContacts(
+      seeds,
+    );
+
+    final ownerContact = await db.getContact(ownerContactId!);
+    if (ownerContact == null) {
+      throw StateError('Owner contact was not created: $ownerContactId');
+    }
+
+    final projects = assignVisibleProjectsToOwner
+        ? await db.getProjectsFull()
+        : const <Project>[];
+    var ownersUpdated = 0;
+    var peopleAdded = 0;
+    var peopleUpdated = 0;
+    for (final project in projects) {
+      if (!_sameContactLabel(project.owner, ownerContact)) {
+        await updateProjectMeta(project.id, {
+          'owner': ownerContact.name,
+        }, actor: 'Operator');
+        ownersUpdated++;
+      }
+      if (ensureOwnerPeopleRows) {
+        final people = await db.getProjectPeople(project.id);
+        final existing = _matchingProjectPerson(people, ownerContact);
+        if (existing == null) {
+          await db.addProjectPerson(
+            project.id,
+            ownerContact.name,
+            'Owner',
+            'Accountable',
+          );
+          peopleAdded++;
+          await db.logEvent(
+            area: 'projects',
+            action: 'project_owner_person_added',
+            entityType: 'project',
+            entityId: project.id,
+            outputJson: jsonEncode({
+              'actor': {'type': 'operator', 'displayName': ownerContact.name},
+              'person': ownerContact.name,
+              'role': 'Owner',
+              'authority': 'Accountable',
+            }),
+          );
+        } else if (_isBlank(existing.role) || _isBlank(existing.authority)) {
+          await db.updateProjectPerson(
+            existing.id,
+            existing.name,
+            _isBlank(existing.role) ? 'Owner' : existing.role,
+            _isBlank(existing.authority) ? 'Accountable' : existing.authority,
+          );
+          peopleUpdated++;
+        }
+      }
+    }
+
+    final result = ContactContinuityResult(
+      ownerContactId: ownerContact.id,
+      ownerName: ownerContact.name,
+      contactsSeeded: contactsSeeded,
+      projectsConsidered: projects.length,
+      projectOwnersUpdated: ownersUpdated,
+      projectPeopleAdded: peopleAdded,
+      projectPeopleUpdated: peopleUpdated,
+      duplicateContactsRemoved: duplicateContactsRemoved,
+    );
+    await db.logEvent(
+      area: 'contacts',
+      action: 'contact_continuity_seeded',
+      entityType: 'contact',
+      entityId: ownerContact.id,
+      outputJson: jsonEncode(result.toJson()),
+    );
+    notifyListeners();
+    return result;
+  }
+
+  ProjectPerson? _matchingProjectPerson(
+    List<ProjectPerson> people,
+    Contact contact,
+  ) {
+    for (final person in people) {
+      if (_sameContactLabel(person.name, contact)) return person;
+    }
+    return null;
+  }
+
+  Future<int> _deduplicateContinuityContacts(List<_ContactSeed> seeds) async {
+    var removed = 0;
+    for (final seed in seeds) {
+      final all = await db.getContacts();
+      final matches = all
+          .where(
+            (contact) =>
+                contact.name.trim().toLowerCase() ==
+                seed.name.trim().toLowerCase(),
+          )
+          .toList(growable: false);
+      if (matches.length <= 1) continue;
+      final keep = matches.firstWhere(
+        (contact) => contact.id == seed.id,
+        orElse: () => matches.first,
+      );
+      final mergedNotes = matches
+          .map((contact) => _metaString(contact.notes))
+          .whereType<String>()
+          .fold<String?>(null, (merged, notes) {
+            if (merged == null) return notes;
+            if (merged.contains(notes)) return merged;
+            return '$merged\n\n$notes';
+          });
+      await db.saveContact(
+        id: keep.id,
+        name: keep.name,
+        title: _preferExisting(keep.title, seed.title),
+        phone: keep.phone,
+        alternatePhone: keep.alternatePhone,
+        email: _preferExisting(keep.email, seed.email),
+        website: keep.website,
+        businessName: keep.businessName,
+        notes: _mergeContinuityNotes(mergedNotes, seed.notes),
+        photoPath: keep.photoPath,
+      );
+      for (final duplicate in matches) {
+        if (duplicate.id == keep.id) continue;
+        await db.deleteContact(duplicate.id);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  Future<String> _upsertContinuityContact(_ContactSeed seed) async {
+    final existing = await _findContinuityContact(seed);
+    return db.saveContact(
+      id: existing?.id ?? seed.id,
+      name: seed.name,
+      title: _preferExisting(existing?.title, seed.title),
+      phone: existing?.phone,
+      alternatePhone: existing?.alternatePhone,
+      email: _preferExisting(existing?.email, seed.email),
+      website: existing?.website,
+      businessName: existing?.businessName,
+      notes: _mergeContinuityNotes(existing?.notes, seed.notes),
+      photoPath: existing?.photoPath,
+    );
+  }
+
+  Future<Contact?> _findContinuityContact(_ContactSeed seed) async {
+    final contacts = await db.getContacts();
+    for (final contact in contacts) {
+      if (contact.id == seed.id) return contact;
+    }
+    final seedEmail = _metaString(seed.email)?.toLowerCase();
+    if (seedEmail != null) {
+      for (final contact in contacts) {
+        if (contact.email?.trim().toLowerCase() == seedEmail) {
+          return contact;
+        }
+      }
+    }
+    final seedName = seed.name.trim().toLowerCase();
+    for (final contact in contacts) {
+      if (contact.name.trim().toLowerCase() == seedName) return contact;
+    }
+    return null;
+  }
+
+  Future<_ContactSeed?> _currentModelContactSeed() async {
+    final model =
+        _metaString(await getSetting(AppDb.kProjectAiSummaryModel)) ??
+        _metaString(await getSetting(AppDb.kOllamaModel));
+    if (model == null) return null;
+    return _ContactSeed(
+      id: 'contact_model_${_safeFileStem(model).toLowerCase()}',
+      name: 'Model: $model',
+      title: 'AI model actor',
+      notes:
+          'Model contact seeded for AI summary/change continuity. Current configured model: $model.',
+    );
+  }
+
+  String? _preferExisting(String? existing, String? fallback) =>
+      _metaString(existing) ?? _metaString(fallback);
+
+  String? _mergeContinuityNotes(String? existing, String? seed) {
+    final current = _metaString(existing);
+    final next = _metaString(seed);
+    if (current == null) return next;
+    if (next == null || current.contains(next)) return current;
+    return '$current\n\n$next';
+  }
 
   Future<String> saveContact({
     String? id,
@@ -1690,6 +2306,704 @@ class AppState extends ChangeNotifier {
     int limit = 100,
   }) => db.getOpenProjectEnrichmentFindings(projectId: projectId, limit: limit);
 
+  Future<List<ProjectHealthFindingSuppression>>
+  getProjectHealthFindingSuppressions() async {
+    final raw = await db.getMetaString(_projectHealthSuppressionsMetaKey);
+    if (raw == null || raw.trim().isEmpty) {
+      return const <ProjectHealthFindingSuppression>[];
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <ProjectHealthFindingSuppression>[];
+      return decoded
+          .whereType<Map>()
+          .map(
+            (item) => ProjectHealthFindingSuppression.fromJson(
+              Map<String, Object?>.from(item),
+            ),
+          )
+          .where((item) => item.fingerprint.trim().isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      return const <ProjectHealthFindingSuppression>[];
+    }
+  }
+
+  Future<void> clearProjectHealthFindingSuppression(
+    String fingerprint, {
+    String actor = 'Operator',
+  }) async {
+    final target = fingerprint.trim();
+    if (target.isEmpty) return;
+    final suppressions = await getProjectHealthFindingSuppressions();
+    final remaining = suppressions
+        .where((item) => item.fingerprint != target)
+        .toList(growable: false);
+    if (remaining.length == suppressions.length) return;
+    await _saveProjectHealthFindingSuppressions(remaining);
+    await db.logEvent(
+      area: 'project_health',
+      action: 'project_health_finding_suppression_cleared',
+      entityType: 'project_health_suppression',
+      entityId: target,
+      outputJson: jsonEncode({'actor': actor, 'fingerprint': target}),
+    );
+    notifyListeners();
+  }
+
+  Future<ProjectHealthFindingSuppression> suppressProjectHealthFinding({
+    required String findingId,
+    String actor = 'Operator',
+    String? note,
+  }) async {
+    final finding = await db.getProjectEnrichmentFinding(findingId);
+    if (finding == null) {
+      throw StateError('Project health finding not found: $findingId');
+    }
+    final suppression = _suppressionFromFinding(
+      finding,
+      actor: actor,
+      note: note,
+    );
+    final suppressions = await getProjectHealthFindingSuppressions();
+    final byFingerprint = <String, ProjectHealthFindingSuppression>{
+      for (final item in suppressions) item.fingerprint: item,
+      suppression.fingerprint: suppression,
+    };
+    await _saveProjectHealthFindingSuppressions(byFingerprint.values);
+    await db.updateProjectEnrichmentFindingStatus(
+      id: findingId,
+      status: 'suppressed',
+    );
+    await db.refreshProjectEnrichmentRunOpenFindings(finding.runId);
+    await db.logEvent(
+      area: 'project_health',
+      action: 'project_health_finding_suppressed',
+      entityType: finding.projectId == null
+          ? 'project_enrichment_finding'
+          : 'project',
+      entityId: finding.projectId ?? finding.id,
+      inputJson: note,
+      outputJson: jsonEncode({
+        'actor': actor,
+        'findingId': finding.id,
+        'runId': finding.runId,
+        'projectId': finding.projectId,
+        'registryId': finding.registryId,
+        'fingerprint': suppression.fingerprint,
+        'category': finding.category,
+        'title': finding.title,
+        'suppressedAt': suppression.suppressedAt.toIso8601String(),
+      }),
+    );
+    notifyListeners();
+    return suppression;
+  }
+
+  Future<List<ProjectHealthFindingSuppression>> suppressProjectHealthFindings({
+    required Iterable<String> findingIds,
+    String actor = 'Operator',
+    String? note,
+  }) async {
+    final ids = findingIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (ids.isEmpty) return const <ProjectHealthFindingSuppression>[];
+    final suppressions = <ProjectHealthFindingSuppression>[];
+    final runIds = <String>{};
+    final existing = await getProjectHealthFindingSuppressions();
+    final byFingerprint = <String, ProjectHealthFindingSuppression>{
+      for (final item in existing) item.fingerprint: item,
+    };
+    for (final id in ids) {
+      final finding = await db.getProjectEnrichmentFinding(id);
+      if (finding == null) {
+        throw StateError('Project health finding not found: $id');
+      }
+      final suppression = _suppressionFromFinding(
+        finding,
+        actor: actor,
+        note: note,
+      );
+      byFingerprint[suppression.fingerprint] = suppression;
+      suppressions.add(suppression);
+      runIds.add(finding.runId);
+      await db.updateProjectEnrichmentFindingStatus(
+        id: finding.id,
+        status: 'suppressed',
+      );
+    }
+    await _saveProjectHealthFindingSuppressions(byFingerprint.values);
+    for (final runId in runIds) {
+      await db.refreshProjectEnrichmentRunOpenFindings(runId);
+    }
+    await db.logEvent(
+      area: 'project_health',
+      action: 'project_health_findings_batch_suppressed',
+      entityType: 'project_health_suppression',
+      entityId: suppressions.first.fingerprint,
+      inputJson: note,
+      outputJson: jsonEncode({
+        'actor': actor,
+        'findingIds': ids.toList(),
+        'fingerprints': suppressions
+            .map((item) => item.fingerprint)
+            .toList(growable: false),
+        'suppressedAt': DateTime.now().toIso8601String(),
+      }),
+    );
+    notifyListeners();
+    return suppressions;
+  }
+
+  Future<void> _saveProjectHealthFindingSuppressions(
+    Iterable<ProjectHealthFindingSuppression> suppressions,
+  ) {
+    final rows = suppressions.toList(growable: false)
+      ..sort((a, b) => a.suppressedAt.compareTo(b.suppressedAt));
+    return db.setMetaString(
+      _projectHealthSuppressionsMetaKey,
+      jsonEncode(rows.map((item) => item.toJson()).toList(growable: false)),
+    );
+  }
+
+  Future<ProjectEnrichmentFinding> dismissProjectEnrichmentFinding({
+    required String findingId,
+    bool ignoreRegistryEntry = false,
+    String actor = 'Operator',
+    String? note,
+  }) async {
+    final finding = await db.getProjectEnrichmentFinding(findingId);
+    if (finding == null) {
+      throw StateError('Project health finding not found: $findingId');
+    }
+    final now = DateTime.now();
+    ProjectRegistryEntry? ignoredRegistry;
+    if (ignoreRegistryEntry) {
+      final registryId = finding.registryId;
+      if (registryId == null || registryId.trim().isEmpty) {
+        throw StateError('This finding is not linked to a registry row.');
+      }
+      ignoredRegistry = await db.getProjectRegistryEntry(registryId);
+      if (ignoredRegistry == null) {
+        throw StateError('Registry row not found: $registryId');
+      }
+      final auditNote = [
+        ignoredRegistry.notes?.trim(),
+        'Ignored from Project Health by $actor at ${now.toIso8601String()}: ${finding.title}${note == null || note.trim().isEmpty ? '' : ' - ${note.trim()}'}',
+      ].where((line) => line != null && line.isNotEmpty).join('\n');
+      await db.updateProjectRegistryEntryReviewState(
+        id: registryId,
+        reviewState: 'ignored',
+        notes: auditNote,
+        clearAtlasProjectId: true,
+      );
+    }
+    await db.updateProjectEnrichmentFindingStatus(
+      id: findingId,
+      status: 'dismissed',
+    );
+    await db.refreshProjectEnrichmentRunOpenFindings(finding.runId);
+    await db.logEvent(
+      area: 'project_health',
+      action: ignoreRegistryEntry
+          ? 'project_health_registry_finding_ignored'
+          : 'project_health_finding_dismissed',
+      entityType: finding.projectId == null
+          ? 'project_enrichment_finding'
+          : 'project',
+      entityId: finding.projectId ?? finding.id,
+      inputJson: note,
+      outputJson: jsonEncode({
+        'actor': actor,
+        'findingId': finding.id,
+        'runId': finding.runId,
+        'projectId': finding.projectId,
+        'registryId': finding.registryId,
+        'ignoredRegistry': ignoredRegistry?.toJson(),
+        'category': finding.category,
+        'severity': finding.severity,
+        'title': finding.title,
+        'dismissedAt': now.toIso8601String(),
+      }),
+    );
+    notifyListeners();
+    final updated = await db.getProjectEnrichmentFinding(findingId);
+    return updated ?? finding;
+  }
+
+  Future<List<ProjectEnrichmentFinding>> dismissProjectEnrichmentFindings({
+    required Iterable<String> findingIds,
+    String actor = 'Operator',
+    String? note,
+  }) async {
+    final ids = findingIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (ids.isEmpty) return const <ProjectEnrichmentFinding>[];
+    final dismissed = <ProjectEnrichmentFinding>[];
+    final runIds = <String>{};
+    final now = DateTime.now();
+    for (final id in ids) {
+      final finding = await db.getProjectEnrichmentFinding(id);
+      if (finding == null) {
+        throw StateError('Project health finding not found: $id');
+      }
+      await db.updateProjectEnrichmentFindingStatus(
+        id: id,
+        status: 'dismissed',
+      );
+      runIds.add(finding.runId);
+      await db.logEvent(
+        area: 'project_health',
+        action: 'project_health_finding_dismissed',
+        entityType: finding.projectId == null
+            ? 'project_enrichment_finding'
+            : 'project',
+        entityId: finding.projectId ?? finding.id,
+        inputJson: note,
+        outputJson: jsonEncode({
+          'actor': actor,
+          'findingId': finding.id,
+          'runId': finding.runId,
+          'projectId': finding.projectId,
+          'registryId': finding.registryId,
+          'category': finding.category,
+          'severity': finding.severity,
+          'title': finding.title,
+          'dismissedAt': now.toIso8601String(),
+        }),
+      );
+      dismissed.add(await db.getProjectEnrichmentFinding(id) ?? finding);
+    }
+    for (final runId in runIds) {
+      await db.refreshProjectEnrichmentRunOpenFindings(runId);
+    }
+    if (ids.length > 1) {
+      await db.logEvent(
+        area: 'project_health',
+        action: 'project_health_findings_batch_dismissed',
+        entityType: 'project_enrichment_run',
+        entityId: dismissed.first.runId,
+        inputJson: note,
+        outputJson: jsonEncode({
+          'actor': actor,
+          'findingIds': ids.toList(),
+          'dismissedAt': now.toIso8601String(),
+        }),
+      );
+    }
+    notifyListeners();
+    return dismissed;
+  }
+
+  Future<ProjectEnrichmentFinding> markProjectHealthRegistryFindingReviewed({
+    required String findingId,
+    String actor = 'Operator',
+    String? note,
+  }) async {
+    final findings = await markProjectHealthRegistryFindingsReviewed(
+      findingIds: [findingId],
+      actor: actor,
+      note: note,
+    );
+    if (findings.isEmpty) {
+      throw StateError('Project health finding was not reviewed: $findingId');
+    }
+    return findings.single;
+  }
+
+  Future<List<ProjectEnrichmentFinding>>
+  markProjectHealthRegistryFindingsReviewed({
+    required Iterable<String> findingIds,
+    String actor = 'Operator',
+    String? note,
+  }) async {
+    final ids = findingIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (ids.isEmpty) return const <ProjectEnrichmentFinding>[];
+    final reviewed = <ProjectEnrichmentFinding>[];
+    final runIds = <String>{};
+    final now = DateTime.now();
+    for (final id in ids) {
+      final finding = await db.getProjectEnrichmentFinding(id);
+      if (finding == null) {
+        throw StateError('Project health finding not found: $id');
+      }
+      if (finding.category != 'registry' ||
+          finding.registryId == null ||
+          finding.registryId!.trim().isEmpty ||
+          !finding.title.toLowerCase().contains('still needs review')) {
+        throw StateError(
+          'Only needs-review registry findings can be marked reviewed.',
+        );
+      }
+      final registry = await db.getProjectRegistryEntry(finding.registryId!);
+      if (registry == null) {
+        throw StateError('Registry row not found: ${finding.registryId}');
+      }
+      final linkedProjectId = registry.atlasProjectId?.trim();
+      final nextReviewState = linkedProjectId == null || linkedProjectId.isEmpty
+          ? 'accepted'
+          : 'linked';
+      final auditNote = [
+        registry.notes?.trim(),
+        'Marked reviewed from Project Health by $actor at ${now.toIso8601String()}: ${finding.title}${note == null || note.trim().isEmpty ? '' : ' - ${note.trim()}'}',
+      ].where((line) => line != null && line.isNotEmpty).join('\n');
+      await db.updateProjectRegistryEntryReviewState(
+        id: registry.id,
+        reviewState: nextReviewState,
+        notes: auditNote,
+      );
+      await db.updateProjectEnrichmentFindingStatus(
+        id: finding.id,
+        status: 'dismissed',
+      );
+      runIds.add(finding.runId);
+      await db.logEvent(
+        area: 'project_health',
+        action: 'project_health_registry_finding_reviewed',
+        entityType: linkedProjectId == null || linkedProjectId.isEmpty
+            ? 'project_registry'
+            : 'project',
+        entityId: linkedProjectId == null || linkedProjectId.isEmpty
+            ? registry.id
+            : linkedProjectId,
+        inputJson: note,
+        outputJson: jsonEncode({
+          'actor': actor,
+          'findingId': finding.id,
+          'runId': finding.runId,
+          'registryId': registry.id,
+          'projectId': linkedProjectId,
+          'oldReviewState': registry.reviewState,
+          'newReviewState': nextReviewState,
+          'title': finding.title,
+          'reviewedAt': now.toIso8601String(),
+        }),
+      );
+      reviewed.add(await db.getProjectEnrichmentFinding(id) ?? finding);
+    }
+    for (final runId in runIds) {
+      await db.refreshProjectEnrichmentRunOpenFindings(runId);
+    }
+    if (ids.length > 1) {
+      await db.logEvent(
+        area: 'project_health',
+        action: 'project_health_registry_findings_batch_reviewed',
+        entityType: 'project_enrichment_run',
+        entityId: reviewed.first.runId,
+        inputJson: note,
+        outputJson: jsonEncode({
+          'actor': actor,
+          'findingIds': ids.toList(),
+          'reviewedAt': now.toIso8601String(),
+        }),
+      );
+    }
+    notifyListeners();
+    return reviewed;
+  }
+
+  Future<String> linkProjectHealthRegistryFindingToProject({
+    required String findingId,
+    required String projectId,
+    String actor = 'Operator',
+  }) async {
+    final finding = await _requireProjectHealthRegistryFinding(findingId);
+    final registryId = finding.registryId!;
+    final updatedProjectId = await updateExistingProjectFromRegistryEntry(
+      registryId,
+      projectId,
+      importDocs: false,
+      refresh: false,
+    );
+    await db.updateProjectEnrichmentFindingStatus(
+      id: findingId,
+      status: 'dismissed',
+    );
+    await db.refreshProjectEnrichmentRunOpenFindings(finding.runId);
+    await db.logEvent(
+      area: 'project_health',
+      action: 'project_health_registry_finding_linked',
+      entityType: 'project',
+      entityId: updatedProjectId,
+      inputJson: findingId,
+      outputJson: jsonEncode({
+        'actor': actor,
+        'findingId': finding.id,
+        'runId': finding.runId,
+        'registryId': registryId,
+        'projectId': updatedProjectId,
+        'title': finding.title,
+        'resolvedAt': DateTime.now().toIso8601String(),
+      }),
+    );
+    notifyListeners();
+    return updatedProjectId;
+  }
+
+  Future<String> importProjectHealthRegistryFindingAsProject({
+    required String findingId,
+    String actor = 'Operator',
+  }) async {
+    final finding = await _requireProjectHealthRegistryFinding(findingId);
+    final registryId = finding.registryId!;
+    final projectId = await importProjectRegistryEntryAsProject(
+      registryId,
+      importDocs: false,
+      refresh: false,
+    );
+    await db.updateProjectEnrichmentFindingStatus(
+      id: findingId,
+      status: 'dismissed',
+    );
+    await db.refreshProjectEnrichmentRunOpenFindings(finding.runId);
+    await db.logEvent(
+      area: 'project_health',
+      action: 'project_health_registry_finding_imported',
+      entityType: 'project',
+      entityId: projectId,
+      inputJson: findingId,
+      outputJson: jsonEncode({
+        'actor': actor,
+        'findingId': finding.id,
+        'runId': finding.runId,
+        'registryId': registryId,
+        'projectId': projectId,
+        'title': finding.title,
+        'resolvedAt': DateTime.now().toIso8601String(),
+      }),
+    );
+    notifyListeners();
+    return projectId;
+  }
+
+  Future<ProjectRegistryEntry> replaceProjectHealthRegistryFindingFolder({
+    required String findingId,
+    required String selectedPath,
+    String actor = 'Operator',
+  }) async {
+    final finding = await _requireProjectHealthRegistryFinding(findingId);
+    final registryId = finding.registryId!;
+    final registry = await db.getProjectRegistryEntry(registryId);
+    if (registry == null) {
+      throw StateError('Registry row not found: $registryId');
+    }
+    final folderPath = selectedPath.trim();
+    if (folderPath.isEmpty) {
+      throw ArgumentError('Choose a project folder.');
+    }
+    if (isUnsafeOperationsScanRoot(folderPath)) {
+      throw ArgumentError('Choose a project folder, not a drive root.');
+    }
+    if (!Directory(folderPath).existsSync()) {
+      throw FileSystemException('Project folder not found', folderPath);
+    }
+    final existingForPath = await db.getProjectRegistryByPath(folderPath);
+    if (existingForPath != null && existingForPath.id != registry.id) {
+      throw StateError(
+        'That folder is already registered as ${existingForPath.displayName}.',
+      );
+    }
+
+    final gitReport = await const LocalGitVisibilityService().inspect(
+      folderPath,
+    );
+    final now = DateTime.now();
+    final notes = [
+      registry.notes?.trim(),
+      'Folder replaced from Project Health by $actor at ${now.toIso8601String()}: ${registry.localPath} -> $folderPath',
+    ].where((line) => line != null && line.isNotEmpty).join('\n');
+    final linkedProjectId = registry.atlasProjectId?.trim();
+    final updated = await db.updateProjectRegistryEntryLocalPath(
+      id: registry.id,
+      localPath: folderPath,
+      gitRoot: gitReport.gitRoot,
+      reviewState: linkedProjectId == null || linkedProjectId.isEmpty
+          ? 'accepted'
+          : 'linked',
+      notes: notes,
+    );
+    if (linkedProjectId != null && linkedProjectId.isNotEmpty) {
+      await db.updateProjectMeta(linkedProjectId, {
+        'scopeIncluded': 'Local project root: ${updated.localPath}',
+      });
+    }
+    await db.updateProjectEnrichmentFindingStatus(
+      id: findingId,
+      status: 'dismissed',
+    );
+    await db.refreshProjectEnrichmentRunOpenFindings(finding.runId);
+    await db.logEvent(
+      area: 'project_health',
+      action: 'project_health_registry_folder_replaced',
+      entityType: linkedProjectId == null || linkedProjectId.isEmpty
+          ? 'project_registry'
+          : 'project',
+      entityId: linkedProjectId == null || linkedProjectId.isEmpty
+          ? registry.id
+          : linkedProjectId,
+      inputJson: registry.localPath,
+      outputJson: jsonEncode({
+        'actor': actor,
+        'findingId': finding.id,
+        'runId': finding.runId,
+        'registryId': registry.id,
+        'projectId': linkedProjectId,
+        'oldLocalPath': registry.localPath,
+        'newLocalPath': updated.localPath,
+        'gitRoot': updated.gitRoot,
+        'title': finding.title,
+        'resolvedAt': now.toIso8601String(),
+      }),
+    );
+    notifyListeners();
+    return updated;
+  }
+
+  Future<ProjectEnrichmentFinding> _requireProjectHealthRegistryFinding(
+    String findingId,
+  ) async {
+    final finding = await db.getProjectEnrichmentFinding(findingId);
+    if (finding == null) {
+      throw StateError('Project health finding not found: $findingId');
+    }
+    final registryId = finding.registryId;
+    if (registryId == null || registryId.trim().isEmpty) {
+      throw StateError('This finding is not linked to a registry row.');
+    }
+    return finding;
+  }
+
+  ProjectHealthFindingSuppression _suppressionFromFinding(
+    ProjectEnrichmentFinding finding, {
+    required String actor,
+    String? note,
+  }) {
+    final evidence = finding.evidence;
+    return ProjectHealthFindingSuppression(
+      fingerprint: _projectHealthFindingFingerprint(
+        projectId: finding.projectId,
+        registryId: finding.registryId,
+        category: finding.category,
+        title: finding.title,
+        detail: finding.detail,
+        evidence: evidence,
+      ),
+      projectId: finding.projectId,
+      registryId: finding.registryId,
+      category: finding.category,
+      title: finding.title,
+      detail: finding.detail,
+      localPath: _cleanNullableString(evidence['localPath']),
+      actor: actor,
+      note: note,
+      suppressedAt: DateTime.now(),
+    );
+  }
+
+  String _fingerprintForFindingDraft(_ProjectEnrichmentFindingDraft finding) {
+    return _projectHealthFindingFingerprint(
+      projectId: finding.projectId,
+      registryId: finding.registryId,
+      category: finding.category,
+      title: finding.title,
+      detail: finding.detail,
+      evidence: finding.evidence,
+    );
+  }
+
+  String _projectHealthFindingFingerprint({
+    required String? projectId,
+    required String? registryId,
+    required String category,
+    required String title,
+    String? detail,
+    Map<String, Object?> evidence = const {},
+  }) {
+    final localPath = evidence['localPath']?.toString();
+    final remoteUrl = evidence['remoteUrl']?.toString();
+    final scope = [
+      'project:${projectId?.trim() ?? ''}',
+      'registry:${registryId?.trim() ?? ''}',
+      'path:${_normalizeSuppressionPart(localPath)}',
+      'remote:${_normalizeSuppressionPart(remoteUrl)}',
+    ].join('|');
+    return [
+      _normalizeSuppressionPart(category),
+      _normalizeSuppressionPart(title),
+      _normalizeSuppressionPart(detail),
+      scope,
+    ].join('::');
+  }
+
+  String _normalizeSuppressionPart(String? value) {
+    return (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+  }
+
+  Future<String> buildProjectHealthRunExportJson(String runId) async {
+    final run = await db.getProjectEnrichmentRun(runId);
+    if (run == null) {
+      throw StateError('Project health run not found: $runId');
+    }
+    final steps = await db.getProjectEnrichmentStepsForRun(runId);
+    final findings = await db.getProjectEnrichmentFindingsForRun(runId);
+    final proposals = await db.getProjectEnrichmentProposalsForRun(runId);
+    final warningGroups = groupProjectHealthWarnings(run.warnings);
+    final suppressions = await getProjectHealthFindingSuppressions();
+    final coverage = run.output['coverage'];
+    final suppressedFindings = coverage is Map
+        ? int.tryParse('${coverage['suppressedFindings'] ?? 0}') ?? 0
+        : 0;
+    final findingsByStatus = <String, int>{};
+    final findingsByCategory = <String, int>{};
+    for (final finding in findings) {
+      findingsByStatus[finding.status] =
+          (findingsByStatus[finding.status] ?? 0) + 1;
+      findingsByCategory[finding.category] =
+          (findingsByCategory[finding.category] ?? 0) + 1;
+    }
+    return const JsonEncoder.withIndent('  ').convert({
+      'schema': 'project_atlas_project_health_run_v1',
+      'exportedAt': DateTime.now().toIso8601String(),
+      'run': run.toJson(),
+      'summary': {
+        'steps': steps.length,
+        'findings': findings.length,
+        'openFindings': findingsByStatus['open'] ?? 0,
+        'findingsByStatus': findingsByStatus,
+        'findingsByCategory': findingsByCategory,
+        'warnings': run.warnings.length,
+        'warningGroups': warningGroups.length,
+        'suppressedFindings': suppressedFindings,
+        'activeSuppressions': suppressions.length,
+        'proposals': proposals.length,
+      },
+      'warningGroups': warningGroups.map((group) => group.toJson()).toList(),
+      'steps': steps.map((step) => step.toJson()).toList(),
+      'findings': findings.map((finding) => finding.toJson()).toList(),
+      'proposals': proposals.map((proposal) => proposal.toJson()).toList(),
+    });
+  }
+
+  Future<String> saveProjectHealthRunExportToAppFolder(String runId) async {
+    final root = await ensureOperationsScansFolder();
+    final path = p.join(
+      root.path,
+      'project_health',
+      '${_safeFileStem(runId)}_project_health.json',
+    );
+    await File(
+      path,
+    ).writeAsString(await buildProjectHealthRunExportJson(runId));
+    return path;
+  }
+
   void _setProjectEnrichmentStatus(
     String status, {
     int? current,
@@ -1890,6 +3204,21 @@ class AppState extends ChangeNotifier {
         current: considered,
         total: linked.length,
       );
+      final localPath = entry.localPath.trim();
+      if (_looksLikeRemotePath(localPath)) {
+        skipped++;
+        warnings.add(
+          '${entry.displayName}: identity update skipped because the registered local path is a remote URL.',
+        );
+        continue;
+      }
+      if (!_directoryExistsSafely(localPath)) {
+        skipped++;
+        warnings.add(
+          '${entry.displayName}: identity update skipped because the registered local path does not exist: ${entry.localPath}',
+        );
+        continue;
+      }
       final project = await db.getProjectFull(projectId);
       if (project == null) {
         skipped++;
@@ -2067,29 +3396,75 @@ class AppState extends ChangeNotifier {
     return single == null ? const [] : [single];
   }
 
+  Set<String>? _normalizeProjectIdScope(Iterable<String>? projectIds) {
+    if (projectIds == null) return null;
+    return projectIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  bool _isProjectInScope(String? projectId, Set<String>? scopedProjectIds) {
+    final id = projectId?.trim();
+    if (scopedProjectIds == null) return true;
+    return id != null && id.isNotEmpty && scopedProjectIds.contains(id);
+  }
+
+  List<String>? _sortedProjectIdScope(Set<String>? scopedProjectIds) {
+    if (scopedProjectIds == null) return null;
+    return scopedProjectIds.toList(growable: false)..sort();
+  }
+
+  List<ProjectRegistryEntry> _filterProjectRegistryForScope(
+    List<ProjectRegistryEntry> registry,
+    Set<String>? scopedProjectIds,
+  ) {
+    if (scopedProjectIds == null) return registry;
+    return registry
+        .where(
+          (entry) => _isProjectInScope(entry.atlasProjectId, scopedProjectIds),
+        )
+        .toList(growable: false);
+  }
+
   Future<ProjectEnrichmentRunResult> runProjectEnrichment({
     bool refreshLinkedProjects = true,
     bool includeSourceDocuments = true,
     bool refreshSummaries = false,
     bool forceSummaries = false,
     bool includeLibraryInSummaries = true,
+    bool analyzeOnly = false,
+    bool refreshIdentity = true,
+    bool createProposals = true,
+    Iterable<String>? projectIds,
     Duration betweenProjects = Duration.zero,
   }) async {
     if (_projectEnrichmentRunning) {
       throw StateError('Project enrichment run is already running.');
     }
+    final scopedProjectIds = _normalizeProjectIdScope(projectIds);
+    final shouldRefreshLinkedProjects = refreshLinkedProjects && !analyzeOnly;
+    final shouldRefreshIdentity = refreshIdentity && !analyzeOnly;
+    final shouldCreateProposals = createProposals && !analyzeOnly;
     final startedAt = DateTime.now();
     _projectEnrichmentRunning = true;
     _projectEnrichmentStartedAt = startedAt;
-    _projectEnrichmentStatus = 'Starting enrichment run.';
+    _projectEnrichmentStatus = analyzeOnly
+        ? 'Starting project health analysis.'
+        : 'Starting enrichment run.';
     _projectEnrichmentProgressCurrent = null;
     _projectEnrichmentProgressTotal = null;
     notifyListeners();
 
     final scope = {
       'schema': 'project_atlas_enrichment_run_v1',
-      'refreshLinkedProjects': refreshLinkedProjects,
+      'mode': analyzeOnly ? 'analyze' : 'apply',
+      'refreshLinkedProjects': shouldRefreshLinkedProjects,
       'includeSourceDocuments': includeSourceDocuments,
+      'refreshIdentity': shouldRefreshIdentity,
+      'createProposals': shouldCreateProposals,
+      if (scopedProjectIds != null)
+        'projectIds': _sortedProjectIdScope(scopedProjectIds),
       'projectAiSummariesEnabled': projectAiSummariesEnabled,
       if (refreshSummaries) 'requestedRefreshSummaries': true,
       if (forceSummaries) 'requestedForceSummaries': true,
@@ -2190,8 +3565,12 @@ class AppState extends ChangeNotifier {
         title: 'Registry agent: read local project registry',
       );
       final registryBefore = await db.getProjectRegistry();
-      registryEntries = registryBefore.length;
-      linkedProjects = registryBefore
+      final scopedRegistryBefore = _filterProjectRegistryForScope(
+        registryBefore,
+        scopedProjectIds,
+      );
+      registryEntries = scopedRegistryBefore.length;
+      linkedProjects = scopedRegistryBefore
           .where((entry) => (entry.atlasProjectId ?? '').isNotEmpty)
           .length;
       await finishTrackedStep(
@@ -2201,7 +3580,8 @@ class AppState extends ChangeNotifier {
         output: {
           'registryEntries': registryEntries,
           'linkedProjects': linkedProjects,
-          'unlinkedRegistryEntries': registryBefore
+          'scopeProjectIds': _sortedProjectIdScope(scopedProjectIds),
+          'unlinkedRegistryEntries': scopedRegistryBefore
               .where(
                 (entry) =>
                     entry.reviewState != 'ignored' &&
@@ -2211,7 +3591,7 @@ class AppState extends ChangeNotifier {
         },
       );
 
-      if (refreshLinkedProjects) {
+      if (shouldRefreshLinkedProjects) {
         final refreshStepId = await startTrackedStep(
           worker: 'documents_media',
           title:
@@ -2219,6 +3599,7 @@ class AppState extends ChangeNotifier {
         );
         refreshResult = await refreshLinkedLocalProjects(
           includeSourceDocuments: includeSourceDocuments,
+          projectIds: scopedProjectIds,
           betweenProjects: betweenProjects,
           onStatus: _setProjectEnrichmentStatus,
         );
@@ -2253,87 +3634,135 @@ class AppState extends ChangeNotifier {
       } else {
         final refreshStepId = await startTrackedStep(
           worker: 'documents_media',
-          title: 'Documents/media agent: skipped by run scope',
+          title: analyzeOnly
+              ? 'Documents/media agent: skipped for analysis'
+              : 'Documents/media agent: skipped by run scope',
         );
         await finishTrackedStep(
           refreshStepId,
           status: 'skipped',
-          output: {'reason': 'refreshLinkedProjects=false'},
+          output: {
+            'reason': analyzeOnly
+                ? 'analyzeOnly=true'
+                : 'refreshLinkedProjects=false',
+          },
         );
       }
 
       final identityStepId = await startTrackedStep(
         worker: 'identity',
-        title: 'Identity agent: apply deterministic project metadata and tags',
+        title: shouldRefreshIdentity
+            ? 'Identity agent: apply deterministic project metadata and tags'
+            : 'Identity agent: skipped by run scope',
       );
-      final identityResult = await _refreshProjectIdentityRecords(
-        await db.getProjectRegistry(),
-        onStatus: _setProjectEnrichmentStatus,
-      );
-      identityConsidered = identityResult.considered;
-      identityUpdated = identityResult.updated;
-      identityUnchanged = identityResult.unchanged;
-      identitySkipped = identityResult.skipped;
-      updatedItems += identityUpdated;
-      unchangedItems += identityUnchanged;
-      skippedItems += identitySkipped;
-      warnings.addAll(identityResult.warnings);
-      await finishTrackedStep(
-        identityStepId,
-        status: identityResult.skipped > 0
-            ? 'completed_with_warnings'
-            : 'completed',
-        considered: identityResult.considered,
-        updatedItems: identityResult.updated,
-        skippedItems: identityResult.unchanged + identityResult.skipped,
-        failedItems: identityResult.skipped,
-        warnings: identityResult.warnings,
-        output: {
-          'autoApplied': true,
-          'updatedProjects': identityResult.updated,
-          'unchangedProjects': identityResult.unchanged,
-          'skippedProjects': identityResult.skipped,
-          'sources': [
-            '.project/launchpad.json',
-            'CURRENT_STATE.md',
-            'README.md',
-            'local git observation',
-          ],
-        },
-      );
-      _setProjectEnrichmentStatus(
-        'Identity update complete: ${identityResult.updated} updated, ${identityResult.unchanged} unchanged.',
-      );
+      if (shouldRefreshIdentity) {
+        final identityResult = await _refreshProjectIdentityRecords(
+          scopedRegistryBefore,
+          onStatus: _setProjectEnrichmentStatus,
+        );
+        identityConsidered = identityResult.considered;
+        identityUpdated = identityResult.updated;
+        identityUnchanged = identityResult.unchanged;
+        identitySkipped = identityResult.skipped;
+        updatedItems += identityUpdated;
+        unchangedItems += identityUnchanged;
+        skippedItems += identitySkipped;
+        warnings.addAll(identityResult.warnings);
+        await finishTrackedStep(
+          identityStepId,
+          status: identityResult.skipped > 0
+              ? 'completed_with_warnings'
+              : 'completed',
+          considered: identityResult.considered,
+          updatedItems: identityResult.updated,
+          skippedItems: identityResult.unchanged + identityResult.skipped,
+          failedItems: identityResult.skipped,
+          warnings: identityResult.warnings,
+          output: {
+            'autoApplied': true,
+            'updatedProjects': identityResult.updated,
+            'unchangedProjects': identityResult.unchanged,
+            'skippedProjects': identityResult.skipped,
+            'sources': [
+              '.project/launchpad.json',
+              'CURRENT_STATE.md',
+              'README.md',
+              'local git observation',
+            ],
+          },
+        );
+        _setProjectEnrichmentStatus(
+          'Identity update complete: ${identityResult.updated} updated, ${identityResult.unchanged} unchanged.',
+        );
+      } else {
+        await finishTrackedStep(
+          identityStepId,
+          status: 'skipped',
+          output: {
+            'reason': analyzeOnly
+                ? 'analyzeOnly=true'
+                : 'refreshIdentity=false',
+            'autoApplied': false,
+          },
+        );
+      }
 
       final verificationStepId = await startTrackedStep(
         worker: 'verification',
         title: 'Verification agent: audit project completeness',
       );
       final registry = await db.getProjectRegistry();
-      registryEntries = registry.length;
-      linkedProjects = registry
+      final scopedRegistry = _filterProjectRegistryForScope(
+        registry,
+        scopedProjectIds,
+      );
+      registryEntries = scopedRegistry.length;
+      linkedProjects = scopedRegistry
           .where((entry) => (entry.atlasProjectId ?? '').isNotEmpty)
           .length;
-      final projects = await db.getVisibleProjects();
+      final allProjects = await db.getVisibleProjects();
+      final projects = scopedProjectIds == null
+          ? allProjects
+          : allProjects
+                .where((project) => scopedProjectIds.contains(project.id))
+                .toList(growable: false);
       final audit = await _buildProjectEnrichmentAudit(
-        registry: registry,
+        registry: scopedRegistry,
         projects: projects,
       );
+      final suppressions = await getProjectHealthFindingSuppressions();
+      final suppressedFingerprints = suppressions
+          .map((item) => item.fingerprint)
+          .toSet();
+      final activeFindings = audit.findings
+          .where(
+            (finding) => !suppressedFingerprints.contains(
+              _fingerprintForFindingDraft(finding),
+            ),
+          )
+          .toList(growable: false);
+      final suppressedFindingCount =
+          audit.findings.length - activeFindings.length;
+      final verificationOutput = {
+        ...audit.coverage,
+        'suppressedFindings': suppressedFindingCount,
+      };
       await finishTrackedStep(
         verificationStepId,
-        status: audit.findings.isEmpty
+        status: activeFindings.isEmpty
             ? 'completed'
             : 'completed_with_findings',
         considered: projects.length,
-        findings: audit.findings.length,
-        output: audit.coverage,
+        findings: activeFindings.length,
+        skippedItems: suppressedFindingCount,
+        output: verificationOutput,
       );
 
       _setProjectEnrichmentStatus(
-        'Saving ${audit.findings.length} enrichment findings.',
+        'Saving ${activeFindings.length} enrichment findings.',
       );
-      for (var i = 0; i < audit.findings.length; i++) {
-        final finding = audit.findings[i];
+      for (var i = 0; i < activeFindings.length; i++) {
+        final finding = activeFindings[i];
         await db.addProjectEnrichmentFinding(
           id: 'finding_${runId}_$i',
           runId: runId,
@@ -2350,35 +3779,57 @@ class AppState extends ChangeNotifier {
       savedFindings = await db.getProjectEnrichmentFindingsForRun(runId);
       final correctionStepId = await startTrackedStep(
         worker: 'correction',
-        title: 'Correction agent: draft reviewable follow-up proposals',
+        title: shouldCreateProposals
+            ? 'Correction agent: draft reviewable follow-up proposals'
+            : 'Correction agent: skipped by run scope',
       );
-      final proposalCount = await _createCorrectionProposalsForFindings(
-        runId,
-        audit.findings,
-      );
-      savedProposals = await db.getProjectEnrichmentProposalsForRun(runId);
-      await finishTrackedStep(
-        correctionStepId,
-        status: proposalCount == 0 ? 'completed' : 'completed_with_proposals',
-        considered: audit.findings.length,
-        proposals: proposalCount,
-        output: {
-          'policy': 'proposal_only',
-          'autoApplied': false,
-          'proposalCap': _projectEnrichmentProposalCap,
-        },
-      );
+      if (shouldCreateProposals) {
+        final proposalCount = await _createCorrectionProposalsForFindings(
+          runId,
+          activeFindings,
+        );
+        savedProposals = await db.getProjectEnrichmentProposalsForRun(runId);
+        await finishTrackedStep(
+          correctionStepId,
+          status: proposalCount == 0 ? 'completed' : 'completed_with_proposals',
+          considered: activeFindings.length,
+          proposals: proposalCount,
+          output: {
+            'policy': 'proposal_only',
+            'autoApplied': false,
+            'proposalCap': _projectEnrichmentProposalCap,
+          },
+        );
+      } else {
+        await finishTrackedStep(
+          correctionStepId,
+          status: 'skipped',
+          considered: activeFindings.length,
+          output: {
+            'reason': analyzeOnly
+                ? 'analyzeOnly=true'
+                : 'createProposals=false',
+            'policy': 'analysis_only',
+            'autoApplied': false,
+          },
+        );
+      }
       savedSteps = await db.getProjectEnrichmentStepsForRun(runId);
       final openFindings = savedFindings
           .where((finding) => finding.status == 'open')
           .length;
-      final status = failedProjects > 0
+      final status = analyzeOnly
+          ? openFindings > 0 || warnings.isNotEmpty
+                ? 'analyzed_with_findings'
+                : 'analyzed'
+          : failedProjects > 0
           ? 'completed_with_errors'
           : openFindings > 0 || warnings.isNotEmpty
           ? 'completed_with_findings'
           : 'completed';
       final output = {
-        'coverage': audit.coverage,
+        'mode': analyzeOnly ? 'analyze' : 'apply',
+        'coverage': verificationOutput,
         'refresh': refreshResult == null
             ? null
             : {
@@ -2400,7 +3851,7 @@ class AppState extends ChangeNotifier {
         'workers': savedSteps.map((step) => step.toJson()).toList(),
         'proposals': {
           'count': savedProposals.length,
-          'policy': 'proposal_only',
+          'policy': shouldCreateProposals ? 'proposal_only' : 'analysis_only',
           'autoApplied': false,
         },
       };
@@ -2601,15 +4052,49 @@ class AppState extends ChangeNotifier {
     for (final entry in registry) {
       final linkedProjectId = entry.atlasProjectId?.trim();
       if (entry.reviewState == 'ignored') continue;
-      if (linkedProjectId == null || linkedProjectId.isEmpty) {
+      final localPath = entry.localPath.trim();
+      final pathIsRemote = _looksLikeRemotePath(localPath);
+      final pathExists = !pathIsRemote && _directoryExistsSafely(localPath);
+      final pathHasProblem = pathIsRemote || !pathExists;
+      if (pathIsRemote) {
         addFinding(
           registryEntry: entry,
-          severity: 'warning',
+          severity: 'info',
           category: 'registry',
-          title: 'Registered local project is not linked to an Atlas project.',
-          detail:
-              'Link it to an existing project, import it as a new project, or mark it ignored.',
+          title: 'Registered local path is a remote URL, not a local folder.',
+          detail: entry.localPath,
+          evidence: {'pathKind': 'remote_url'},
         );
+      } else if (!pathExists) {
+        addFinding(
+          registryEntry: entry,
+          severity: 'error',
+          category: 'registry',
+          title: 'Registered local path does not exist.',
+          detail: entry.localPath,
+        );
+      }
+      if (linkedProjectId == null || linkedProjectId.isEmpty) {
+        if (!pathHasProblem && entry.reviewState == 'needs_review') {
+          addFinding(
+            registryEntry: entry,
+            severity: 'warning',
+            category: 'registry',
+            title: 'Registered local project still needs review.',
+            detail:
+                'Review it, link it to an existing project, import it as a new project, or mark it ignored.',
+          );
+        } else if (!pathHasProblem) {
+          addFinding(
+            registryEntry: entry,
+            severity: 'warning',
+            category: 'registry',
+            title:
+                'Registered local project is not linked to an Atlas project.',
+            detail:
+                'Link it to an existing project, import it as a new project, or mark it ignored.',
+          );
+        }
       } else if (!projectIds.contains(linkedProjectId)) {
         addFinding(
           registryEntry: entry,
@@ -2618,22 +4103,14 @@ class AppState extends ChangeNotifier {
           title: 'Registry row points to a missing Atlas project.',
           detail: linkedProjectId,
         );
-      }
-      if (entry.reviewState == 'needs_review') {
+      } else if (!pathHasProblem && entry.reviewState == 'needs_review') {
         addFinding(
           registryEntry: entry,
           severity: 'warning',
           category: 'registry',
           title: 'Registered local project still needs review.',
-        );
-      }
-      if (!Directory(entry.localPath).existsSync()) {
-        addFinding(
-          registryEntry: entry,
-          severity: 'error',
-          category: 'registry',
-          title: 'Registered local path does not exist.',
-          detail: entry.localPath,
+          detail:
+              'Review this linked registry row or mark it accepted/ignored.',
         );
       }
     }
@@ -2772,51 +4249,6 @@ class AppState extends ChangeNotifier {
               'Run linked project refresh and review card source parser coverage.',
         );
       }
-      if (mediaItems.isEmpty) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'media',
-          title: 'Project has no imported media.',
-        );
-      }
-      if (people.isEmpty) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'people',
-          title: 'Project has no people/role assignments.',
-        );
-      }
-      if (items.isEmpty) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'workboard',
-          title: 'Project workboard has no tasks.',
-        );
-      }
-      if (risks.isEmpty) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'governance',
-          title: 'Project has no risks/issues recorded.',
-        );
-      }
-      if (decisions.isEmpty) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'governance',
-          title: 'Project decision log is empty.',
-        );
-      }
       final remote = observation?.remoteUrl;
       final githubIdentity = GithubRemoteMetadataService.parseGithubRemoteUrl(
         remote,
@@ -2841,15 +4273,6 @@ class AppState extends ChangeNotifier {
           title: 'Latest GitHub metadata refresh has a warning.',
           detail: github?.error,
           evidence: {'remoteUrl': github?.remoteUrl},
-        );
-      } else if (_isBlank(remote) && registryEntry != null) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'repository',
-          title: 'Project appears local-only.',
-          detail: 'No git remote URL was recorded in the latest observation.',
         );
       }
       final dirtyCount = observation?.dirtyCount ?? 0;
@@ -2945,12 +4368,38 @@ class AppState extends ChangeNotifier {
 
   bool _isBlank(String? value) => value == null || value.trim().isEmpty;
 
+  bool _looksLikeRemotePath(String value) {
+    final lower = value.trim().toLowerCase();
+    return lower.startsWith('http://') ||
+        lower.startsWith('https://') ||
+        lower.startsWith('ssh://') ||
+        lower.startsWith('git@');
+  }
+
+  bool _directoryExistsSafely(String path) {
+    if (path.trim().isEmpty) return false;
+    try {
+      return Directory(path).existsSync();
+    } on FileSystemException {
+      return false;
+    } on ArgumentError {
+      return false;
+    }
+  }
+
   Stream<List<ProjectScanRun>> watchProjectScanRuns({int limit = 50}) =>
       db.watchProjectScanRuns(limit: limit);
+
+  Future<List<ProjectScanRun>> getProjectScanRuns({int limit = 50}) =>
+      db.getProjectScanRuns(limit: limit);
 
   Stream<List<ProjectObservation>> watchRecentProjectObservations({
     int limit = 500,
   }) => db.watchRecentProjectObservations(limit: limit);
+
+  Future<List<ProjectObservation>> getRecentProjectObservations({
+    int limit = 500,
+  }) => db.getRecentProjectObservations(limit: limit);
 
   Stream<List<ProjectRegistryEntry>> watchProjectRegistry() =>
       db.watchProjectRegistry();
@@ -3009,6 +4458,55 @@ class AppState extends ChangeNotifier {
   Future<List<ProjectGitRemoteStatus>> getProjectGitRemoteStatuses(
     String projectId,
   ) => db.getProjectGitRemoteStatuses(projectId);
+
+  Future<ProjectGitRemoteStatus> saveManualProjectGithubRemoteMetadata(
+    String projectId,
+    String remoteUrl,
+  ) async {
+    final identity = GithubRemoteMetadataService.parseGithubRemoteUrl(
+      remoteUrl,
+    );
+    if (identity == null) {
+      throw StateError('Enter a valid GitHub repository URL.');
+    }
+    final registry = await db.getProjectRegistryByAtlasProjectId(projectId);
+    final checkedAt = DateTime.now();
+    final status = await db.upsertProjectGitRemoteStatus(
+      projectId: projectId,
+      registryId: registry?.id,
+      provider: identity.provider,
+      owner: identity.owner,
+      repo: identity.repo,
+      remoteUrl: identity.remoteUrl,
+      htmlUrl: identity.htmlUrl,
+      checkedAt: checkedAt,
+      rawJson: jsonEncode({
+        'source': 'manual',
+        'savedAt': checkedAt.toIso8601String(),
+      }),
+    );
+    await db.logEvent(
+      area: 'github',
+      action: 'project_github_metadata_saved_manually',
+      entityType: 'project',
+      entityId: projectId,
+      inputJson: remoteUrl,
+      outputJson: jsonEncode(status.toJson()),
+    );
+    notifyListeners();
+    return status;
+  }
+
+  Future<void> clearProjectGithubRemoteMetadata(String projectId) async {
+    await db.deleteProjectGitRemoteStatuses(projectId);
+    await db.logEvent(
+      area: 'github',
+      action: 'project_github_metadata_cleared',
+      entityType: 'project',
+      entityId: projectId,
+    );
+    notifyListeners();
+  }
 
   Future<String> enqueueLlmTask({
     required String projectId,
@@ -3569,6 +5067,7 @@ class AppState extends ChangeNotifier {
 
   Future<LocalProjectBatchRefreshResult> refreshLinkedLocalProjects({
     bool includeSourceDocuments = true,
+    Iterable<String>? projectIds,
     Duration betweenProjects = const Duration(milliseconds: 100),
     LocalProjectRefreshService service = const LocalProjectRefreshService(),
     ProjectEnrichmentStatusCallback? onStatus,
@@ -3596,6 +5095,7 @@ class AppState extends ChangeNotifier {
     var skipped = 0;
     var failed = 0;
     final warnings = <String>[];
+    final scopedProjectIds = _normalizeProjectIdScope(projectIds);
     try {
       onStatus?.call('Reading linked project registry.', current: 0);
       final registry = await db.getProjectRegistry();
@@ -3603,7 +5103,8 @@ class AppState extends ChangeNotifier {
           .where(
             (entry) =>
                 entry.reviewState != 'ignored' &&
-                (entry.atlasProjectId ?? '').isNotEmpty,
+                (entry.atlasProjectId ?? '').isNotEmpty &&
+                _isProjectInScope(entry.atlasProjectId, scopedProjectIds),
           )
           .toList(growable: false);
       onStatus?.call(
@@ -3621,6 +5122,31 @@ class AppState extends ChangeNotifier {
           current: considered,
           total: linked.length,
         );
+        final localPath = entry.localPath.trim();
+        if (_looksLikeRemotePath(localPath)) {
+          skipped++;
+          warnings.add(
+            '${entry.displayName}: registered local path is a remote URL; replace the folder link or ignore the registry row.',
+          );
+          onStatus?.call(
+            'Skipped ${entry.displayName}: registered local path is a remote URL.',
+            current: considered,
+            total: linked.length,
+          );
+          continue;
+        }
+        if (!_directoryExistsSafely(localPath)) {
+          skipped++;
+          warnings.add(
+            '${entry.displayName}: registered local path does not exist: ${entry.localPath}',
+          );
+          onStatus?.call(
+            'Skipped ${entry.displayName}: registered local path does not exist.',
+            current: considered,
+            total: linked.length,
+          );
+          continue;
+        }
         try {
           final preview = await previewLocalProjectRefreshForRegistryEntry(
             entry.id,
@@ -3682,6 +5208,7 @@ class AppState extends ChangeNotifier {
           'skipped': skipped,
           'failed': failed,
           'includeSourceDocuments': includeSourceDocuments,
+          'projectIds': _sortedProjectIdScope(scopedProjectIds),
           'warnings': warnings.length,
         }),
       );
@@ -4359,7 +5886,7 @@ class AppState extends ChangeNotifier {
   Future<Directory> ensureOperationsScansFolder() async {
     final supportDir = await getApplicationSupportDirectory();
     final root = Directory(p.join(supportDir.path, 'operations_scans'));
-    for (final child in ['runs', 'warnings', 'logs']) {
+    for (final child in ['runs', 'warnings', 'logs', 'project_health']) {
       await Directory(p.join(root.path, child)).create(recursive: true);
     }
     return root;
@@ -4391,9 +5918,54 @@ class AppState extends ChangeNotifier {
     return path;
   }
 
+  Future<String> buildOperationsWarningsExportJson({
+    int scanRunLimit = 50,
+    int observationLimit = 500,
+  }) async {
+    final runs = await getProjectScanRuns(limit: scanRunLimit);
+    final observations = await getRecentProjectObservations(
+      limit: observationLimit,
+    );
+    return const JsonEncoder.withIndent('  ').convert({
+      'schema': 'project_atlas_operations_warnings_v1',
+      'exportedAt': DateTime.now().toIso8601String(),
+      ..._operationsWarningsPayload(
+        runs,
+        observations,
+        scanRunLimit: scanRunLimit,
+        observationLimit: observationLimit,
+      ),
+    });
+  }
+
+  Future<String> saveOperationsWarningsToAppFolder({
+    int scanRunLimit = 50,
+    int observationLimit = 500,
+  }) async {
+    final root = await ensureOperationsScansFolder();
+    final timestamp = _safeFileStem(DateTime.now().toIso8601String());
+    final path = p.join(
+      root.path,
+      'warnings',
+      '${timestamp}_operations_warnings.json',
+    );
+    await File(path).writeAsString(
+      await buildOperationsWarningsExportJson(
+        scanRunLimit: scanRunLimit,
+        observationLimit: observationLimit,
+      ),
+    );
+    return path;
+  }
+
   Future<void> openOperationsScansFolder() async {
     final root = await ensureOperationsScansFolder();
     await Process.start('explorer.exe', [root.path]);
+  }
+
+  Future<void> openOperationsWarningsFolder() async {
+    final root = await ensureOperationsScansFolder();
+    await Process.start('explorer.exe', [p.join(root.path, 'warnings')]);
   }
 
   List<String> _decodeStringList(String raw) {
@@ -4507,6 +6079,54 @@ class AppState extends ChangeNotifier {
         'observationWarnings': observationWarnings.length,
       },
       'scanRun': run.toJson(),
+      'warnings': {'run': runWarnings, 'observations': observationWarnings},
+    };
+  }
+
+  Map<String, Object?> _operationsWarningsPayload(
+    List<ProjectScanRun> runs,
+    List<ProjectObservation> observations, {
+    required int scanRunLimit,
+    required int observationLimit,
+  }) {
+    final runWarnings = <Map<String, Object?>>[];
+    for (final run in runs) {
+      for (final warning in _decodeStringList(run.warningsJson)) {
+        runWarnings.add({
+          'scanRunId': run.id,
+          'startedAt': run.startedAt.toIso8601String(),
+          'completedAt': run.completedAt?.toIso8601String(),
+          'status': run.status,
+          'roots': _decodeStringList(run.rootsJson),
+          'warning': warning,
+        });
+      }
+    }
+    final observationWarnings = <Map<String, Object?>>[];
+    for (final observation in observations) {
+      for (final warning in _decodeStringList(observation.warningsJson)) {
+        observationWarnings.add({
+          'observationId': observation.id,
+          'scanRunId': observation.scanRunId,
+          'observedPath': observation.observedPath,
+          'displayName': _displayNameFromObservation(observation),
+          'observedAt': observation.observedAt.toIso8601String(),
+          'classificationGuess': observation.classificationGuess,
+          'confidence': observation.confidence,
+          'warning': warning,
+        });
+      }
+    }
+    return {
+      'summary': {
+        'scanRunLimit': scanRunLimit,
+        'observationLimit': observationLimit,
+        'scanRuns': runs.length,
+        'observations': observations.length,
+        'runWarnings': runWarnings.length,
+        'observationWarnings': observationWarnings.length,
+        'totalWarnings': runWarnings.length + observationWarnings.length,
+      },
       'warnings': {'run': runWarnings, 'observations': observationWarnings},
     };
   }
@@ -5367,6 +6987,37 @@ class AppState extends ChangeNotifier {
   Future<List<EventLogData>> getRecentEvents() => db.getRecentEvents();
   Future<void> clearEventLog() => db.clearEventLog();
 
+  Future<List<EventLogData>> getProjectEventLogs(
+    String projectId, {
+    DateTime? since,
+    int limit = 500,
+    bool includeRelatedWorkItems = true,
+  }) async {
+    final relatedWorkItemIds = includeRelatedWorkItems
+        ? (await db.getWorkItemsForProject(
+            projectId,
+          )).map((item) => item.id).toSet()
+        : const <String>{};
+    final cap = limit <= 0 ? 500 : limit;
+    final events = await db.getRecentEvents();
+    return events
+        .where((event) {
+          if (since != null && event.timestamp.isBefore(since)) {
+            return false;
+          }
+          if (event.entityId == projectId) return true;
+          if (includeRelatedWorkItems &&
+              event.entityType == 'work_item' &&
+              event.entityId != null &&
+              relatedWorkItemIds.contains(event.entityId)) {
+            return true;
+          }
+          return _eventPayloadMentionsProject(event, projectId);
+        })
+        .take(cap)
+        .toList(growable: false);
+  }
+
   Future<String> getAppDataPath() async {
     final supportDir = await getApplicationSupportDirectory();
     final docsDir = p.join(
@@ -5493,6 +7144,10 @@ class AppState extends ChangeNotifier {
   Future<ProjectBundleExportPreview> previewProjectBundleExport(
     String projectId, {
     bool includeFiles = true,
+    bool includeLatestSummary = false,
+    bool includeEventLogs = false,
+    DateTime? eventLogSince,
+    bool includeCleanGitArchive = false,
   }) async {
     final project = await db.getProjectFull(projectId);
     if (project == null) {
@@ -5514,6 +7169,9 @@ class AppState extends ChangeNotifier {
     final docs = await db.getDocumentsForProject(projectId);
     final media = await db.getProjectMedia(projectId);
     final registry = await db.getProjectRegistryByAtlasProjectId(projectId);
+    final registries = await db.getProjectRegistryEntriesByAtlasProjectId(
+      projectId,
+    );
     final observations = registry == null
         ? const <ProjectObservation>[]
         : await (db.select(db.projectObservations)
@@ -5525,9 +7183,16 @@ class AppState extends ChangeNotifier {
         : await (db.select(
             db.localProjectRefreshItems,
           )..where((t) => t.registryId.equals(registry.id))).get();
+    final latestSummary = includeLatestSummary
+        ? await db.getLatestProjectSummaryDraft(projectId)
+        : null;
+    final eventLogs = includeEventLogs
+        ? await _projectBundleEventLogs(projectId, eventLogSince)
+        : const <EventLogData>[];
     var copiedDocumentFiles = 0;
     var copiedMediaFiles = 0;
     final warnings = <String>[];
+    var cleanGitArchiveReady = false;
     if (includeFiles) {
       for (final doc in docs) {
         final storedPath = doc.storedPath;
@@ -5546,12 +7211,30 @@ class AppState extends ChangeNotifier {
         }
       }
     }
+    if (includeLatestSummary && latestSummary == null) {
+      warnings.add('No cached AI project summary is available.');
+    }
+    if (includeEventLogs && eventLogs.isEmpty) {
+      warnings.add(
+        'No project event logs matched the selected timestamp window.',
+      );
+    }
+    if (includeCleanGitArchive) {
+      cleanGitArchiveReady = await _projectGitArchiveIsReady(
+        projectId,
+        registries.isEmpty && registry != null ? [registry] : registries,
+        warnings,
+      );
+    }
 
     return ProjectBundleExportPreview(
       schema: 'project_atlas_project_bundle_v1',
       projectId: projectId,
       projectTitle: project.title,
       includeFiles: includeFiles,
+      includeLatestSummary: includeLatestSummary,
+      includeEventLogs: includeEventLogs,
+      includeCleanGitArchive: includeCleanGitArchive,
       stages: stages.length,
       workItems: workItems.length,
       workItemNotes: notes.length,
@@ -5566,6 +7249,9 @@ class AppState extends ChangeNotifier {
       hasRegistry: registry != null,
       observations: observations.length,
       refreshItems: refreshItems.length,
+      latestSummaryDrafts: latestSummary == null ? 0 : 1,
+      eventLogs: eventLogs.length,
+      cleanGitArchiveReady: cleanGitArchiveReady,
       warnings: List.unmodifiable(warnings),
     );
   }
@@ -5574,10 +7260,18 @@ class AppState extends ChangeNotifier {
     String projectId,
     String path, {
     bool includeFiles = true,
+    bool includeLatestSummary = false,
+    bool includeEventLogs = false,
+    DateTime? eventLogSince,
+    bool includeCleanGitArchive = false,
   }) async {
     final preview = await previewProjectBundleExport(
       projectId,
       includeFiles: includeFiles,
+      includeLatestSummary: includeLatestSummary,
+      includeEventLogs: includeEventLogs,
+      eventLogSince: eventLogSince,
+      includeCleanGitArchive: includeCleanGitArchive,
     );
     final project = await db.getProjectFull(projectId);
     if (project == null) {
@@ -5589,6 +7283,9 @@ class AppState extends ChangeNotifier {
     final docs = await db.getDocumentsForProject(projectId);
     final media = await db.getProjectMedia(projectId);
     final registry = await db.getProjectRegistryByAtlasProjectId(projectId);
+    final registries = await db.getProjectRegistryEntriesByAtlasProjectId(
+      projectId,
+    );
     final observations = registry == null
         ? const <ProjectObservation>[]
         : await (db.select(db.projectObservations)
@@ -5600,10 +7297,80 @@ class AppState extends ChangeNotifier {
         : await (db.select(
             db.localProjectRefreshItems,
           )..where((t) => t.registryId.equals(registry.id))).get();
+    final latestSummary = includeLatestSummary
+        ? await db.getLatestProjectSummaryDraft(projectId)
+        : null;
+    final eventLogs = includeEventLogs
+        ? await _projectBundleEventLogs(projectId, eventLogSince)
+        : const <EventLogData>[];
+    final exportWarnings = [...preview.warnings];
+    _ProjectGitArchive? gitArchive;
+    if (includeCleanGitArchive && preview.cleanGitArchiveReady) {
+      gitArchive = await _buildProjectGitArchive(
+        projectId,
+        registries.isEmpty && registry != null ? [registry] : registries,
+        exportWarnings,
+      );
+    }
+
+    final exportedAt = DateTime.now().toIso8601String();
+    final options = <String, Object?>{
+      'includeFiles': includeFiles,
+      'includeLatestSummary': includeLatestSummary,
+      'includeEventLogs': includeEventLogs,
+      'eventLogSince': eventLogSince?.toIso8601String(),
+      'includeCleanGitArchive': includeCleanGitArchive,
+    };
+    final counts = <String, Object?>{
+      'atlasRecords': preview.atlasRecordCount,
+      'stages': preview.stages,
+      'workItems': preview.workItems,
+      'workItemNotes': preview.workItemNotes,
+      'workItemAnalyses': preview.workItemAnalyses,
+      'documents': preview.documents,
+      'documentFiles': preview.copiedDocumentFiles,
+      'media': preview.media,
+      'mediaFiles': preview.copiedMediaFiles,
+      'people': preview.people,
+      'risks': preview.risks,
+      'decisions': preview.decisions,
+      'registryLinked': preview.hasRegistry,
+      'observations': preview.observations,
+      'refreshItems': preview.refreshItems,
+      'latestSummaryDrafts': preview.latestSummaryDrafts,
+      'eventLogs': preview.eventLogs,
+    };
+    final contents = <String, Object?>{
+      'projectBundle': 'project_bundle.json',
+      'manifest': 'manifest/export_manifest.json',
+      'readme': 'README.md',
+      'summary': latestSummary == null
+          ? null
+          : 'summary/latest_project_summary.md',
+      'summaryInput': (latestSummary?.inputJson ?? '').trim().isEmpty
+          ? null
+          : 'summary/latest_project_summary_input.json',
+      'eventLogs': eventLogs.isEmpty ? null : 'logs/project_event_log.json',
+      'warnings': exportWarnings.isEmpty ? null : 'logs/export_warnings.txt',
+      'cleanGitArchive': gitArchive?.archivePath,
+      'documentFiles': includeFiles ? preview.copiedDocumentFiles : 0,
+      'mediaFiles': includeFiles ? preview.copiedMediaFiles : 0,
+    };
+    final exportManifest = <String, Object?>{
+      'schema': 'project_atlas_project_bundle_manifest_v1',
+      'exportedAt': exportedAt,
+      'project': {'id': project.id, 'title': project.title},
+      'options': options,
+      'counts': counts,
+      'contents': contents,
+      'warnings': exportWarnings,
+    };
 
     final payload = {
       'schema': 'project_atlas_project_bundle_v1',
-      'exportedAt': DateTime.now().toIso8601String(),
+      'exportedAt': exportedAt,
+      'options': options,
+      'warnings': exportWarnings,
       'project': project.toJson(),
       'stages': stages.map((row) => row.toJson()).toList(),
       'workItems': workItems.map((row) => row.toJson()).toList(),
@@ -5633,10 +7400,14 @@ class AppState extends ChangeNotifier {
         projectId,
       )).map((row) => row.toJson()).toList(),
       'projectRegistry': registry?.toJson(),
+      'projectRegistryEntries': registries.map((row) => row.toJson()).toList(),
       'projectObservations': observations.map((row) => row.toJson()).toList(),
       'localProjectRefreshItems': refreshItems
           .map((row) => row.toJson())
           .toList(),
+      'latestProjectSummary': latestSummary?.toJson(),
+      'projectEventLogs': eventLogs.map((row) => row.toJson()).toList(),
+      'cleanGitArchive': gitArchive?.metadata,
     };
 
     final archive = Archive();
@@ -5646,6 +7417,80 @@ class AppState extends ChangeNotifier {
     archive.addFile(
       ArchiveFile('project_bundle.json', jsonBytes.length, jsonBytes),
     );
+    final manifestBytes = utf8.encode(
+      const JsonEncoder.withIndent('  ').convert(exportManifest),
+    );
+    archive.addFile(
+      ArchiveFile(
+        'manifest/export_manifest.json',
+        manifestBytes.length,
+        manifestBytes,
+      ),
+    );
+    final readmeBytes = utf8.encode(
+      _projectBundleReadme(
+        project: project,
+        exportedAt: exportedAt,
+        options: options,
+        counts: counts,
+        contents: contents,
+        warnings: exportWarnings,
+      ),
+    );
+    archive.addFile(ArchiveFile('README.md', readmeBytes.length, readmeBytes));
+    if (exportWarnings.isNotEmpty) {
+      final warningBytes = utf8.encode('${exportWarnings.join('\n')}\n');
+      archive.addFile(
+        ArchiveFile(
+          'logs/export_warnings.txt',
+          warningBytes.length,
+          warningBytes,
+        ),
+      );
+    }
+    if (latestSummary != null) {
+      final summaryBytes = utf8.encode(latestSummary.body);
+      archive.addFile(
+        ArchiveFile(
+          'summary/latest_project_summary.md',
+          summaryBytes.length,
+          summaryBytes,
+        ),
+      );
+      if ((latestSummary.inputJson ?? '').trim().isNotEmpty) {
+        final inputBytes = utf8.encode(latestSummary.inputJson!);
+        archive.addFile(
+          ArchiveFile(
+            'summary/latest_project_summary_input.json',
+            inputBytes.length,
+            inputBytes,
+          ),
+        );
+      }
+    }
+    if (eventLogs.isNotEmpty) {
+      final eventBytes = utf8.encode(
+        const JsonEncoder.withIndent(
+          '  ',
+        ).convert(eventLogs.map((row) => row.toJson()).toList()),
+      );
+      archive.addFile(
+        ArchiveFile(
+          'logs/project_event_log.json',
+          eventBytes.length,
+          eventBytes,
+        ),
+      );
+    }
+    if (gitArchive != null) {
+      archive.addFile(
+        ArchiveFile(
+          gitArchive.archivePath,
+          gitArchive.bytes.length,
+          gitArchive.bytes,
+        ),
+      );
+    }
 
     if (includeFiles) {
       for (final doc in docs) {
@@ -5680,12 +7525,310 @@ class AppState extends ChangeNotifier {
       outputJson: jsonEncode({
         'path': path,
         'includeFiles': includeFiles,
+        'includeLatestSummary': includeLatestSummary,
+        'includeEventLogs': includeEventLogs,
+        'eventLogSince': eventLogSince?.toIso8601String(),
+        'includeCleanGitArchive': includeCleanGitArchive,
         'atlasRecords': preview.atlasRecordCount,
         'copiedFiles': preview.copiedFileCount,
-        'warnings': preview.warnings,
+        'warnings': exportWarnings,
       }),
     );
     return payload.length;
+  }
+
+  String _projectBundleReadme({
+    required ProjectFull project,
+    required String exportedAt,
+    required Map<String, Object?> options,
+    required Map<String, Object?> counts,
+    required Map<String, Object?> contents,
+    required List<String> warnings,
+  }) {
+    String formatValue(Object? value) {
+      if (value == null) return 'none';
+      if (value is bool) return value ? 'yes' : 'no';
+      return value.toString();
+    }
+
+    final lines = <String>[
+      '# ${project.title} Project Bundle',
+      '',
+      'Exported: $exportedAt',
+      'Project ID: ${project.id}',
+      '',
+      '## Contents',
+      for (final entry in contents.entries)
+        if (entry.value != null && entry.value != 0)
+          '- ${entry.key}: ${formatValue(entry.value)}',
+      '',
+      '## Options',
+      for (final entry in options.entries)
+        '- ${entry.key}: ${formatValue(entry.value)}',
+      '',
+      '## Counts',
+      for (final entry in counts.entries)
+        '- ${entry.key}: ${formatValue(entry.value)}',
+    ];
+    if (warnings.isNotEmpty) {
+      lines
+        ..add('')
+        ..add('## Warnings')
+        ..addAll(warnings.map((warning) => '- $warning'));
+    }
+    return '${lines.join('\n')}\n';
+  }
+
+  Future<List<EventLogData>> _projectBundleEventLogs(
+    String projectId,
+    DateTime? since,
+  ) => getProjectEventLogs(projectId, since: since, limit: 500);
+
+  bool _eventPayloadMentionsProject(EventLogData event, String projectId) {
+    final input = event.inputJson ?? '';
+    final output = event.outputJson ?? '';
+    return input.contains(projectId) || output.contains(projectId);
+  }
+
+  Future<bool> _projectGitArchiveIsReady(
+    String projectId,
+    List<ProjectRegistryEntry> registries,
+    List<String> warnings,
+  ) async {
+    final localWarnings = <String>[];
+    final local = await _findCleanLocalGitArchiveCandidate(
+      registries,
+      warnings: localWarnings,
+    );
+    if (local != null) return true;
+    final github = await _findGithubArchiveCandidate(projectId);
+    if (github != null) return true;
+    warnings.addAll(localWarnings);
+    if (registries.isEmpty) {
+      warnings.add(
+        'Clean git archive skipped: project has no linked registry entries.',
+      );
+    }
+    warnings.add(
+      'Clean git archive skipped: no clean local Git repo or cached public GitHub archive was available.',
+    );
+    return false;
+  }
+
+  Future<_ProjectGitArchive?> _buildProjectGitArchive(
+    String projectId,
+    List<ProjectRegistryEntry> registries,
+    List<String> warnings,
+  ) async {
+    final localWarnings = <String>[];
+    final local = await _findCleanLocalGitArchiveCandidate(
+      registries,
+      warnings: localWarnings,
+    );
+    if (local != null) {
+      return _buildLocalGitArchive(local, warnings);
+    }
+    final github = await _findGithubArchiveCandidate(projectId);
+    if (github == null) {
+      warnings.addAll(localWarnings);
+      warnings.add(
+        'Clean git archive skipped during export: no clean local Git repo or cached public GitHub archive was available.',
+      );
+      return null;
+    }
+    try {
+      final bytes = await _githubArchiveFetcher(
+        github.identity,
+        github.ref,
+      ).timeout(const Duration(seconds: 30));
+      if (bytes.isEmpty) {
+        warnings.add('GitHub archive download returned empty output.');
+        return null;
+      }
+      final safeRepo = _safeFileStem(github.identity.fullName);
+      final safeRef = _safeFileStem(github.ref);
+      final archivePath = 'git/github_${safeRepo}_$safeRef.zip';
+      return _ProjectGitArchive(
+        bytes: bytes,
+        archivePath: archivePath,
+        metadata: {
+          'source': 'github',
+          'provider': github.identity.provider,
+          'owner': github.identity.owner,
+          'repo': github.identity.repo,
+          'remoteUrl': github.identity.remoteUrl,
+          'htmlUrl': github.identity.htmlUrl,
+          'ref': github.ref,
+          'defaultBranch': github.status?.defaultBranch,
+          'onlineHeadSha': github.status?.onlineHeadSha,
+          'visibility': github.status?.visibility,
+          'archivePath': archivePath,
+        },
+      );
+    } on TimeoutException {
+      warnings.addAll(localWarnings);
+      warnings.add('GitHub archive download timed out.');
+    } catch (error) {
+      warnings.addAll(localWarnings);
+      warnings.add('GitHub archive download failed: $error');
+    }
+    return null;
+  }
+
+  Future<_ProjectGitArchive?> _buildLocalGitArchive(
+    _LocalGitArchiveCandidate candidate,
+    List<String> warnings,
+  ) async {
+    final report = candidate.report;
+    final gitRoot = report.gitRoot;
+    if (gitRoot == null) return null;
+    try {
+      final result = await Process.run(
+        'git',
+        const ['archive', '--format=zip', 'HEAD'],
+        workingDirectory: gitRoot,
+        stdoutEncoding: null,
+        stderrEncoding: utf8,
+      ).timeout(const Duration(seconds: 15));
+      final output = result.stdout;
+      if (result.exitCode == 0 && output is List<int> && output.isNotEmpty) {
+        const archivePath = 'git/clean_HEAD.zip';
+        return _ProjectGitArchive(
+          bytes: output,
+          archivePath: archivePath,
+          metadata: {
+            'source': 'local',
+            'registryId': candidate.registry.id,
+            'registryDisplayName': candidate.registry.displayName,
+            'registryLocalPath': candidate.registry.localPath,
+            'gitRoot': report.gitRoot,
+            'branch': report.branch,
+            'headSha': report.headSha,
+            'remoteUrl': report.remoteUrl,
+            'archivePath': archivePath,
+          },
+        );
+      }
+      warnings.add(
+        'Clean git archive failed: ${result.stderr?.toString().trim() ?? 'empty output'}',
+      );
+    } on TimeoutException {
+      warnings.add('Clean git archive timed out.');
+    } on ProcessException catch (error) {
+      warnings.add('Clean git archive failed: ${error.message}');
+    }
+    return null;
+  }
+
+  Future<_LocalGitArchiveCandidate?> _findCleanLocalGitArchiveCandidate(
+    List<ProjectRegistryEntry> registries, {
+    List<String>? warnings,
+  }) async {
+    final failures = <String>[];
+    for (final registry in _orderedProjectRegistries(registries)) {
+      if (_looksLikeRemotePath(registry.localPath)) {
+        failures.add(
+          'Git ${registry.displayName}: registered path is a remote URL, not a local folder.',
+        );
+        continue;
+      }
+      final report = await const LocalGitVisibilityService().inspect(
+        registry.localPath,
+      );
+      if (_localGitReportIsArchiveReady(report)) {
+        return _LocalGitArchiveCandidate(registry: registry, report: report);
+      }
+      failures.add(_localGitArchiveSkipReason(registry, report));
+    }
+    if (warnings != null && failures.isNotEmpty) {
+      warnings.addAll(_cappedDistinct(failures, 5));
+      if (failures.length > 5) {
+        warnings.add(
+          'Git: ${failures.length - 5} additional local registry candidate(s) were not archive-ready.',
+        );
+      }
+    }
+    return null;
+  }
+
+  bool _localGitReportIsArchiveReady(LocalGitVisibilityReport report) =>
+      report.isGitRepository &&
+      report.gitRoot != null &&
+      report.changedTrackedCount == 0 &&
+      report.untrackedCount == 0 &&
+      (report.headSha ?? '').trim().isNotEmpty;
+
+  String _localGitArchiveSkipReason(
+    ProjectRegistryEntry registry,
+    LocalGitVisibilityReport report,
+  ) {
+    if (!report.isGitRepository || report.gitRoot == null) {
+      return 'Git ${registry.displayName}: no readable git repository at ${registry.localPath}.';
+    }
+    if (report.changedTrackedCount > 0 || report.untrackedCount > 0) {
+      return 'Git ${registry.displayName}: working tree has ${report.changedTrackedCount} changed tracked and ${report.untrackedCount} untracked path(s).';
+    }
+    return 'Git ${registry.displayName}: git HEAD could not be resolved.';
+  }
+
+  Future<_GithubArchiveCandidate?> _findGithubArchiveCandidate(
+    String projectId,
+  ) async {
+    final statuses = await db.getProjectGitRemoteStatuses(projectId);
+    for (final status in statuses) {
+      if (status.provider.toLowerCase() != 'github') continue;
+      if (status.hasError) continue;
+      final visibility = status.visibility?.trim().toLowerCase();
+      final isPublic = status.isPrivate == false || visibility == 'public';
+      if (!isPublic) continue;
+      final identity = GithubRemoteMetadataService.parseGithubRemoteUrl(
+        status.remoteUrl,
+      );
+      if (identity == null) continue;
+      final ref =
+          _cleanNullableString(status.onlineHeadSha) ??
+          _cleanNullableString(status.defaultBranch);
+      if (ref == null) continue;
+      return _GithubArchiveCandidate(
+        identity: identity,
+        ref: ref,
+        status: status,
+      );
+    }
+    return null;
+  }
+
+  List<ProjectRegistryEntry> _orderedProjectRegistries(
+    List<ProjectRegistryEntry> registries,
+  ) {
+    final ordered = [...registries];
+    int score(ProjectRegistryEntry entry) {
+      var value = 0;
+      if (entry.reviewState != 'linked') value += 10;
+      if ((entry.gitRoot ?? '').trim().isEmpty) value += 2;
+      if (_looksLikeRemotePath(entry.localPath)) value += 50;
+      return value;
+    }
+
+    ordered.sort((a, b) {
+      final scoreCompare = score(a).compareTo(score(b));
+      if (scoreCompare != 0) return scoreCompare;
+      final updatedCompare = b.updatedAt.compareTo(a.updatedAt);
+      if (updatedCompare != 0) return updatedCompare;
+      return a.displayName.compareTo(b.displayName);
+    });
+    return ordered;
+  }
+
+  List<String> _cappedDistinct(List<String> values, int limit) {
+    final seen = <String>{};
+    final result = <String>[];
+    for (final value in values) {
+      if (!seen.add(value)) continue;
+      result.add(value);
+      if (result.length >= limit) break;
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -5844,5 +7987,21 @@ class ContactResponsibilities {
     required this.contributingProjects,
     required this.projectPeople,
     required this.workItems,
+  });
+}
+
+class _ContactSeed {
+  final String id;
+  final String name;
+  final String? title;
+  final String? email;
+  final String? notes;
+
+  const _ContactSeed({
+    required this.id,
+    required this.name,
+    this.title,
+    this.email,
+    this.notes,
   });
 }

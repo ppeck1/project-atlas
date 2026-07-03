@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1268,6 +1269,8 @@ class _ExportTabState extends State<_ExportTab>
             ),
           ],
           const SizedBox(height: 16),
+          const _ProjectBundleExportWizard(),
+          const SizedBox(height: 16),
           const Divider(color: _line),
           const SizedBox(height: 8),
           Expanded(
@@ -1310,6 +1313,598 @@ class _ExportTabState extends State<_ExportTab>
 // ─────────────────────────────────────────────────────────────────────────────
 // Tab 4 — Workforce
 // ─────────────────────────────────────────────────────────────────────────────
+
+enum _ProjectBundlePreset { complete, handoff, audit, cleanGit, custom }
+
+enum _ProjectBundleLogWindow { last7, last30, last90, all }
+
+class _ProjectBundleExportWizard extends StatefulWidget {
+  const _ProjectBundleExportWizard();
+
+  @override
+  State<_ProjectBundleExportWizard> createState() =>
+      _ProjectBundleExportWizardState();
+}
+
+class _ProjectBundleExportWizardState
+    extends State<_ProjectBundleExportWizard> {
+  Future<List<ProjectFull>>? _projectsFuture;
+  Future<ProjectBundleExportPreview>? _previewFuture;
+  String? _projectId;
+  _ProjectBundlePreset _preset = _ProjectBundlePreset.complete;
+  _ProjectBundleLogWindow _logWindow = _ProjectBundleLogWindow.last30;
+  bool _includeFiles = true;
+  bool _includeSummary = true;
+  bool _includeLogs = true;
+  bool _includeGitArchive = false;
+  bool _exporting = false;
+  String? _status;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _projectsFuture ??= AppStateScope.of(context).getProjectsFull();
+  }
+
+  DateTime? get _eventLogSince {
+    final now = DateTime.now();
+    return switch (_logWindow) {
+      _ProjectBundleLogWindow.last7 => now.subtract(const Duration(days: 7)),
+      _ProjectBundleLogWindow.last30 => now.subtract(const Duration(days: 30)),
+      _ProjectBundleLogWindow.last90 => now.subtract(const Duration(days: 90)),
+      _ProjectBundleLogWindow.all => null,
+    };
+  }
+
+  void _applyPreset(_ProjectBundlePreset preset) {
+    setState(() {
+      _preset = preset;
+      switch (preset) {
+        case _ProjectBundlePreset.complete:
+          _includeFiles = true;
+          _includeSummary = true;
+          _includeLogs = true;
+          _includeGitArchive = false;
+          _logWindow = _ProjectBundleLogWindow.last30;
+        case _ProjectBundlePreset.handoff:
+          _includeFiles = false;
+          _includeSummary = true;
+          _includeLogs = true;
+          _includeGitArchive = false;
+          _logWindow = _ProjectBundleLogWindow.last30;
+        case _ProjectBundlePreset.audit:
+          _includeFiles = false;
+          _includeSummary = true;
+          _includeLogs = true;
+          _includeGitArchive = false;
+          _logWindow = _ProjectBundleLogWindow.all;
+        case _ProjectBundlePreset.cleanGit:
+          _includeFiles = false;
+          _includeSummary = true;
+          _includeLogs = true;
+          _includeGitArchive = true;
+          _logWindow = _ProjectBundleLogWindow.last30;
+        case _ProjectBundlePreset.custom:
+          break;
+      }
+      _status = null;
+      _refreshPreview();
+    });
+  }
+
+  void _refreshPreview() {
+    final id = _projectId;
+    _previewFuture = id == null
+        ? null
+        : AppStateScope.of(context).previewProjectBundleExport(
+            id,
+            includeFiles: _includeFiles,
+            includeLatestSummary: _includeSummary,
+            includeEventLogs: _includeLogs,
+            eventLogSince: _includeLogs ? _eventLogSince : null,
+            includeCleanGitArchive: _includeGitArchive,
+          );
+  }
+
+  void _setProject(String? value) {
+    setState(() {
+      _projectId = value;
+      _status = null;
+      _refreshPreview();
+    });
+  }
+
+  void _setOption(VoidCallback update) {
+    setState(() {
+      update();
+      _preset = _ProjectBundlePreset.custom;
+      _status = null;
+      _refreshPreview();
+    });
+  }
+
+  Future<void> _export(List<ProjectFull> projects) async {
+    final projectId = _projectId;
+    if (projectId == null || _exporting) return;
+    final state = AppStateScope.of(context);
+    ProjectFull? project;
+    for (final candidate in projects) {
+      if (candidate.id == projectId) {
+        project = candidate;
+        break;
+      }
+    }
+    if (project == null) return;
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export project bundle',
+      fileName: '${_safeExportStem(project.title)}_project_bundle.zip',
+      type: FileType.custom,
+      allowedExtensions: const ['zip'],
+    );
+    if (path == null || path.trim().isEmpty) return;
+    final outputPath = path.toLowerCase().endsWith('.zip') ? path : '$path.zip';
+    if (!mounted) return;
+    setState(() {
+      _exporting = true;
+      _status = null;
+    });
+    try {
+      await state.exportProjectBundleToZip(
+        projectId,
+        outputPath,
+        includeFiles: _includeFiles,
+        includeLatestSummary: _includeSummary,
+        includeEventLogs: _includeLogs,
+        eventLogSince: _includeLogs ? _eventLogSince : null,
+        includeCleanGitArchive: _includeGitArchive,
+      );
+      if (!mounted) return;
+      setState(() => _status = 'Project bundle exported: $outputPath');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Project bundle exported.')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _status = 'Export failed: $error');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _WizardStepPanel(
+      step: '1',
+      title: 'Project bundle',
+      child: FutureBuilder<List<ProjectFull>>(
+        future: _projectsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const LinearProgressIndicator(minHeight: 2);
+          }
+          if (snapshot.hasError) {
+            return Text(
+              'Projects failed to load: ${snapshot.error}',
+              style: const TextStyle(color: Colors.orangeAccent),
+            );
+          }
+          final projects = snapshot.data ?? const <ProjectFull>[];
+          final selectedValue = projects.any((p) => p.id == _projectId)
+              ? _projectId
+              : null;
+          Widget projectSelector() {
+            return DropdownButtonFormField<String>(
+              value: selectedValue,
+              decoration: const InputDecoration(
+                labelText: 'Project',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (final project in projects)
+                  DropdownMenuItem(
+                    value: project.id,
+                    child: Text(project.title),
+                  ),
+              ],
+              onChanged: _exporting ? null : _setProject,
+            );
+          }
+
+          Widget logWindowSelector() {
+            return DropdownButtonFormField<String>(
+              value: _logWindow.name,
+              decoration: const InputDecoration(
+                labelText: 'Log window',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'last7', child: Text('Last 7 days')),
+                DropdownMenuItem(value: 'last30', child: Text('Last 30 days')),
+                DropdownMenuItem(value: 'last90', child: Text('Last 90 days')),
+                DropdownMenuItem(value: 'all', child: Text('All logs')),
+              ],
+              onChanged: !_includeLogs || _exporting
+                  ? null
+                  : (value) => _setOption(
+                      () => _logWindow = _ProjectBundleLogWindow.values
+                          .firstWhere(
+                            (window) => window.name == value,
+                            orElse: () => _ProjectBundleLogWindow.last30,
+                          ),
+                    ),
+            );
+          }
+
+          final projectControls = LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 560) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    projectSelector(),
+                    const SizedBox(height: 10),
+                    logWindowSelector(),
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: projectSelector()),
+                  const SizedBox(width: 10),
+                  SizedBox(width: 180, child: logWindowSelector()),
+                ],
+              );
+            },
+          );
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _ExportWizardHeading(
+                icon: Icons.folder_open,
+                title: 'Project',
+              ),
+              const SizedBox(height: 8),
+              projectControls,
+              const SizedBox(height: 14),
+              const _ExportWizardHeading(icon: Icons.tune, title: 'Preset'),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _PresetChip(
+                    selected: _preset == _ProjectBundlePreset.complete,
+                    icon: Icons.inventory_2_outlined,
+                    label: 'Complete',
+                    onSelected: _exporting
+                        ? null
+                        : () => _applyPreset(_ProjectBundlePreset.complete),
+                  ),
+                  _PresetChip(
+                    selected: _preset == _ProjectBundlePreset.handoff,
+                    icon: Icons.ios_share_outlined,
+                    label: 'Handoff',
+                    onSelected: _exporting
+                        ? null
+                        : () => _applyPreset(_ProjectBundlePreset.handoff),
+                  ),
+                  _PresetChip(
+                    selected: _preset == _ProjectBundlePreset.audit,
+                    icon: Icons.manage_search_outlined,
+                    label: 'Audit',
+                    onSelected: _exporting
+                        ? null
+                        : () => _applyPreset(_ProjectBundlePreset.audit),
+                  ),
+                  _PresetChip(
+                    selected: _preset == _ProjectBundlePreset.cleanGit,
+                    icon: Icons.archive_outlined,
+                    label: 'Clean git',
+                    onSelected: _exporting
+                        ? null
+                        : () => _applyPreset(_ProjectBundlePreset.cleanGit),
+                  ),
+                  if (_preset == _ProjectBundlePreset.custom)
+                    _PresetChip(
+                      selected: true,
+                      icon: Icons.edit_outlined,
+                      label: 'Custom',
+                      onSelected: () {},
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              const _ExportWizardHeading(
+                icon: Icons.checklist_outlined,
+                title: 'Contents',
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _ExportCheckbox(
+                    value: _includeFiles,
+                    label: 'Files',
+                    onChanged: _exporting
+                        ? null
+                        : (value) => _setOption(() => _includeFiles = value),
+                  ),
+                  _ExportCheckbox(
+                    value: _includeSummary,
+                    label: 'AI summary',
+                    onChanged: _exporting
+                        ? null
+                        : (value) => _setOption(() => _includeSummary = value),
+                  ),
+                  _ExportCheckbox(
+                    value: _includeLogs,
+                    label: 'Project logs',
+                    onChanged: _exporting
+                        ? null
+                        : (value) => _setOption(() => _includeLogs = value),
+                  ),
+                  _ExportCheckbox(
+                    value: _includeGitArchive,
+                    label: 'Clean git',
+                    onChanged: _exporting
+                        ? null
+                        : (value) =>
+                              _setOption(() => _includeGitArchive = value),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const _ExportWizardHeading(
+                icon: Icons.preview_outlined,
+                title: 'Preview',
+              ),
+              const SizedBox(height: 8),
+              _ProjectBundlePreview(future: _previewFuture),
+              if (_status != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _status!,
+                  style: TextStyle(
+                    color: _status!.startsWith('Export failed')
+                        ? Colors.redAccent
+                        : _primary,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: selectedValue == null || _exporting
+                    ? null
+                    : () => _export(projects),
+                icon: _exporting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.archive_outlined, size: 16),
+                label: Text(_exporting ? 'Exporting' : 'Export ZIP'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _primary,
+                  foregroundColor: _bg,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ExportWizardHeading extends StatelessWidget {
+  final IconData icon;
+  final String title;
+
+  const _ExportWizardHeading({required this.icon, required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: _text54, size: 17),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: const TextStyle(
+            color: _text87,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PresetChip extends StatelessWidget {
+  final bool selected;
+  final IconData icon;
+  final String label;
+  final VoidCallback? onSelected;
+
+  const _PresetChip({
+    required this.selected,
+    required this.icon,
+    required this.label,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ChoiceChip(
+      selected: selected,
+      showCheckmark: false,
+      avatar: Icon(icon, size: 16, color: selected ? _bg : _text54),
+      label: Text(label),
+      labelStyle: TextStyle(
+        color: selected ? _bg : _text87,
+        fontSize: 12,
+        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+      ),
+      selectedColor: _primary,
+      backgroundColor: _panel,
+      disabledColor: _panel,
+      side: BorderSide(color: selected ? _primary : _line),
+      onSelected: onSelected == null ? null : (_) => onSelected!(),
+    );
+  }
+}
+
+class _ExportCheckbox extends StatelessWidget {
+  final bool value;
+  final String label;
+  final ValueChanged<bool>? onChanged;
+
+  const _ExportCheckbox({
+    required this.value,
+    required this.label,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 150,
+      child: CheckboxListTile(
+        value: value,
+        onChanged: onChanged == null
+            ? null
+            : (next) => onChanged!(next ?? false),
+        title: Text(label),
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        controlAffinity: ListTileControlAffinity.leading,
+      ),
+    );
+  }
+}
+
+class _ProjectBundlePreview extends StatelessWidget {
+  final Future<ProjectBundleExportPreview>? future;
+
+  const _ProjectBundlePreview({required this.future});
+
+  @override
+  Widget build(BuildContext context) {
+    final previewFuture = future;
+    if (previewFuture == null) {
+      return const Text(
+        'Select a project to preview the export.',
+        style: TextStyle(color: _text54, fontSize: 12),
+      );
+    }
+    return FutureBuilder<ProjectBundleExportPreview>(
+      future: previewFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const LinearProgressIndicator(minHeight: 2);
+        }
+        if (snapshot.hasError) {
+          return Text(
+            'Preview failed: ${snapshot.error}',
+            style: const TextStyle(color: Colors.orangeAccent),
+          );
+        }
+        final preview = snapshot.data!;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _ExportMetric(
+                  label: 'Atlas',
+                  value: '${preview.atlasRecordCount}',
+                ),
+                _ExportMetric(label: 'Work', value: '${preview.workItems}'),
+                _ExportMetric(
+                  label: 'Documents',
+                  value: '${preview.documents}',
+                ),
+                _ExportMetric(label: 'Media', value: '${preview.media}'),
+                _ExportMetric(
+                  label: 'Files',
+                  value: '${preview.copiedFileCount}',
+                ),
+                _ExportMetric(label: 'Logs', value: '${preview.eventLogs}'),
+                _ExportMetric(
+                  label: 'Summary',
+                  value: '${preview.latestSummaryDrafts}',
+                ),
+                _ExportMetric(
+                  label: 'Git',
+                  value: preview.cleanGitArchiveReady ? 'ready' : 'off',
+                ),
+              ],
+            ),
+            if (preview.warnings.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              for (final warning in preview.warnings.take(4))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Text(
+                    warning,
+                    style: const TextStyle(
+                      color: Colors.orangeAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              if (preview.warnings.length > 4)
+                Text(
+                  '+${preview.warnings.length - 4} more warning(s)',
+                  style: const TextStyle(color: _text54, fontSize: 12),
+                ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ExportMetric extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _ExportMetric({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: _primary.withAlpha(22),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _primary.withAlpha(70)),
+      ),
+      child: Text(
+        '$label $value',
+        style: const TextStyle(fontSize: 12, color: _text87),
+      ),
+    );
+  }
+}
+
+String _safeExportStem(String value) {
+  final stem = value
+      .trim()
+      .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
+      .replaceAll(RegExp(r'_+'), '_')
+      .replaceAll(RegExp(r'^_+|_+$'), '');
+  return stem.isEmpty ? 'project' : stem;
+}
 
 class _WorkforceTab extends StatefulWidget {
   const _WorkforceTab();
@@ -1368,6 +1963,26 @@ class _WorkforceTabState extends State<_WorkforceTab> {
         setState(() => _status = '$label completed: $count contact(s).');
     } catch (e) {
       if (mounted) setState(() => _status = '$label failed: $e');
+    }
+  }
+
+  Future<void> _ensureContinuity() async {
+    final state = AppStateScope.of(context);
+    try {
+      final result = await state.ensureContactContinuity();
+      final owner = await state.db.getContact(result.ownerContactId);
+      if (!mounted) return;
+      setState(() {
+        _selected = owner ?? _selected;
+        _status =
+            'Continuity setup: ${result.contactsSeeded} contact(s), '
+            '${result.projectOwnersUpdated}/${result.projectsConsidered} owner field(s), '
+            '${result.projectPeopleAdded} People row(s) added, '
+            '${result.duplicateContactsRemoved} duplicate contact(s) removed.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _status = 'Continuity setup failed: $error');
     }
   }
 
@@ -1465,6 +2080,11 @@ class _WorkforceTabState extends State<_WorkforceTab> {
                           ),
                           icon: const Icon(Icons.table_view, size: 16),
                           label: const Text('Export CSV'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _ensureContinuity,
+                          icon: const Icon(Icons.verified_user, size: 16),
+                          label: const Text('Continuity setup'),
                         ),
                       ],
                     ),

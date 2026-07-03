@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../db/app_db.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/widgets/contact_picker.dart';
 import 'work_item_detail_sheet.dart';
 import '../work/status_priority_helpers.dart';
 
@@ -968,15 +969,7 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
               const SizedBox(height: 10),
               Row(
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _owner,
-                      decoration: const InputDecoration(
-                        labelText: 'Owner',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
+                  Expanded(child: ContactOwnerField(controller: _owner)),
                   const SizedBox(width: 10),
                   Expanded(
                     child: InkWell(

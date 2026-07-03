@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -47,9 +48,9 @@ void main() {
   });
 
   test(
-    'schema v18 creates local operations, refresh, git remote, enrichment, and queue tables',
+    'schema v19 creates local operations, runtime, git remote, enrichment, and queue tables',
     () async {
-      expect(db.schemaVersion, 18);
+      expect(db.schemaVersion, 19);
 
       final tables = await db
           .customSelect(
@@ -70,6 +71,8 @@ void main() {
       expect(tableNames, contains('llm_task_queue'));
       expect(tableNames, contains('media_links'));
       expect(tableNames, contains('work_item_tags'));
+      expect(tableNames, contains('project_runtime_profiles'));
+      expect(tableNames, contains('project_runtime_runs'));
     },
   );
 
@@ -534,6 +537,60 @@ void main() {
   });
 
   test(
+    'operations warnings export includes recent run and observation warnings',
+    () async {
+      await _createWarningRun(db, tempDir);
+
+      final exported = await state.buildOperationsWarningsExportJson();
+      final payload = jsonDecode(exported) as Map<String, Object?>;
+      final summary = payload['summary'] as Map<String, Object?>;
+      final warnings = payload['warnings'] as Map<String, Object?>;
+      final runWarnings = warnings['run'] as List<Object?>;
+      final observationWarnings = warnings['observations'] as List<Object?>;
+
+      expect(payload['schema'], 'project_atlas_operations_warnings_v1');
+      expect(summary['totalWarnings'], 2);
+      expect(runWarnings.single.toString(), contains('run warning'));
+      expect(
+        observationWarnings.single.toString(),
+        contains('git remote get-url origin failed'),
+      );
+
+      final savedPath = await state.saveOperationsWarningsToAppFolder();
+      expect(savedPath, contains('operations_scans'));
+      expect(savedPath, contains('warnings'));
+      expect(File(savedPath).existsSync(), isTrue);
+    },
+  );
+
+  test('project health warning groups collapse raw refresh warnings', () {
+    final groups = groupProjectHealthWarnings([
+      'Artifact not imported as source: release/a.zip (123 bytes).',
+      'Artifact not imported as source: release/b.zip (456 bytes).',
+      'Bag of Holding: Artifact not imported as source: Bag-of-Holding-clean.tar.gz (45 bytes).',
+      'Skipped 3 source file(s) over 256 KB.',
+      'Bag of Holding: Skipped 59 source file(s) over 256 KB.',
+      'Source file refresh plan capped at 250 actions; skipped 10 additional candidate(s).',
+      'Bag of Holding: Source file refresh plan capped at 250 actions; skipped 2294 additional candidate(s).',
+      'Coheron: registered local path is a remote URL; replace the folder link or ignore the registry row.',
+      r'Old Project: registered local path does not exist: B:\missing',
+      'Odd project warning.',
+    ]);
+    final byKey = {for (final group in groups) group.key: group};
+
+    expect(byKey['artifact_not_imported']?.count, 3);
+    expect(byKey['large_source_files']?.count, 2);
+    expect(byKey['source_refresh_cap']?.count, 2);
+    expect(byKey['remote_url_registry_path']?.count, 1);
+    expect(byKey['missing_registry_path']?.count, 1);
+    expect(byKey['other_project_warnings']?.count, 1);
+    expect(
+      byKey['artifact_not_imported']?.title,
+      'Artifacts skipped as source files',
+    );
+  });
+
+  test(
     'BOH refresh preview applies native project updates idempotently',
     () async {
       final root = _makeBohCandidate(tempDir);
@@ -803,6 +860,35 @@ void main() {
     expect(status.onlineHeadSha, 'abc123');
     expect(cached?.fullName, 'ppeck1/project-atlas');
   });
+
+  test(
+    'linked project GitHub metadata can be manually replaced and cleared',
+    () async {
+      await db.createProject(
+        'github-project',
+        'GitHub Project',
+        DateTime(2026),
+      );
+
+      final saved = await state.saveManualProjectGithubRemoteMetadata(
+        'github-project',
+        'https://github.com/ppeck1/Coheron',
+      );
+      final cached = await state.getLatestProjectGitRemoteStatus(
+        'github-project',
+      );
+
+      expect(saved.fullName, 'ppeck1/Coheron');
+      expect(cached?.htmlUrl, 'https://github.com/ppeck1/Coheron');
+
+      await state.clearProjectGithubRemoteMetadata('github-project');
+      final cleared = await state.getLatestProjectGitRemoteStatus(
+        'github-project',
+      );
+
+      expect(cleared, isNull);
+    },
+  );
 
   test('local refresh imports project media idempotently', () async {
     final root = _makeBohCandidate(tempDir);
@@ -1157,6 +1243,76 @@ Pressure flakes a useful edge.
   );
 
   test(
+    'project enrichment analyze dry-run records findings without applying refresh',
+    () async {
+      final root = _makeHtml2mdCandidate(tempDir);
+      final runId = await state.runLocalOperationsScan(
+        scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
+      );
+      final observation = (await db.getProjectObservationsForScanRun(
+        runId,
+      )).singleWhere((row) => row.observedPath == root.path);
+      await state.acceptProjectObservation(observation.id);
+      final registry = (await db.getProjectRegistry()).single;
+      final projectId = await state.importProjectRegistryEntryAsProject(
+        registry.id,
+        refresh: false,
+      );
+      final beforeProject = await db.getProjectFull(projectId);
+      final beforeDocs = await db.getDocumentsForProject(projectId);
+      final beforeLedgers = await db.getLocalProjectRefreshItemsForRegistry(
+        registry.id,
+      );
+      final beforeWorkItems = await db.getWorkItemsForProject(projectId);
+      final beforeTags = await db.getTagsForProject(projectId);
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: true,
+        includeSourceDocuments: true,
+        analyzeOnly: true,
+        projectIds: [projectId],
+        refreshSummaries: false,
+        betweenProjects: Duration.zero,
+      );
+      final afterProject = await db.getProjectFull(projectId);
+      final afterDocs = await db.getDocumentsForProject(projectId);
+      final afterLedgers = await db.getLocalProjectRefreshItemsForRegistry(
+        registry.id,
+      );
+      final afterWorkItems = await db.getWorkItemsForProject(projectId);
+      final afterTags = await db.getTagsForProject(projectId);
+      final steps = await db.getProjectEnrichmentStepsForRun(result.run.id);
+      final proposals = await db.getProjectEnrichmentProposalsForRun(
+        result.run.id,
+      );
+      final coverage = result.run.output['coverage'] as Map;
+
+      expect(result.run.status, 'analyzed_with_findings');
+      expect(result.run.createdItems, 0);
+      expect(result.run.updatedItems, 0);
+      expect(result.findings, isNotEmpty);
+      expect(result.proposals, isEmpty);
+      expect(proposals, isEmpty);
+      expect(coverage['projects'], 1);
+      expect(coverage['sourceFiles'], 0);
+      expect(afterProject!.title, beforeProject!.title);
+      expect(afterProject.description, beforeProject.description);
+      expect(afterDocs.map((doc) => doc.id), beforeDocs.map((doc) => doc.id));
+      expect(afterLedgers, hasLength(beforeLedgers.length));
+      expect(afterWorkItems, hasLength(beforeWorkItems.length));
+      expect(afterTags, hasLength(beforeTags.length));
+      expect(
+        steps.map((step) => '${step.worker}:${step.status}'),
+        containsAll([
+          'documents_media:skipped',
+          'identity:skipped',
+          'correction:skipped',
+        ]),
+      );
+    },
+  );
+
+  test(
     'project enrichment repairs manifest tags even when metadata ledger is unchanged',
     () async {
       final root = _makeHtml2mdCandidate(tempDir);
@@ -1228,8 +1384,617 @@ Pressure flakes a useful edge.
         contains('Atlas project is not linked to a local registry entry.'),
       );
       expect(categories, contains('library'));
-      expect(categories, contains('people'));
-      expect(categories, contains('governance'));
+      expect(categories, isNot(contains('governance')));
+      expect(
+        titles,
+        isNot(contains('Project has no people/role assignments.')),
+      );
+      expect(titles, isNot(contains('Project has no imported media.')));
+      expect(titles, isNot(contains('Project workboard has no tasks.')));
+      expect(titles, isNot(contains('Project appears local-only.')));
+      expect(titles, isNot(contains('Project has no risks/issues recorded.')));
+      expect(titles, isNot(contains('Project decision log is empty.')));
+    },
+  );
+
+  test(
+    'project enrichment avoids duplicate needs-review and unlinked registry findings',
+    () async {
+      _makeCandidate(tempDir, 'needs_review_project');
+      final observation = await _scanOne(state, db, tempDir);
+      await state.markProjectObservationNeedsReview(observation.id);
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        refreshSummaries: false,
+      );
+      final titles = result.findings.map((finding) => finding.title).toList();
+      final needsReview = result.findings.singleWhere(
+        (finding) =>
+            finding.title == 'Registered local project still needs review.',
+      );
+
+      expect(
+        titles,
+        isNot(
+          contains(
+            'Registered local project is not linked to an Atlas project.',
+          ),
+        ),
+      );
+      expect(needsReview.registryId, isNotNull);
+      expect(
+        needsReview.evidence['registryDisplayName'],
+        'needs_review_project',
+      );
+      expect(
+        needsReview.evidence['localPath'],
+        contains('needs_review_project'),
+      );
+    },
+  );
+
+  test(
+    'project enrichment records remote-url registry paths without failing',
+    () async {
+      await db.createProject(
+        'remote-url-project',
+        'Remote URL Project',
+        DateTime(2026),
+      );
+      final runId = await db.startProjectScanRun(
+        rootsJson: jsonEncode(['https://github.com/ppeck1/Coheron']),
+        startedAt: DateTime(2026, 7, 2),
+      );
+      await db.addProjectObservation(
+        id: 'remote_url_obs',
+        scanRunId: runId,
+        observedPath: 'https://github.com/ppeck1/Coheron',
+        classificationGuess: 'software',
+        confidence: 80,
+        markerFilesJson: jsonEncode(['README.md']),
+        warningsJson: '[]',
+        rawJson: jsonEncode({'displayName': 'Coheron'}),
+        observedAt: DateTime(2026, 7, 2),
+      );
+      await db.finishProjectScanRun(
+        id: runId,
+        completedAt: DateTime(2026, 7, 2, 0, 0, 1),
+        status: 'completed',
+        totalSeen: 1,
+        candidates: 1,
+        ignored: 0,
+        warningsJson: '[]',
+      );
+      await state.linkProjectObservation(
+        'remote_url_obs',
+        'remote-url-project',
+      );
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        projectIds: const ['remote-url-project'],
+        refreshSummaries: false,
+      );
+      final titles = result.findings.map((finding) => finding.title).toSet();
+      final registryFinding = result.findings.singleWhere(
+        (finding) =>
+            finding.title ==
+            'Registered local path is a remote URL, not a local folder.',
+      );
+
+      expect(result.run.status, 'analyzed_with_findings');
+      expect(titles, contains(registryFinding.title));
+      expect(registryFinding.severity, 'info');
+      expect(registryFinding.detail, 'https://github.com/ppeck1/Coheron');
+      expect(registryFinding.evidence['pathKind'], 'remote_url');
+    },
+  );
+
+  test(
+    'project enrichment skips remote-url registry paths during apply run',
+    () async {
+      await db.createProject(
+        'remote-url-project',
+        'Remote URL Project',
+        DateTime(2026),
+      );
+      final runId = await db.startProjectScanRun(
+        rootsJson: jsonEncode(['https://github.com/ppeck1/Coheron']),
+        startedAt: DateTime(2026, 7, 2),
+      );
+      await db.addProjectObservation(
+        id: 'remote_url_obs',
+        scanRunId: runId,
+        observedPath: 'https://github.com/ppeck1/Coheron',
+        classificationGuess: 'software',
+        confidence: 80,
+        markerFilesJson: jsonEncode(['README.md']),
+        warningsJson: '[]',
+        rawJson: jsonEncode({'displayName': 'Coheron'}),
+        observedAt: DateTime(2026, 7, 2),
+      );
+      await db.finishProjectScanRun(
+        id: runId,
+        completedAt: DateTime(2026, 7, 2, 0, 0, 1),
+        status: 'completed',
+        totalSeen: 1,
+        candidates: 1,
+        ignored: 0,
+        warningsJson: '[]',
+      );
+      await state.linkProjectObservation(
+        'remote_url_obs',
+        'remote-url-project',
+      );
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: true,
+        refreshIdentity: true,
+        createProposals: false,
+        projectIds: const ['remote-url-project'],
+        refreshSummaries: false,
+      );
+      final warnings = result.run.warnings.join('\n');
+      final titles = result.findings.map((finding) => finding.title).toSet();
+      final exported =
+          jsonDecode(await state.buildProjectHealthRunExportJson(result.run.id))
+              as Map<String, Object?>;
+      final exportedSummary = exported['summary'] as Map<String, Object?>;
+      final warningGroups = exported['warningGroups'] as List<Object?>;
+
+      expect(result.run.status, 'completed_with_findings');
+      expect(result.run.failedProjects, 0);
+      expect(warnings, contains('registered local path is a remote URL'));
+      expect(warnings, isNot(contains('PathNotFoundException: Exists failed')));
+      expect(
+        titles,
+        contains('Registered local path is a remote URL, not a local folder.'),
+      );
+      expect(exportedSummary['warningGroups'], greaterThan(0));
+      expect(
+        warningGroups.map((group) => group.toString()).join('\n'),
+        contains('remote_url_registry_path'),
+      );
+    },
+  );
+
+  test(
+    'project health finding can ignore registry row and export run',
+    () async {
+      await db.createProject(
+        'remote-url-project',
+        'Remote URL Project',
+        DateTime(2026),
+      );
+      final runId = await db.startProjectScanRun(
+        rootsJson: jsonEncode(['https://github.com/ppeck1/Coheron']),
+        startedAt: DateTime(2026, 7, 2),
+      );
+      await db.addProjectObservation(
+        id: 'remote_url_obs',
+        scanRunId: runId,
+        observedPath: 'https://github.com/ppeck1/Coheron',
+        classificationGuess: 'software',
+        confidence: 80,
+        markerFilesJson: jsonEncode(['README.md']),
+        warningsJson: '[]',
+        rawJson: jsonEncode({'displayName': 'Coheron'}),
+        observedAt: DateTime(2026, 7, 2),
+      );
+      await db.finishProjectScanRun(
+        id: runId,
+        completedAt: DateTime(2026, 7, 2, 0, 0, 1),
+        status: 'completed',
+        totalSeen: 1,
+        candidates: 1,
+        ignored: 0,
+        warningsJson: '[]',
+      );
+      await state.linkProjectObservation(
+        'remote_url_obs',
+        'remote-url-project',
+      );
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        projectIds: const ['remote-url-project'],
+        refreshSummaries: false,
+      );
+      final finding = result.findings.singleWhere(
+        (finding) =>
+            finding.title ==
+            'Registered local path is a remote URL, not a local folder.',
+      );
+      final openBefore = result.run.openFindings;
+
+      await state.dismissProjectEnrichmentFinding(
+        findingId: finding.id,
+        ignoreRegistryEntry: true,
+        actor: 'Paul Peck',
+        note: 'No longer part of this project.',
+      );
+      final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
+      final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
+      final registry = await db.getProjectRegistryEntry(finding.registryId!);
+      final events = await state.getRecentEvents();
+      final exported =
+          jsonDecode(await state.buildProjectHealthRunExportJson(result.run.id))
+              as Map<String, Object?>;
+      final exportedSummary = exported['summary'] as Map<String, Object?>;
+
+      expect(updatedFinding?.status, 'dismissed');
+      expect(updatedRun?.openFindings, openBefore - 1);
+      expect(registry?.reviewState, 'ignored');
+      expect(registry?.atlasProjectId, isNull);
+      expect(registry?.notes, contains('Paul Peck'));
+      expect(
+        events.map((event) => event.action),
+        contains('project_health_registry_finding_ignored'),
+      );
+      expect(exported['schema'], 'project_atlas_project_health_run_v1');
+      expect(exportedSummary['findings'], result.findings.length);
+      expect(exportedSummary['openFindings'], openBefore - 1);
+    },
+  );
+
+  test('project health needs-review findings can be marked reviewed', () async {
+    _makeCandidate(tempDir, 'review_from_health_one');
+    _makeCandidate(tempDir, 'review_from_health_two');
+    final runId = await state.runLocalOperationsScan(
+      scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
+    );
+    final observations = await db.getProjectObservationsForScanRun(runId);
+    for (final observation in observations) {
+      await state.markProjectObservationNeedsReview(observation.id);
+    }
+
+    final result = await state.runProjectEnrichment(
+      refreshLinkedProjects: false,
+      analyzeOnly: true,
+      refreshSummaries: false,
+    );
+    final findings = result.findings
+        .where(
+          (finding) =>
+              finding.title == 'Registered local project still needs review.',
+        )
+        .toList(growable: false);
+
+    final reviewed = await state.markProjectHealthRegistryFindingsReviewed(
+      findingIds: findings.map((finding) => finding.id),
+      actor: 'Paul Peck',
+      note: 'Looks intentional.',
+    );
+    final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
+    final updatedFindings = await db.getProjectEnrichmentFindingsForRun(
+      result.run.id,
+    );
+    final registry = await db.getProjectRegistry();
+    final events = await state.getRecentEvents();
+
+    expect(reviewed, hasLength(2));
+    expect(registry.map((entry) => entry.reviewState).toSet(), {'accepted'});
+    expect(
+      updatedFindings
+          .where((finding) => findings.any((target) => target.id == finding.id))
+          .map((finding) => finding.status)
+          .toSet(),
+      {'dismissed'},
+    );
+    expect(updatedRun?.openFindings, result.run.openFindings - findings.length);
+    expect(
+      events.map((event) => event.action),
+      contains('project_health_registry_findings_batch_reviewed'),
+    );
+    expect(
+      events.map((event) => event.action),
+      contains('project_health_registry_finding_reviewed'),
+    );
+  });
+
+  test(
+    'project health registry finding can link an existing project',
+    () async {
+      _makeCandidate(tempDir, 'unlinked_project');
+      final observation = await _scanOne(state, db, tempDir);
+      await state.acceptProjectObservation(observation.id);
+      await db.createProject(
+        'target-project',
+        'Target Project',
+        DateTime(2026),
+      );
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        refreshSummaries: false,
+      );
+      final finding = result.findings.singleWhere(
+        (finding) =>
+            finding.title ==
+            'Registered local project is not linked to an Atlas project.',
+      );
+
+      final projectId = await state.linkProjectHealthRegistryFindingToProject(
+        findingId: finding.id,
+        projectId: 'target-project',
+        actor: 'Paul Peck',
+      );
+      final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
+      final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
+      final registry = await db.getProjectRegistryEntry(finding.registryId!);
+      final events = await state.getRecentEvents();
+
+      expect(projectId, 'target-project');
+      expect(updatedFinding?.status, 'dismissed');
+      expect(updatedRun?.openFindings, result.run.openFindings - 1);
+      expect(registry?.atlasProjectId, 'target-project');
+      expect(registry?.reviewState, 'linked');
+      expect(
+        events.map((event) => event.action),
+        contains('project_health_registry_finding_linked'),
+      );
+    },
+  );
+
+  test('project health registry finding can import a new project', () async {
+    _makeCandidate(tempDir, 'import_from_health');
+    final observation = await _scanOne(state, db, tempDir);
+    await state.acceptProjectObservation(observation.id);
+
+    final result = await state.runProjectEnrichment(
+      refreshLinkedProjects: false,
+      analyzeOnly: true,
+      refreshSummaries: false,
+    );
+    final finding = result.findings.singleWhere(
+      (finding) =>
+          finding.title ==
+          'Registered local project is not linked to an Atlas project.',
+    );
+
+    final projectId = await state.importProjectHealthRegistryFindingAsProject(
+      findingId: finding.id,
+      actor: 'Paul Peck',
+    );
+    final project = await db.getProjectFull(projectId);
+    final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
+    final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
+    final registry = await db.getProjectRegistryEntry(finding.registryId!);
+    final events = await state.getRecentEvents();
+
+    expect(project, isNotNull);
+    expect(project?.title, 'import_from_health');
+    expect(updatedFinding?.status, 'dismissed');
+    expect(updatedRun?.openFindings, result.run.openFindings - 1);
+    expect(registry?.atlasProjectId, projectId);
+    expect(registry?.reviewState, 'linked');
+    expect(
+      events.map((event) => event.action),
+      contains('project_health_registry_finding_imported'),
+    );
+  });
+
+  test(
+    'project health registry finding can replace a bad folder path',
+    () async {
+      await db.createProject(
+        'remote-url-project',
+        'Remote URL Project',
+        DateTime(2026),
+      );
+      final runId = await db.startProjectScanRun(
+        rootsJson: jsonEncode(['https://github.com/ppeck1/Coheron']),
+        startedAt: DateTime(2026, 7, 2),
+      );
+      await db.addProjectObservation(
+        id: 'remote_url_obs',
+        scanRunId: runId,
+        observedPath: 'https://github.com/ppeck1/Coheron',
+        classificationGuess: 'software',
+        confidence: 80,
+        markerFilesJson: jsonEncode(['README.md']),
+        warningsJson: '[]',
+        rawJson: jsonEncode({'displayName': 'Coheron'}),
+        observedAt: DateTime(2026, 7, 2),
+      );
+      await db.finishProjectScanRun(
+        id: runId,
+        completedAt: DateTime(2026, 7, 2, 0, 0, 1),
+        status: 'completed',
+        totalSeen: 1,
+        candidates: 1,
+        ignored: 0,
+        warningsJson: '[]',
+      );
+      await state.linkProjectObservation(
+        'remote_url_obs',
+        'remote-url-project',
+      );
+      _makeCandidate(tempDir, 'coheron_replacement');
+      final replacementPath = p.join(tempDir.path, 'coheron_replacement');
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        projectIds: const ['remote-url-project'],
+        refreshSummaries: false,
+      );
+      final finding = result.findings.singleWhere(
+        (finding) =>
+            finding.title ==
+            'Registered local path is a remote URL, not a local folder.',
+      );
+
+      final updatedRegistry = await state
+          .replaceProjectHealthRegistryFindingFolder(
+            findingId: finding.id,
+            selectedPath: replacementPath,
+            actor: 'Paul Peck',
+          );
+      final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
+      final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
+      final project = await db.getProjectFull('remote-url-project');
+      final events = await state.getRecentEvents();
+
+      expect(updatedRegistry.localPath, replacementPath);
+      expect(updatedRegistry.reviewState, 'linked');
+      expect(updatedFinding?.status, 'dismissed');
+      expect(updatedRun?.openFindings, result.run.openFindings - 1);
+      expect(project?.scopeIncluded, contains(replacementPath));
+      expect(updatedRegistry.notes, contains('Paul Peck'));
+      expect(
+        events.map((event) => event.action),
+        contains('project_health_registry_folder_replaced'),
+      );
+    },
+  );
+
+  test('project health finding groups can be batch dismissed', () async {
+    _makeCandidate(tempDir, 'unlinked_project');
+    final observation = await _scanOne(state, db, tempDir);
+    await state.acceptProjectObservation(observation.id);
+    await db.createProject('manual-project', 'Manual Project', DateTime(2026));
+
+    final result = await state.runProjectEnrichment(
+      refreshLinkedProjects: false,
+      analyzeOnly: true,
+      refreshSummaries: false,
+    );
+    final targets = result.findings.take(2).toList(growable: false);
+
+    await state.dismissProjectEnrichmentFindings(
+      findingIds: targets.map((finding) => finding.id),
+      actor: 'Paul Peck',
+      note: 'Batch cleanup.',
+    );
+    final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
+    final updatedFindings = await db.getProjectEnrichmentFindingsForRun(
+      result.run.id,
+    );
+    final events = await state.getRecentEvents();
+
+    expect(
+      updatedFindings
+          .where((finding) => targets.any((target) => target.id == finding.id))
+          .map((finding) => finding.status)
+          .toSet(),
+      {'dismissed'},
+    );
+    expect(updatedRun?.openFindings, result.run.openFindings - targets.length);
+    expect(
+      events.map((event) => event.action),
+      contains('project_health_findings_batch_dismissed'),
+    );
+  });
+
+  test(
+    'project health finding suppression prevents matching future findings',
+    () async {
+      _makeCandidate(tempDir, 'suppressed_project');
+      final observation = await _scanOne(state, db, tempDir);
+      await state.acceptProjectObservation(observation.id);
+
+      final first = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        refreshSummaries: false,
+      );
+      final finding = first.findings.singleWhere(
+        (finding) =>
+            finding.title ==
+            'Registered local project is not linked to an Atlas project.',
+      );
+
+      final suppression = await state.suppressProjectHealthFinding(
+        findingId: finding.id,
+        actor: 'Paul Peck',
+        note: 'Known registry row.',
+      );
+      final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
+      final updatedRun = await db.getProjectEnrichmentRun(first.run.id);
+      final suppressions = await state.getProjectHealthFindingSuppressions();
+
+      final second = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        refreshSummaries: false,
+      );
+      final secondTitles = second.findings
+          .map((finding) => finding.title)
+          .toSet();
+      final secondCoverage = second.run.output['coverage'] as Map;
+      final secondExport =
+          jsonDecode(await state.buildProjectHealthRunExportJson(second.run.id))
+              as Map<String, Object?>;
+      final secondSummary = secondExport['summary'] as Map<String, Object?>;
+
+      expect(suppression.fingerprint, isNotEmpty);
+      expect(updatedFinding?.status, 'suppressed');
+      expect(updatedRun?.openFindings, first.run.openFindings - 1);
+      expect(
+        suppressions.map((item) => item.fingerprint),
+        contains(suppression.fingerprint),
+      );
+      expect(
+        secondTitles,
+        isNot(
+          contains(
+            'Registered local project is not linked to an Atlas project.',
+          ),
+        ),
+      );
+      expect(secondCoverage['suppressedFindings'], 1);
+      expect(secondSummary['suppressedFindings'], 1);
+    },
+  );
+
+  test(
+    'project enrichment selected project scope limits audit findings',
+    () async {
+      _makeCandidate(tempDir, 'unlinked_project');
+      final observation = await _scanOne(state, db, tempDir);
+      await state.acceptProjectObservation(observation.id);
+      await db.createProject(
+        'selected-project',
+        'Selected Project',
+        DateTime(2026),
+      );
+      await db.createProject('other-project', 'Other Project', DateTime(2026));
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        projectIds: const ['selected-project'],
+        refreshSummaries: false,
+      );
+      final titles = result.findings.map((finding) => finding.title).toSet();
+      final projectIds = result.findings
+          .map((finding) => finding.projectId)
+          .toSet();
+      final coverage = result.run.output['coverage'] as Map;
+
+      expect(result.run.status, 'analyzed_with_findings');
+      expect(result.run.scope['projectIds'], ['selected-project']);
+      expect(coverage['projects'], 1);
+      expect(coverage['registryEntries'], 0);
+      expect(projectIds, {'selected-project'});
+      expect(
+        titles,
+        isNot(
+          contains(
+            'Registered local project is not linked to an Atlas project.',
+          ),
+        ),
+      );
+      expect(
+        titles,
+        contains('Atlas project is not linked to a local registry entry.'),
+      );
     },
   );
 
@@ -1345,7 +2110,222 @@ Pressure flakes a useful edge.
     final bytes = File(zipPath).readAsBytesSync();
     expect(bytes, isNotEmpty);
     expect(String.fromCharCodes(bytes.take(2)), 'PK');
+    final archive = ZipDecoder().decodeBytes(bytes);
+    expect(archive.findFile('README.md'), isNotNull);
+    expect(archive.findFile('manifest/export_manifest.json'), isNotNull);
   });
+
+  test(
+    'project bundle export can include summary and project log sections',
+    () async {
+      const projectId = 'bundle-options-project';
+      await db.createProject(projectId, 'Bundle Options', DateTime.now());
+      await state.saveDraft(
+        kind: 'project_summary',
+        title: 'Bundle Options Summary',
+        body: 'Latest summary body.',
+        inputJson: '{"source":"test"}',
+        projectId: projectId,
+      );
+      await db.logEvent(
+        area: 'project',
+        action: 'bundle_option_changed',
+        entityType: 'project',
+        entityId: projectId,
+        outputJson: jsonEncode({'changed': true}),
+      );
+
+      final preview = await state.previewProjectBundleExport(
+        projectId,
+        includeFiles: false,
+        includeLatestSummary: true,
+        includeEventLogs: true,
+        eventLogSince: DateTime.now().subtract(const Duration(days: 1)),
+      );
+      expect(preview.latestSummaryDrafts, 1);
+      expect(preview.eventLogs, 1);
+      expect(preview.copiedFileCount, 0);
+
+      final zipPath = p.join(tempDir.path, 'bundle_options.zip');
+      await state.exportProjectBundleToZip(
+        projectId,
+        zipPath,
+        includeFiles: false,
+        includeLatestSummary: true,
+        includeEventLogs: true,
+        eventLogSince: DateTime.now().subtract(const Duration(days: 1)),
+      );
+
+      final archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
+      expect(archive.findFile('README.md'), isNotNull);
+      expect(archive.findFile('manifest/export_manifest.json'), isNotNull);
+      expect(archive.findFile('summary/latest_project_summary.md'), isNotNull);
+      expect(archive.findFile('logs/project_event_log.json'), isNotNull);
+      final payload =
+          jsonDecode(
+                utf8.decode(
+                  archive.findFile('project_bundle.json')!.content as List<int>,
+                ),
+              )
+              as Map<String, Object?>;
+      final options = payload['options'] as Map<String, Object?>;
+      expect(options['includeLatestSummary'], isTrue);
+      expect(options['includeEventLogs'], isTrue);
+      expect((payload['projectEventLogs'] as List<Object?>), hasLength(1));
+      final manifest =
+          jsonDecode(
+                utf8.decode(
+                  archive.findFile('manifest/export_manifest.json')!.content
+                      as List<int>,
+                ),
+              )
+              as Map<String, Object?>;
+      expect(manifest['schema'], 'project_atlas_project_bundle_manifest_v1');
+      final manifestContents = manifest['contents'] as Map<String, Object?>;
+      expect(manifestContents['summary'], 'summary/latest_project_summary.md');
+      expect(manifestContents['eventLogs'], 'logs/project_event_log.json');
+    },
+  );
+
+  test(
+    'project bundle clean git export uses a clean linked child registry repo',
+    () async {
+      const projectId = 'bundle-local-git-project';
+      await db.createProject(projectId, 'Bundle Local Git', DateTime.now());
+      final outer = Directory(p.join(tempDir.path, 'outer_project'))
+        ..createSync(recursive: true);
+      final child = Directory(p.join(outer.path, 'public_repo'))
+        ..createSync(recursive: true);
+      await _initCleanGitRepo(child);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await _insertProjectRegistry(
+        db,
+        id: 'outer_registry',
+        projectId: projectId,
+        displayName: 'Outer Project',
+        localPath: outer.path,
+        gitRoot: null,
+        updatedAtMillis: now + 1000,
+      );
+      await _insertProjectRegistry(
+        db,
+        id: 'child_registry',
+        projectId: projectId,
+        displayName: 'Public Repo',
+        localPath: child.path,
+        gitRoot: child.path,
+        updatedAtMillis: now,
+      );
+
+      final preview = await state.previewProjectBundleExport(
+        projectId,
+        includeFiles: false,
+        includeCleanGitArchive: true,
+      );
+      expect(preview.cleanGitArchiveReady, isTrue);
+
+      final zipPath = p.join(tempDir.path, 'bundle_local_git.zip');
+      await state.exportProjectBundleToZip(
+        projectId,
+        zipPath,
+        includeFiles: false,
+        includeCleanGitArchive: true,
+      );
+
+      final archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
+      expect(archive.findFile('git/clean_HEAD.zip'), isNotNull);
+      final payload =
+          jsonDecode(
+                utf8.decode(
+                  archive.findFile('project_bundle.json')!.content as List<int>,
+                ),
+              )
+              as Map<String, Object?>;
+      final cleanGit = payload['cleanGitArchive'] as Map<String, Object?>;
+      expect(cleanGit['source'], 'local');
+      expect(cleanGit['registryId'], 'child_registry');
+      expect(cleanGit['gitRoot'], child.path);
+    },
+  );
+
+  test(
+    'project bundle clean git export falls back to cached public GitHub archive',
+    () async {
+      const projectId = 'bundle-github-project';
+      await db.createProject(projectId, 'Bundle GitHub', DateTime.now());
+      final outer = Directory(p.join(tempDir.path, 'outer_project'))
+        ..createSync(recursive: true);
+      await _insertProjectRegistry(
+        db,
+        id: 'outer_registry',
+        projectId: projectId,
+        displayName: 'Outer Project',
+        localPath: outer.path,
+        gitRoot: null,
+        updatedAtMillis: DateTime.now().millisecondsSinceEpoch,
+      );
+      await db.upsertProjectGitRemoteStatus(
+        projectId: projectId,
+        registryId: 'outer_registry',
+        provider: 'github',
+        owner: 'ppeck1',
+        repo: 'dev-launchpad',
+        remoteUrl: 'https://github.com/ppeck1/dev-launchpad.git',
+        htmlUrl: 'https://github.com/ppeck1/dev-launchpad',
+        visibility: 'public',
+        defaultBranch: 'main',
+        onlineHeadSha: 'abc123',
+        isPrivate: false,
+        isFork: false,
+        isArchived: false,
+        checkedAt: DateTime.now(),
+      );
+      state.dispose();
+      state = AppState(
+        db,
+        enableBackgroundSummaryRefresh: false,
+        githubArchiveFetcher: (identity, ref) async {
+          expect(identity.fullName, 'ppeck1/dev-launchpad');
+          expect(ref, 'abc123');
+          return [80, 75, 3, 4, 0, 0];
+        },
+      );
+
+      final preview = await state.previewProjectBundleExport(
+        projectId,
+        includeFiles: false,
+        includeCleanGitArchive: true,
+      );
+      expect(preview.cleanGitArchiveReady, isTrue);
+      expect(preview.warnings, isEmpty);
+
+      final zipPath = p.join(tempDir.path, 'bundle_github.zip');
+      await state.exportProjectBundleToZip(
+        projectId,
+        zipPath,
+        includeFiles: false,
+        includeCleanGitArchive: true,
+      );
+
+      final archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
+      expect(
+        archive.findFile('git/github_ppeck1_dev-launchpad_abc123.zip'),
+        isNotNull,
+      );
+      final payload =
+          jsonDecode(
+                utf8.decode(
+                  archive.findFile('project_bundle.json')!.content as List<int>,
+                ),
+              )
+              as Map<String, Object?>;
+      final cleanGit = payload['cleanGitArchive'] as Map<String, Object?>;
+      expect(cleanGit['source'], 'github');
+      expect(cleanGit['owner'], 'ppeck1');
+      expect(cleanGit['repo'], 'dev-launchpad');
+      expect(cleanGit['ref'], 'abc123');
+    },
+  );
 }
 
 void _makeCandidate(Directory tempDir, String name) {
@@ -1537,6 +2517,62 @@ Dev Launchpad owns execution/status display only.
     p.join(dir.path, 'archive', 'html2md.v1.rar'),
   ).writeAsBytesSync(List.filled(64, 1));
   return dir;
+}
+
+Future<void> _insertProjectRegistry(
+  AppDb db, {
+  required String id,
+  required String projectId,
+  required String displayName,
+  required String localPath,
+  required String? gitRoot,
+  required int updatedAtMillis,
+}) async {
+  await db.customStatement(
+    '''INSERT INTO project_registry (
+       id, atlas_project_id, display_name, local_path, git_root,
+       classification, review_state, notes, created_at, updated_at,
+       last_reviewed_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+    [
+      id,
+      projectId,
+      displayName,
+      localPath,
+      gitRoot,
+      'software',
+      'linked',
+      null,
+      updatedAtMillis,
+      updatedAtMillis,
+      updatedAtMillis,
+    ],
+  );
+}
+
+Future<void> _initCleanGitRepo(Directory dir) async {
+  File(p.join(dir.path, 'README.md')).writeAsStringSync('# Clean Repo\n');
+  await _runGit(dir, ['init']);
+  await _runGit(dir, ['config', 'user.email', 'atlas@example.test']);
+  await _runGit(dir, ['config', 'user.name', 'Project Atlas']);
+  await _runGit(dir, ['add', 'README.md']);
+  await _runGit(dir, ['commit', '-m', 'Initial commit']);
+}
+
+Future<void> _runGit(Directory dir, List<String> args) async {
+  final result = await Process.run(
+    'git',
+    args,
+    workingDirectory: dir.path,
+    stdoutEncoding: utf8,
+    stderrEncoding: utf8,
+  );
+  expect(
+    result.exitCode,
+    0,
+    reason:
+        'git ${args.join(' ')} failed\nstdout: ${result.stdout}\nstderr: ${result.stderr}',
+  );
 }
 
 Future<ProjectObservation> _scanOne(

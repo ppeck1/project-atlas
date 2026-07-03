@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
@@ -11,6 +12,7 @@ import '../../db/app_db.dart';
 import '../../services/github_remote_metadata_service.dart';
 import '../../services/local_git_visibility_service.dart';
 import '../../services/local_project_refresh_service.dart';
+import '../../services/project_runtime_service.dart' as runtime;
 import '../../services/project_summary_models.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
@@ -1108,6 +1110,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   projectId: widget.projectId,
                   project: project,
                   onEdit: () => _showIdentityDialog(context, project),
+                  onReplaceGithub: () => _replaceGithubMetadata(context),
+                  onForgetGithub: () => _forgetGithubMetadata(context),
                 ),
               ),
               _Section(
@@ -1126,6 +1130,17 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                       _showProjectBundleExportDialog(context, project.title),
                   onInspectGit: () => _showGitVisibilityDialog(context),
                   onRefreshGithub: () => _refreshGithubMetadata(context),
+                ),
+              ),
+              _Section(
+                id: 'runtime',
+                title: 'Runtime',
+                subtitle: 'Launch, tests, and capsule checks',
+                expanded: _expandedSection == 'runtime',
+                onTap: () => _toggleSection('runtime'),
+                child: _ProjectRuntimeSection(
+                  projectId: widget.projectId,
+                  onEdit: () => _showMetaDialog(context, project),
                 ),
               ),
               _Section(
@@ -1185,6 +1200,17 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     await state.deleteProjectDecision(d.id);
                     await _loadAll();
                   },
+                ),
+              ),
+              _Section(
+                id: 'change_log',
+                title: 'Change Log',
+                subtitle: 'Who changed what, and when',
+                expanded: _expandedSection == 'change_log',
+                onTap: () => _toggleSection('change_log'),
+                child: _ProjectChangeLogSection(
+                  projectId: widget.projectId,
+                  workItemIds: _workItems.map((item) => item.id).toSet(),
                 ),
               ),
               _Section(
@@ -1479,6 +1505,110 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('GitHub metadata refresh failed: $error')),
+      );
+    }
+  }
+
+  Future<void> _replaceGithubMetadata(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final existing = await state.getLatestProjectGitRemoteStatus(
+      widget.projectId,
+    );
+    if (!context.mounted) return;
+    final ctrl = TextEditingController(
+      text: existing?.htmlUrl ?? existing?.remoteUrl ?? '',
+    );
+    final remoteUrl = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _kPanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: _kLine),
+        ),
+        title: const Text('Replace GitHub repository'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'GitHub URL',
+            hintText: 'https://github.com/owner/repo',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
+            icon: const Icon(Icons.save_outlined, size: 16),
+            label: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (remoteUrl == null || remoteUrl.trim().isEmpty) return;
+    try {
+      final status = await state.saveManualProjectGithubRemoteMetadata(
+        widget.projectId,
+        remoteUrl,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('GitHub repository saved: ${status.fullName}.')),
+      );
+      setState(() {});
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('GitHub repository save failed: $error')),
+      );
+    }
+  }
+
+  Future<void> _forgetGithubMetadata(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _kPanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: _kLine),
+        ),
+        title: const Text('Forget cached GitHub repository?'),
+        content: const Text(
+          'Atlas will remove the cached GitHub metadata for this project. This does not edit the local git remote on disk.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: const Text('Forget'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await AppStateScope.of(
+        context,
+      ).clearProjectGithubRemoteMetadata(widget.projectId);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cached GitHub repository forgotten.')),
+      );
+      setState(() {});
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('GitHub repository forget failed: $error')),
       );
     }
   }
@@ -3442,6 +3572,308 @@ class _EvidencePacketPreview extends StatelessWidget {
   }
 }
 
+class _ProjectChangeLogSection extends StatefulWidget {
+  final String projectId;
+  final Set<String> workItemIds;
+
+  const _ProjectChangeLogSection({
+    required this.projectId,
+    required this.workItemIds,
+  });
+
+  @override
+  State<_ProjectChangeLogSection> createState() =>
+      _ProjectChangeLogSectionState();
+}
+
+class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
+  String _window = '30';
+
+  DateTime? get _since {
+    final days = switch (_window) {
+      '7' => 7,
+      '30' => 30,
+      '90' => 90,
+      _ => null,
+    };
+    return days == null ? null : DateTime.now().subtract(Duration(days: days));
+  }
+
+  List<EventLogData> _filter(List<EventLogData> rows) {
+    final since = _since;
+    return rows
+        .where((event) {
+          if (since != null && event.timestamp.isBefore(since)) return false;
+          if (event.entityId == widget.projectId) return true;
+          if (event.entityType == 'work_item' &&
+              event.entityId != null &&
+              widget.workItemIds.contains(event.entityId)) {
+            return true;
+          }
+          final input = event.inputJson ?? '';
+          final output = event.outputJson ?? '';
+          return input.contains(widget.projectId) ||
+              output.contains(widget.projectId);
+        })
+        .take(80)
+        .toList(growable: false);
+  }
+
+  Future<void> _copyJson(List<EventLogData> rows) async {
+    final data = rows.map(_eventToJson).toList();
+    await Clipboard.setData(
+      ClipboardData(text: const JsonEncoder.withIndent('  ').convert(data)),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Copied ${rows.length} project log event(s).')),
+    );
+  }
+
+  Map<String, Object?> _eventToJson(EventLogData event) => {
+    'id': event.id,
+    'timestamp': event.timestamp.toIso8601String(),
+    'actor': _actorForEvent(event),
+    'summary': _summaryForEvent(event),
+    'level': event.level,
+    'area': event.area,
+    'action': event.action,
+    'entityType': event.entityType,
+    'entityId': event.entityId,
+    'inputJson': event.inputJson,
+    'outputJson': event.outputJson,
+    'error': event.error,
+    'stackTrace': event.stackTrace,
+    'correlationId': event.correlationId,
+  };
+
+  String _actorForEvent(EventLogData event) {
+    final output = _tryParseJsonObject(event.outputJson);
+    final actor = output['actor'];
+    if (actor is Map) {
+      final displayName =
+          actor['displayName']?.toString() ?? actor['name']?.toString();
+      if (displayName != null && displayName.trim().isNotEmpty) {
+        return displayName.trim();
+      }
+    } else if (actor is String && actor.trim().isNotEmpty) {
+      return actor.trim();
+    }
+    final agent = output['agent']?.toString().trim();
+    if (agent != null && agent.isNotEmpty) {
+      final lower = agent.toLowerCase();
+      if (lower == 'codex') return 'Codex';
+      if (lower == 'operator') return 'Operator';
+      return agent;
+    }
+    if (event.area == 'ai') return 'AI';
+    return 'Atlas';
+  }
+
+  String _summaryForEvent(EventLogData event) {
+    final changed = _changedFields(event);
+    if (changed.isNotEmpty) {
+      return 'Changed ${changed.keys.join(', ')}';
+    }
+    return _labelForAction(event.action);
+  }
+
+  Map<String, Object?> _changedFields(EventLogData event) {
+    final output = _tryParseJsonObject(event.outputJson);
+    final changed = output['changedFields'];
+    if (changed is Map) {
+      return changed.map((key, value) => MapEntry('$key', value));
+    }
+    return const <String, Object?>{};
+  }
+
+  String _labelForAction(String action) {
+    return action
+        .split('_')
+        .where((part) => part.isNotEmpty)
+        .map(
+          (part) => part.length == 1
+              ? part.toUpperCase()
+              : '${part[0].toUpperCase()}${part.substring(1)}',
+        )
+        .join(' ');
+  }
+
+  Color _levelColor(String level) => switch (level) {
+    'error' => const Color(0xFFFF8A80),
+    'warn' => Colors.amber,
+    'debug' => Colors.white38,
+    _ => _kPrimary,
+  };
+
+  String _formatValue(Object? value) {
+    if (value == null) return 'blank';
+    final text = '$value'.trim();
+    if (text.isEmpty) return 'blank';
+    return text.length <= 90 ? text : '${text.substring(0, 90)}...';
+  }
+
+  Widget _changedFieldsView(EventLogData event) {
+    final changed = _changedFields(event);
+    if (changed.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(6),
+        border: Border.all(color: _kLine),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: changed.entries.map((entry) {
+          final value = entry.value;
+          Object? from;
+          Object? to;
+          if (value is Map) {
+            from = value['from'];
+            to = value['to'];
+          }
+          final detail = value is Map
+              ? '${_formatValue(from)} -> ${_formatValue(to)}'
+              : _formatValue(value);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              '${entry.key}: $detail',
+              style: const TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _rawBlock(String label, String? value) {
+    if (value == null || value.trim().isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(40),
+        border: Border.all(color: _kLine),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: SelectableText(
+        '$label:\n$value',
+        style: const TextStyle(fontSize: 11, color: Colors.white70),
+      ),
+    );
+  }
+
+  Widget _eventRow(EventLogData event) {
+    final color = _levelColor(event.level);
+    final summary = _summaryForEvent(event);
+    final actor = _actorForEvent(event);
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(6),
+        border: Border.all(color: _kLine),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 10),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          leading: Icon(Icons.history, color: color, size: 18),
+          title: Text(
+            summary,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text(
+            '$actor - ${_compactDateTime(event.timestamp)} - ${event.area}.${event.action}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, color: Colors.white38),
+          ),
+          trailing: _Pill(label: event.level, color: color),
+          children: [
+            _changedFieldsView(event),
+            _rawBlock('Input', event.inputJson),
+            _rawBlock('Output', event.outputJson),
+            _rawBlock('Error', event.error),
+            _rawBlock('Stack', event.stackTrace),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return StreamBuilder<List<EventLogData>>(
+      stream: state.watchRecentEvents(),
+      builder: (context, snap) {
+        final rows = _filter(snap.data ?? const <EventLogData>[]);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _MiniPill('Events', '${rows.length}'),
+                DropdownButton<String>(
+                  value: _window,
+                  items: const [
+                    DropdownMenuItem(value: '7', child: Text('Last 7 days')),
+                    DropdownMenuItem(value: '30', child: Text('Last 30 days')),
+                    DropdownMenuItem(value: '90', child: Text('Last 90 days')),
+                    DropdownMenuItem(value: 'all', child: Text('All recent')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() => _window = value);
+                  },
+                ),
+                OutlinedButton.icon(
+                  onPressed: rows.isEmpty ? null : () => _copyJson(rows),
+                  icon: const Icon(Icons.data_object, size: 16),
+                  label: const Text('Copy JSON'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (rows.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(6),
+                  border: Border.all(color: _kLine),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'No project events in this window.',
+                  style: TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+              )
+            else
+              ...rows.map(
+                (event) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _eventRow(event),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _SummaryRunProvenance extends StatelessWidget {
   final String projectId;
 
@@ -4136,10 +4568,14 @@ class _IdentitySection extends StatelessWidget {
   final String projectId;
   final Project project;
   final VoidCallback onEdit;
+  final VoidCallback onReplaceGithub;
+  final VoidCallback onForgetGithub;
   const _IdentitySection({
     required this.projectId,
     required this.project,
     required this.onEdit,
+    required this.onReplaceGithub,
+    required this.onForgetGithub,
   });
 
   @override
@@ -4181,7 +4617,11 @@ class _IdentitySection extends StatelessWidget {
           onEdit: onEdit,
         ),
         const Divider(height: 1, color: Color(0x44273044)),
-        _GithubIdentityRow(projectId: projectId),
+        _GithubIdentityRow(
+          projectId: projectId,
+          onReplaceGithub: onReplaceGithub,
+          onForgetGithub: onForgetGithub,
+        ),
       ],
     );
   }
@@ -4189,8 +4629,14 @@ class _IdentitySection extends StatelessWidget {
 
 class _GithubIdentityRow extends StatelessWidget {
   final String projectId;
+  final VoidCallback onReplaceGithub;
+  final VoidCallback onForgetGithub;
 
-  const _GithubIdentityRow({required this.projectId});
+  const _GithubIdentityRow({
+    required this.projectId,
+    required this.onReplaceGithub,
+    required this.onForgetGithub,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -4201,14 +4647,15 @@ class _GithubIdentityRow extends StatelessWidget {
         final remote = remoteSnap.data;
         if (remote != null) {
           final details = [
-            remote.htmlUrl ?? remote.remoteUrl,
+            'Cached: ${remote.htmlUrl ?? remote.remoteUrl}',
             if ((remote.visibility ?? '').isNotEmpty) remote.visibility!,
             if (remote.hasError) 'warning saved',
           ];
-          return _FieldRow(
-            label: 'GitHub repository',
+          return _GithubRepositoryControls(
             value: details.join(' - '),
-            placeholder: 'No GitHub repository recorded',
+            onReplaceGithub: onReplaceGithub,
+            onForgetGithub: onForgetGithub,
+            canForget: true,
           );
         }
         if (remoteSnap.connectionState == ConnectionState.waiting) {
@@ -4225,10 +4672,11 @@ class _GithubIdentityRow extends StatelessWidget {
               observationSnap.data?.remoteUrl,
             );
             if (identity != null) {
-              return _FieldRow(
-                label: 'GitHub repository',
-                value: identity.htmlUrl,
-                placeholder: 'No GitHub repository recorded',
+              return _GithubRepositoryControls(
+                value: 'Observed origin: ${identity.htmlUrl}',
+                onReplaceGithub: onReplaceGithub,
+                onForgetGithub: onForgetGithub,
+                canForget: false,
               );
             }
             if (observationSnap.connectionState == ConnectionState.waiting) {
@@ -4238,16 +4686,449 @@ class _GithubIdentityRow extends StatelessWidget {
                 placeholder: '',
               );
             }
-            return const _FieldRow(
-              label: 'GitHub repository',
+            return _GithubRepositoryControls(
               value: null,
-              placeholder: 'No GitHub repository recorded',
+              onReplaceGithub: onReplaceGithub,
+              onForgetGithub: onForgetGithub,
+              canForget: false,
             );
           },
         );
       },
     );
   }
+}
+
+class _GithubRepositoryControls extends StatelessWidget {
+  final String? value;
+  final VoidCallback onReplaceGithub;
+  final VoidCallback onForgetGithub;
+  final bool canForget;
+
+  const _GithubRepositoryControls({
+    required this.value,
+    required this.onReplaceGithub,
+    required this.onForgetGithub,
+    required this.canForget,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _FieldRow(
+          label: 'GitHub repository',
+          value: value,
+          placeholder: 'No GitHub repository recorded',
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 140, bottom: 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onReplaceGithub,
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: const Text('Replace GitHub'),
+              ),
+              OutlinedButton.icon(
+                onPressed: canForget ? onForgetGithub : null,
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: const Text('Forget cached'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProjectRuntimeSection extends StatefulWidget {
+  final String projectId;
+  final VoidCallback onEdit;
+
+  const _ProjectRuntimeSection({required this.projectId, required this.onEdit});
+
+  @override
+  State<_ProjectRuntimeSection> createState() => _ProjectRuntimeSectionState();
+}
+
+class _ProjectRuntimeSectionState extends State<_ProjectRuntimeSection> {
+  bool _launching = false;
+  String? _testingCommand;
+  bool _checkingCapsule = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return StreamBuilder<ProjectRuntimeProfile?>(
+      stream: state.watchProjectRuntimeProfile(widget.projectId),
+      builder: (context, profileSnap) {
+        final profile = profileSnap.data;
+        if (profileSnap.connectionState == ConnectionState.waiting) {
+          return const LinearProgressIndicator(minHeight: 2);
+        }
+        if (profile == null || !profile.enabled) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'No runtime profile configured.',
+                style: TextStyle(fontSize: 13, color: Colors.white38),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: widget.onEdit,
+                icon: const Icon(Icons.settings_outlined, size: 16),
+                label: const Text('Configure runtime'),
+              ),
+            ],
+          );
+        }
+        final tests = runtime.decodeStringList(profile.testCommandsJson);
+        final ports = runtime.decodeIntList(profile.portsJson);
+        final urls = runtime.decodeRuntimeUrls(profile.urlsJson);
+        final healthUrls = runtime.decodeStringList(profile.healthUrlsJson);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MiniPill('Mode', profile.enabled ? 'enabled' : 'off'),
+                if (profile.capsuleEnabled)
+                  _MiniPill('Capsule', profile.capsuleMode)
+                else
+                  const _MiniPill('Capsule', 'off'),
+                if (profile.autostart) const _MiniPill('Autostart', 'yes'),
+                if (ports.isNotEmpty) _MiniPill('Ports', ports.join(', ')),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _FieldRow(
+              label: 'Working directory',
+              value: profile.workingDirectory,
+              placeholder: 'Not configured',
+              onEdit: widget.onEdit,
+            ),
+            const Divider(height: 1, color: Color(0x44273044)),
+            _FieldRow(
+              label: 'Launch command',
+              value: profile.launchCommand,
+              placeholder: 'Not configured',
+              onEdit: widget.onEdit,
+            ),
+            const Divider(height: 1, color: Color(0x44273044)),
+            _FieldRow(
+              label: 'Stop command',
+              value: profile.stopCommand,
+              placeholder: 'Not configured',
+              onEdit: widget.onEdit,
+            ),
+            if (urls.isNotEmpty) ...[
+              const Divider(height: 1, color: Color(0x44273044)),
+              _FieldRow(
+                label: 'URLs',
+                value: urls.map((url) => '${url.label}: ${url.url}').join('\n'),
+                placeholder: '',
+              ),
+            ],
+            if (healthUrls.isNotEmpty) ...[
+              const Divider(height: 1, color: Color(0x44273044)),
+              _FieldRow(
+                label: 'Health URLs',
+                value: healthUrls.join('\n'),
+                placeholder: '',
+              ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: _launching
+                      ? null
+                      : () => _runRuntimeAction(
+                          label: 'Launch',
+                          busy: 'launch',
+                          body: () =>
+                              state.launchProjectRuntime(widget.projectId),
+                        ),
+                  icon: _launching
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.rocket_launch_outlined, size: 16),
+                  label: const Text('Launch'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: profile.capsuleEnabled && !_checkingCapsule
+                      ? () => _runRuntimeAction(
+                          label: 'Capsule',
+                          busy: 'capsule',
+                          body: () =>
+                              state.runProjectRuntimeCapsule(widget.projectId),
+                          showResult: true,
+                        )
+                      : null,
+                  icon: _checkingCapsule
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.health_and_safety_outlined, size: 16),
+                  label: const Text('Capsule'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: widget.onEdit,
+                  icon: const Icon(Icons.edit_note_outlined, size: 16),
+                  label: const Text('Edit'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (tests.isEmpty)
+              const Text(
+                'No test commands configured.',
+                style: TextStyle(fontSize: 12, color: Colors.white38),
+              )
+            else ...[
+              const Text(
+                'Tests',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              ...tests.map(
+                (command) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: SelectableText(
+                          command,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.white70,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _testingCommand == null
+                            ? () => _runRuntimeAction(
+                                label: 'Test',
+                                busy: 'test',
+                                command: command,
+                                body: () => state.runProjectRuntimeTest(
+                                  widget.projectId,
+                                  command: command,
+                                ),
+                                showResult: true,
+                              )
+                            : null,
+                        icon: _testingCommand == command
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.fact_check_outlined, size: 16),
+                        label: const Text('Run'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            _RuntimeRunHistory(projectId: widget.projectId),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _runRuntimeAction({
+    required String label,
+    required String busy,
+    required Future<ProjectRuntimeRun> Function() body,
+    String? command,
+    bool showResult = false,
+  }) async {
+    setState(() {
+      if (busy == 'launch') _launching = true;
+      if (busy == 'capsule') _checkingCapsule = true;
+      if (busy == 'test') _testingCommand = command ?? '';
+    });
+    try {
+      final run = await body();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_runtimeRunMessage(label, run))));
+      if (showResult && mounted) {
+        await showDialog<void>(
+          context: context,
+          builder: (_) => _RuntimeRunDialog(run: run, label: label),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$label failed: $error')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (busy == 'launch') _launching = false;
+          if (busy == 'capsule') _checkingCapsule = false;
+          if (busy == 'test') _testingCommand = null;
+        });
+      }
+    }
+  }
+}
+
+class _RuntimeRunHistory extends StatelessWidget {
+  final String projectId;
+
+  const _RuntimeRunHistory({required this.projectId});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppStateScope.of(context);
+    return StreamBuilder<List<ProjectRuntimeRun>>(
+      stream: state.watchProjectRuntimeRuns(projectId, limit: 8),
+      builder: (context, snap) {
+        final runs = snap.data ?? const <ProjectRuntimeRun>[];
+        if (runs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Recent runtime runs',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            ...runs.map(
+              (run) => ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  _runtimeRunIcon(run),
+                  size: 18,
+                  color: _runtimeRunColor(run),
+                ),
+                title: Text(
+                  '${run.action} - ${run.status}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${_compactDateTime(run.startedAt)}'
+                  '${run.capsuleStatus == null ? '' : ' - capsule ${run.capsuleStatus}'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: const Icon(Icons.chevron_right, size: 16),
+                onTap: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => _RuntimeRunDialog(
+                    run: run,
+                    label: _runtimeActionLabel(run.action),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _RuntimeRunDialog extends StatelessWidget {
+  final ProjectRuntimeRun run;
+  final String label;
+
+  const _RuntimeRunDialog({required this.run, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = [
+      'Status: ${run.status}',
+      'Started: ${_compactDateTime(run.startedAt)}',
+      if (run.completedAt != null)
+        'Completed: ${_compactDateTime(run.completedAt)}',
+      if ((run.capsuleStatus ?? '').isNotEmpty) 'Capsule: ${run.capsuleStatus}',
+      if ((run.command ?? '').isNotEmpty) 'Command: ${run.command}',
+      if (run.exitCode != null) 'Exit code: ${run.exitCode}',
+      if ((run.outputText ?? '').isNotEmpty) '\nOutput:\n${run.outputText}',
+      if ((run.errorText ?? '').isNotEmpty) '\nError:\n${run.errorText}',
+      if ((run.capsuleOutputText ?? '').isNotEmpty)
+        '\nCapsule output:\n${run.capsuleOutputText}',
+    ].join('\n');
+    return AlertDialog(
+      title: Text('$label result'),
+      content: SizedBox(
+        width: 760,
+        height: 480,
+        child: SelectableText(
+          text,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
+IconData _runtimeRunIcon(ProjectRuntimeRun run) => switch (run.action) {
+  'launch' => Icons.rocket_launch_outlined,
+  'test' => Icons.fact_check_outlined,
+  'capsule' => Icons.health_and_safety_outlined,
+  _ => Icons.terminal_outlined,
+};
+
+Color _runtimeRunColor(ProjectRuntimeRun run) => switch (run.status) {
+  'succeeded' || 'started' => const Color(0xFF4CAF50),
+  'running' => _kPrimary,
+  'failed' => const Color(0xFFFF8A80),
+  _ => Colors.white54,
+};
+
+String _runtimeActionLabel(String action) => switch (action) {
+  'launch' => 'Launch',
+  'test' => 'Test',
+  'capsule' => 'Capsule',
+  _ => action,
+};
+
+String _runtimeRunMessage(String label, ProjectRuntimeRun run) {
+  final capsule = (run.capsuleStatus ?? '').isEmpty
+      ? ''
+      : ' Capsule: ${run.capsuleStatus}.';
+  if (run.status == 'started') return '$label started.$capsule';
+  if (run.status == 'succeeded') return '$label succeeded.$capsule';
+  return '$label ${run.status}.$capsule';
 }
 
 class _LocalRepoSection extends StatelessWidget {

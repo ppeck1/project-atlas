@@ -439,3 +439,65 @@ class LocalProjectRefreshItems extends Table {
     'UNIQUE(registry_id, source_kind, source_key)',
   ];
 }
+
+// ---------------------------------------------------------------------------
+// Project Runtime Profiles (v19)
+// ---------------------------------------------------------------------------
+
+@DataClassName('ProjectRuntimeProfile')
+class ProjectRuntimeProfiles extends Table {
+  @override
+  String get tableName => 'project_runtime_profiles';
+
+  TextColumn get id => text()();
+  TextColumn get projectId => text().references(Projects, #id)();
+  BoolColumn get enabled => boolean().withDefault(const Constant(false))();
+  TextColumn get workingDirectory => text().nullable()();
+  TextColumn get launchCommand => text().nullable()();
+  TextColumn get stopCommand => text().nullable()();
+  TextColumn get testCommandsJson => text().withDefault(const Constant('[]'))();
+  TextColumn get portsJson => text().withDefault(const Constant('[]'))();
+  TextColumn get urlsJson => text().withDefault(const Constant('[]'))();
+  TextColumn get healthUrlsJson => text().withDefault(const Constant('[]'))();
+  TextColumn get notes => text().nullable()();
+  BoolColumn get autostart => boolean().withDefault(const Constant(false))();
+  BoolColumn get capsuleEnabled =>
+      boolean().withDefault(const Constant(true))();
+  TextColumn get capsuleMode => text().withDefault(const Constant('check'))();
+  TextColumn get capsuleSourcePath => text().nullable()();
+  TextColumn get capsuleProfile => text().nullable()();
+  TextColumn get importSource => text().nullable()();
+  DateTimeColumn get lastImportedAt => dateTime().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+
+  @override
+  List<String> get customConstraints => ['UNIQUE(project_id)'];
+}
+
+@DataClassName('ProjectRuntimeRun')
+class ProjectRuntimeRuns extends Table {
+  @override
+  String get tableName => 'project_runtime_runs';
+
+  TextColumn get id => text()();
+  TextColumn get profileId => text().references(ProjectRuntimeProfiles, #id)();
+  TextColumn get projectId => text().references(Projects, #id)();
+  TextColumn get action => text()();
+  TextColumn get command => text().nullable()();
+  TextColumn get status => text()();
+  DateTimeColumn get startedAt => dateTime()();
+  DateTimeColumn get completedAt => dateTime().nullable()();
+  IntColumn get exitCode => integer().nullable()();
+  TextColumn get outputText => text().nullable()();
+  TextColumn get errorText => text().nullable()();
+  TextColumn get capsuleStatus => text().nullable()();
+  TextColumn get capsuleOutputText => text().nullable()();
+  TextColumn get metadataJson => text().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+}

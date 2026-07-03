@@ -1,6 +1,6 @@
 # Project Atlas — Handoff Document
 
-> Current as of v1.3.0+1, schema v18. Updated alongside each release.
+> Current as of v1.3.0+1, schema v19. Updated alongside each release.
 
 ---
 
@@ -58,6 +58,8 @@ The extraction helpers live in `lib/db/document_extractor.dart` as standalone pu
 
 **Read-only GitHub Remote Metadata.** Project Detail > Local Repo can refresh cached GitHub metadata for a linked project when the latest local observation has a GitHub `origin` remote. `GithubRemoteMetadataService` parses HTTPS/SSH GitHub remotes, sanitizes credential-bearing URLs before storing, and calls `gh api` only for read-only repository metadata and default-branch HEAD. Results are saved in `project_git_remotes` with visibility, default branch, online HEAD SHA, timestamps, and any access/error message. This is a cache, not a publish/sync engine: Atlas does not push, create repos, clone, change visibility, or mutate GitHub.
 
+**Project runtime profiles are operator-configured, never inferred.** `ProjectRuntimeService` (v19) executes launch/test/capsule actions using only commands the operator typed into the profile (or explicitly imported from a local Dev Launchpad YAML). Launch opens a visible PowerShell window via `Start-Process` and polls configured health URLs; tests run headless with timeouts; every action writes a `project_runtime_runs` history row with status, exit code, and output. There is no background supervisor: `autostart` is stored but unused, and Atlas does not watch, restart, or kill processes outside the recorded run. The default Dev Launchpad/capsule/Python paths in `project_runtime_service.dart` are machine-specific constants from the original development machine and must be reconfigured per machine.
+
 **Project merge is source-to-target reassignment.** The Projects list exposes a merge action. `AppDb.mergeProjects()` moves source-linked stages, documents, people, risks, decisions, media, drafts, registry links, and unique tag assignments to the target project, preserves app-owned file paths, updates active project/stage metadata where needed, then marks the source project `status='deleted'` with a merge reason and logs `projects/merge_projects`.
 
 ---
@@ -73,11 +75,11 @@ lib/
   services/      ollama_service.dart, telegram_service.dart, app_logger.dart,
                  project_summary_models.dart, local_operations_scanner.dart,
                  local_project_refresh_service.dart, local_git_visibility_service.dart,
-                 github_remote_metadata_service.dart,
+                 github_remote_metadata_service.dart, project_runtime_service.dart,
                  atlas_agent_service.dart
   features/
     today/       today_screen.dart, work_item_detail_sheet.dart
-    projects/    projects_screen.dart, project_detail_screen.dart
+    projects/    projects_screen.dart, project_detail_screen.dart, project_metadata_dialog.dart
     operations/  operations_screen.dart
     library/     library_screen.dart
     settings/    settings_screen.dart (tabs: Integrations, AI Summaries, Activity Log, Export, Workforce, Admin)
@@ -129,7 +131,7 @@ flutter test
 
 ---
 
-## Schema Overview (v18)
+## Schema Overview (v19)
 
 | Table | Purpose |
 |-------|---------|
@@ -164,6 +166,8 @@ flutter test
 | `project_enrichment_steps` | Worker-level enrichment step ledger (v16, raw SQL compatibility table) |
 | `project_enrichment_proposals` | Worker-level enrichment proposal ledger (v16, raw SQL compatibility table) |
 | `llm_task_queue` | Persisted MCP/local harness queue with claim/complete/fail plus operator edit/cancel/requeue lifecycle (v17, raw SQL compatibility table) |
+| `project_runtime_profiles` | Per-project software runtime configuration: launch/stop/test commands, ports, URLs, health checks, capsule settings (v19) |
+| `project_runtime_runs` | Runtime action history with status, exit code, and captured output (v19) |
 
 **v10 addition:** `UNIQUE INDEX idx_daily_reviews_date` on `daily_reviews(review_date)` — enables safe date-keyed upsert via `saveDailyReview()`. Stage CRUD methods (`addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`) added to `AppDb` and `AppState`; no UI hooked up yet.
 
@@ -180,6 +184,8 @@ flutter test
 **v16 addition:** Enrichment loop worker ledgers. `project_enrichment_steps` records per-worker step status/output, and `project_enrichment_proposals` records worker-level proposal payloads for agent-array enrichment runs.
 
 **v17 addition:** LLM task queue. `llm_task_queue` stores project-scoped pending/leased/completed/failed/cancelled jobs for MCP and the future local harness. The Project Detail screen opens with a collapsible Tasks panel containing normal project tasks and an editable LLM queue subsection; operators can open, move, edit, cancel, and requeue tasks. Editing a leased task clears the lease and returns it to pending so stale worker output cannot complete the corrected task. Queue completion may link to a reviewable agent proposal draft; it does not bypass human approval.
+
+**v19 addition:** Project runtime profiles. `project_runtime_profiles` stores one opt-in runtime configuration per project (working directory, launch/stop/test commands, ports, URLs, health URLs, capsule settings, Dev Launchpad import provenance), and `project_runtime_runs` records each Launch/Test/Capsule action with status, exit code, and output. Project Detail shows a Runtime section with run history; the Projects list shows runtime quick actions colored by the latest run status. Both tables are also created via `CREATE TABLE IF NOT EXISTS` in the startup repair path.
 
 **v18 addition:** Project categories and media links. `projects.category` stores free-text grouping metadata used by Projects and Project Detail. `media_links` attaches existing project media to work items or LLM queue tasks without duplicating the file record. Work Item Detail can attach/unlink media for task context, Project Detail can attach/unlink media on queued LLM tasks, and MCP `get_llm_task` includes attached media metadata for local harness workers.
 
@@ -229,6 +235,7 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 | `completed` boolean on work items | Legacy. `status='done'` is canonical. Both are kept in sync but only `status` should be used in logic. |
 | `accepted` on drafts | Schema column exists but is never set or checked. |
 | `project_risks`/`project_decisions` legacy `updated_at` | Resolved: startup repair adds missing columns; INSERT methods fall back to `customStatement` with explicit timestamp when `updated_at NOT NULL` constraint is present on older databases. |
+| Runtime profile defaults | Dev Launchpad/capsule/Python default paths in `project_runtime_service.dart` are machine-specific constants; configure per-machine values in the project metadata dialog. |
 | PDF in-app rendering | PDF files open in the system viewer. No in-app PDF rendering; `pdfx`/PDFium integration is a future milestone. |
 | DOC (legacy Word) | `.doc` files show the external viewer button; no text extraction. Only `.docx` (OOXML ZIP format) supports text extraction. |
 

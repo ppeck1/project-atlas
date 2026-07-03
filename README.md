@@ -8,7 +8,7 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 
 - Version: `1.3.0+1`
 - Platform target: Flutter desktop, currently Windows-oriented
-- Storage: local SQLite via Drift, schema version `18`
+- Storage: local SQLite via Drift, schema version `19`
 - Primary navigation: Today, Projects, Operations, Library, Settings
 - Legacy deep links still available: Dashboard, Work, Review, Export, Governance, Backend Log
 - Optional local AI: Ollama drafts, Today/Review summaries, and work-item analysis remain human-in-the-loop
@@ -17,7 +17,9 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Contacts / workforce directory with JSON and CSV import/export
 - Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
 - Owner pickers on work items, project owners, and governance stages — all linked to the contact directory
-- Project organization: category grouping, pinned categories/projects, category and project sorting, tag assignment, project filters for context/status/phase/priority, status descriptors for Open/Review/Inactive/Closed lifecycle states, and project merge
+- Project organization: category grouping, pinned categories/projects, category visibility selection, category and project sorting, tag assignment, project filters for context/status/phase/priority, status descriptors for Open/Review/Inactive/Closed lifecycle states, and project merge
+- Project runtime profiles: opt-in per-project launch/stop/test commands, ports, URLs, and health checks with Launch/Test/Capsule actions, run history, Dev Launchpad YAML import, and Project Ops Capsule integration — commands are operator-configured and never invented by the app
+- Project change log: per-project event history with changed-field views and JSON copy in Project Detail
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
 - Project governance: people roster, risk register, decision log
 - Project media: app-owned image/file gallery with cover-image selection; media can be attached to work items and queued LLM tasks; local refresh imports discovered image, video, and audio files from linked project folders
@@ -36,6 +38,8 @@ These screenshots use demo data and reflect the current UI structure.
 ![Today screen](docs/screenshots/today.png)
 
 ![Projects screen](docs/screenshots/projects.png)
+
+![Operations screen](docs/screenshots/operations.png)
 
 ![Library screen](docs/screenshots/library.png)
 
@@ -76,9 +80,9 @@ After changing Drift tables or database code, rerun build runner before launchin
 | Screen | Current role |
 | --- | --- |
 | Today | Focus list for doing, overdue, due today, phone queue, blocked, and high-priority work |
-| Projects | Category-grouped project list with pinned category/project ordering, active project switching, lifecycle metadata, tag/status/phase/priority filters, project merge, project bundle export, detail entry point |
-| Project Detail | Collapsible task header with project tasks and editable/movable LLM queue items with media attachments, identity, scope, lifecycle fields, local repo refresh preview/apply for docs/media/native rows, read-only git visibility inspection, project bundle preview/export, people roster, risk register, decision log, media gallery, tag assignment |
-| Operations | Manual local project scans, reviewable observations, local registry records, create/update existing Project bridge, enrichment run dashboard/findings, warnings, scan JSON copy/export, warnings JSON save, and app scan-folder access |
+| Projects | Category-grouped project list with pinned category/project ordering, category visibility, runtime quick actions (launch/test/capsule), active project switching, lifecycle metadata, tag/status/phase/priority filters, project merge, project bundle export wizard, detail entry point |
+| Project Detail | Collapsible task header with project tasks and editable/movable LLM queue items with media attachments, identity, scope, lifecycle fields, runtime profile section with run history, project change log, local repo refresh preview/apply for docs/media/native rows, read-only git visibility inspection, project bundle preview/export, people roster, risk register, decision log, media gallery, tag assignment |
+| Operations | Manual local project scans, reviewable observations, local registry records, create/update existing Project bridge, enrichment run dashboard/findings, Project Health tab with grouped finding actions (dismiss/suppress/mark reviewed), warnings, scan JSON copy/export, warnings JSON save, and app scan-folder access |
 | Library | Documents, project media, and AI drafts with search, project/type filters, native file picker import, copy, preview, and file-open actions |
 | Settings | Integrations, AI summary setup, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
 | Work | Legacy stage/task list with editable work items |
@@ -186,6 +190,16 @@ AI actions available:
 - The MCP tool registry lives in `lib/mcp/atlas_mcp_server.dart`. It exposes reads, Atlas-only enrichment triggers, LLM queue lifecycle tools, and proposal-creation tools; approval/rejection stays in the desktop review queue. Project Detail lets the operator edit, move, cancel, requeue, and attach media to LLM tasks. MCP `get_llm_task` returns attached media metadata for harness context. Queue completion can attach a proposed handoff as a reviewable draft instead of directly mutating project state.
 - The service does not delete projects, overwrite manifests, push/fetch Git, or mutate discovered repositories. Human review remains the approval boundary.
 
+## Project Runtime Profiles
+
+Each project can opt into a **software runtime profile**: working directory, launch command, stop command, test commands, ports, URLs, and health-check URLs. Configure it in the project metadata dialog (Software runtime section) or import it from a local Dev Launchpad YAML.
+
+- **Launch** opens the configured command in a visible PowerShell window and polls the health URLs.
+- **Test** runs the configured test commands headless and records output and exit codes.
+- **Capsule** runs the Project Ops Capsule tooling for the project when enabled.
+
+Every action is recorded in a per-project run history (status, exit code, output). All commands are operator-entered; Atlas never generates or auto-runs commands, and the stored `autostart` flag is not acted on. Default Dev Launchpad/capsule paths are machine-specific and must be set per machine.
+
 ## Telegram
 
 Telegram is outbound only.
@@ -200,7 +214,7 @@ All user text is HTML-escaped before sending. Send attempts are tracked in the l
 ## Database
 
 - Engine: SQLite via Drift `NativeDatabase`
-- Schema version: `18`
+- Schema version: `19`
 - Windows data path: `%APPDATA%\<company>\project_atlas\project_atlas.sqlite` — exact path depends on build; use **Settings → Admin → Open app data folder** to locate it
 - Operations scan artifacts: `<app support>\operations_scans\` with `runs`, `warnings`, and `logs` subfolders
 - Encryption: plaintext SQLite (no encryption library included; SQLCipher integration is planned for a future release)
@@ -215,7 +229,7 @@ lib/
   app/           App widget, router, theme
   db/            Drift tables, AppDb, database open path, document_extractor
   mcp/           Atlas MCP tool registry and JSON-safe dispatcher
-  services/      Ollama (OllamaService, project_summary_models.dart), Telegram, app logging, local project scan/refresh services, AtlasAgentService
+  services/      Ollama (OllamaService, project_summary_models.dart), Telegram, app logging, local project scan/refresh services, project runtime service, AtlasAgentService
   features/      today, projects, operations, library, settings, work, review, export, governance, log
   shared/
     models/      AppState and scope

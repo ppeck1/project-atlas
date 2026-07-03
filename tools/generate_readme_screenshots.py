@@ -53,7 +53,7 @@ def nav(d, selected):
     rr(d, [18, 14, 54, 50], 10, BG, PRIMARY)
     text(d, (22, 20), "PA", PRIMARY, FONT_XS)
     text(d, (19, 56), "ATLAS", PRIMARY, FONT_XS)
-    items = [("Today", "T"), ("Projects", "P"), ("Library", "L")]
+    items = [("Today", "T"), ("Projects", "P"), ("Ops", "O"), ("Library", "L")]
     y = 104
     for name, glyph in items:
         is_selected = name == selected
@@ -85,8 +85,10 @@ def metric(d, x, label, value, color):
 
 
 def pill(d, x, y, label, color):
+    # Dark fill + colored outline keeps the colored label text readable
+    # (an alpha fill flattens to opaque on RGB images and hides the text).
     width = len(label) * 8 + 18
-    rr(d, [x, y, x + width, y + 24], 4, color + "33", color)
+    rr(d, [x, y, x + width, y + 24], 4, "#10151E", color)
     text(d, (x + 9, y + 4), label, color, FONT_XS)
     return x + width + 10
 
@@ -95,7 +97,7 @@ def make_today():
     im = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(im)
     nav(d, "Today")
-    appbar(d, "Today", "Mon Jun 23")
+    appbar(d, "Today", "Fri Jul 3")
     metric(d, 96, "Doing", 2, AMBER)
     metric(d, 376, "Overdue", 1, RED)
     metric(d, 656, "Blocked", 1, PURPLE)
@@ -105,14 +107,14 @@ def make_today():
             "Doing Now",
             AMBER,
             [
-                ("Update docs to schema v10", "README, HANDOFF, VARIABLE_MAP updated; screenshots refreshed", "HIGH", "6/23", False),
-                ("Run flutter test — all 10 tests passing", "smoke_test + schema_media_test + widget_test", "URGENT", "6/23", True),
+                ("Update docs to schema v19", "README, HANDOFF, VARIABLE_MAP updated; screenshots refreshed", "HIGH", "7/3", False),
+                ("Run flutter test — full suite passing", "operations registry + runtime service + summary contract tests", "URGENT", "7/3", True),
             ],
         ),
         (
             "Overdue",
             RED,
-            [("Review encryption plan", "SQLCipher passphrase before broader distribution", "HIGH", "6/20", False)],
+            [("Review encryption plan", "SQLCipher passphrase before broader distribution", "HIGH", "6/30", False)],
         ),
         (
             "Phone / Follow-up",
@@ -123,9 +125,9 @@ def make_today():
             "High Priority",
             ORANGE,
             [
-                ("Contacts linked across all owner fields", "ContactOwnerField in work items, projects, governance", "HIGH", "", False),
+                ("Configure runtime profile for Atlas", "Launch/test/capsule commands from Project Detail > Runtime", "HIGH", "", False),
                 ("Draft email for blocked task", "Ollama email draft — human review before save", "HIGH", "", False),
-                ("Link document to work item", "Library → link to task for AI analysis context", "HIGH", "", False),
+                ("Review agent proposals in Library", "Pending atlas_agent_proposal drafts — approve or reject", "HIGH", "", False),
             ],
         ),
     ]
@@ -163,16 +165,22 @@ def make_projects():
     text(d, (536, 82), "All priorities", MUTED, FONT_S)
     rr(d, [716, 72, 870, 106], 8, BG, LINE)
     text(d, (736, 82), "All tags", MUTED, FONT_S)
+    rr(d, [886, 72, 1030, 106], 8, BG, LINE)
+    text(d, (906, 82), "All contexts", MUTED, FONT_S)
     rr(d, [1040, 17, 1184, 50], 8, PRIMARY)
     text(d, (1060, 24), "New project", BG, FONT_S)
+    # Category group header (pinned category)
+    text(d, (96, 122), "Development", PRIMARY, FONT_B)
+    pill(d, 240, 124, "pinned", PRIMARY)
+    text(d, (330, 126), "4 projects", DIM, FONT_S)
     rows = [
-        ("Project Atlas", "Local-first personal project command center", "active", "ship", True, ["#work", "#dev"]),
-        ("Document Library Integration", "Import local files and link to work items for AI context", "active", "build", False, ["#dev"]),
-        ("Contact Directory", "Reusable people records linked across all owner fields", "active", "stabilize", False, ["#work"]),
-        ("Telegram Outbox", "Outbound task list with HTML escaping and outbox logging", "paused", "stabilize", False, ["#work"]),
+        ("Project Atlas", "Local-first personal project command center", "active", "ship", True, ["#work", "#dev"], True),
+        ("Document Library Integration", "Import local files and link to work items for AI context", "active", "build", False, ["#dev"], False),
+        ("Contact Directory", "Reusable people records linked across all owner fields", "active", "stabilize", False, ["#work"], False),
+        ("Telegram Outbox", "Outbound task list with HTML escaping and outbox logging", "paused", "stabilize", False, ["#work"], False),
     ]
-    y = 122
-    for title, desc, status, phase, active, tags in rows:
+    y = 158
+    for title, desc, status, phase, active, tags, has_runtime in rows:
         rr(d, [96, y, 1184, y + 98], 14, PANEL, PRIMARY if active else LINE, 2 if active else 1)
         rr(d, [116, y + 18, 154, y + 56], 10, "#1B2B4A" if active else "#243040")
         text(d, (128, y + 26), "P", PRIMARY if active else MUTED, FONT_B)
@@ -182,6 +190,8 @@ def make_projects():
         x = pill(d, x, y + 70, phase, BLUE if phase in ("test", "build") else (GREEN if phase == "ship" else MUTED))
         for tag in tags:
             x = pill(d, x, y + 70, tag, TEAL)
+        if has_runtime:
+            x = pill(d, x, y + 70, "runtime: launch · test · capsule", GREEN)
         if active:
             pill(d, 1060, y + 18, "ACTIVE", PRIMARY)
         text(d, (1156, y + 36), ">", DIM, FONT_B)
@@ -225,15 +235,15 @@ def make_library():
         y += 72
     text(d, (430, 104), "Project Atlas — Today Summary", TEXT, FONT_H)
     pill(d, 430, 152, "AI Draft - today_summary", GREEN)
-    text(d, (430, 190), "Jun 23, 2026  ·  Project Atlas", MUTED, FONT_S)
+    text(d, (430, 190), "Jul 3, 2026  ·  Project Atlas", MUTED, FONT_S)
     rr(d, [430, 234, 1178, 700], 8, PANEL, LINE)
     body = [
-        "Today summary (schema v10):",
-        "- 2 items doing: app icon updated, README refresh in progress.",
+        "Today summary (schema v19):",
+        "- 2 items doing: runtime profiles shipped, docs refresh in progress.",
         "- 1 overdue: encryption plan review (SQLCipher passphrase).",
-        "- Stage CRUD API available (addStage / updateStageTitle / deleteStage).",
-        "- Contacts linked across work items, projects, and governance.",
-        "- Project tags (home/work/dev) active on 4 projects.",
+        "- Runtime actions available: launch, test, and capsule per project.",
+        "- Operations Project Health groups open enrichment findings.",
+        "- Agent proposals pending review in the Library filter.",
         "- Media gallery: 3 images attached to Project Atlas.",
         "Ollama output is advisory — saved only after human review.",
     ]
@@ -244,17 +254,72 @@ def make_library():
     im.save(OUT / "library.png")
 
 
+def make_operations():
+    im = Image.new("RGB", (W, H), BG)
+    d = ImageDraw.Draw(im)
+    nav(d, "Ops")
+    d.rectangle([73, 0, W, 96], fill=PANEL)
+    text(d, (96, 18), "Operations", TEXT, FONT_B)
+    tabs = ["Scans", "Review Candidates", "Registered Projects", "Enrichment", "Project Health"]
+    x = 96
+    for i, tab in enumerate(tabs):
+        text(d, (x, 66), tab, PRIMARY if i == 1 else MUTED, FONT_S)
+        if i == 1:
+            d.line([x, 91, x + len(tab) * 9, 91], fill=PRIMARY, width=3)
+        x += len(tab) * 11 + 44
+    # Scan controls row
+    rr(d, [96, 112, 300, 146], 8, PRIMARY)
+    text(d, (120, 120), "Run manual scan", BG, FONT_S)
+    rr(d, [316, 112, 470, 146], 8, BG, LINE)
+    text(d, (336, 120), "Add folder...", MUTED, FONT_S)
+    text(d, (500, 121), "Last scan: Jul 3, 2026 — 14 observations, 3 candidates", DIM, FONT_S)
+    # Queue filter chips
+    x = 96
+    for i, chip in enumerate(["Needs action", "Known", "Ignored", "All"]):
+        width = len(chip) * 9 + 28
+        rr(d, [x, 162, x + width, 194], 16, "#1B2B4A" if i == 0 else BG, PRIMARY if i == 0 else LINE)
+        text(d, (x + 14, 169), chip, PRIMARY if i == 0 else MUTED, FONT_S)
+        x += width + 12
+    candidates = [
+        ("dev_launchpad", "C:\\dev\\dev_launchpad", "candidate", ORANGE,
+         "Strong root: pubspec.yaml, README.md, .git — depth 1"),
+        ("ops_capsule", "C:\\dev\\ops_capsule", "candidate", ORANGE,
+         "Strong root: project_manifest.json, capsule profile — depth 1"),
+        ("project-atlas", "C:\\dev\\project-atlas", "linked", GREEN,
+         "Linked to Atlas project — refresh available instead of re-triage"),
+    ]
+    y = 212
+    for name, path, state, color, detail in candidates:
+        rr(d, [96, y, 1184, y + 118], 12, PANEL, LINE)
+        text(d, (116, y + 12), name, TEXT, FONT_B)
+        pill(d, 1080, y + 14, state, color)
+        text(d, (116, y + 42), path, MUTED, FONT_S)
+        text(d, (116, y + 66), detail, DIM, FONT_XS)
+        bx = 116
+        for label in ["Accept", "Link to project", "Ignore", "Needs review"]:
+            width = len(label) * 8 + 26
+            rr(d, [bx, y + 86, bx + width, y + 112], 6, BG, LINE)
+            text(d, (bx + 13, y + 91), label, MUTED, FONT_XS)
+            bx += width + 10
+        y += 132
+    # Bulk action bar
+    rr(d, [96, y + 4, 1184, y + 46], 10, "#17233A", PRIMARY)
+    text(d, (116, y + 14), "3 selected", PRIMARY, FONT_S)
+    text(d, (240, y + 14), "Bulk: Accept · Ignore · Needs review · Ignore descendants", MUTED, FONT_S)
+    im.save(OUT / "operations.png")
+
+
 def make_settings():
     im = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(im)
     nav(d, "Settings")
     d.rectangle([73, 0, W, 96], fill=PANEL)
     text(d, (96, 18), "Settings", TEXT, FONT_B)
-    tabs = ["Integrations", "Activity Log", "Export", "Workforce", "Admin"]
+    tabs = ["Integrations", "AI Summaries", "Activity Log", "Export", "Workforce", "Admin"]
     x = 96
     for i, tab in enumerate(tabs):
-        text(d, (x, 66), tab, PRIMARY if i == 3 else MUTED, FONT_S)
-        if i == 3:
+        text(d, (x, 66), tab, PRIMARY if i == 4 else MUTED, FONT_S)
+        if i == 4:
             d.line([x, 91, x + len(tab) * 9, 91], fill=PRIMARY, width=3)
         x += len(tab) * 11 + 44
     # Workforce tab content
@@ -320,6 +385,7 @@ def make_settings():
 if __name__ == "__main__":
     make_today()
     make_projects()
+    make_operations()
     make_library()
     make_settings()
     print("Generated README screenshots in docs/screenshots/")

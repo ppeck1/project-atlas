@@ -44,6 +44,10 @@ telegram_token.txt
 .project/boh_outbox/
 .project/verification/
 
+# Local database backups and launch logs — NEVER commit (contain real personal data)
+.project/db_backups/
+.project/*.log
+
 # Installer output (built artifacts, not source)
 dist/
 atlas-windows-*.zip
