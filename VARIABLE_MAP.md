@@ -854,6 +854,9 @@ Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `A
 | `listProjects({includeArchived})` | `Future<List<AtlasProjectStatus>>` | Alphabetical, non-deleted project list. Excludes the hidden General Tasks project. Includes category, active/blocked task counts, docs/media counts, risk/decision counts, registry presence, and attention flag. |
 | `getProjectStatus(projectId)` | `Future<AtlasProjectStatus?>` | Single-project status DTO. Null if missing, deleted, or hidden. |
 | `getProjectBrief(projectId)` | `Future<AtlasProjectBrief?>` | Aggregates lifecycle/category fields, tags, people, risks, decisions, open work items, local registry, and latest local observation. |
+| `getProjectIdentity(projectId)` | `Future<AtlasProjectIdentity?>` | Resolves one project to local registry, local path, repo root, cached GitHub remote, capsule project ID/display name/profiles, and resolver warnings/errors. Delegates path/capsule reads to `ProjectIdentityResolver`. |
+| `getProjectCapsuleStatus(projectId)` | `Future<AtlasCapsuleStatus?>` | Reads linked repo `.project/project_manifest.json`, `.project/ops_capsule.json`, local run-ledger/outbox evidence counts, and availability states through the read-only resolver. |
+| `getProjectBootstrapContext(projectId)` | `Future<AtlasProjectBootstrapContext?>` | Versioned agent startup packet (`atlas.project_bootstrap_context.v1`) combining identity, brief, capsule status, pending LLM tasks, pending proposals, recommended next action, confidence, and gaps. |
 | `getStaleProjects()` | `Future<List<AtlasProjectStatus>>` | Returns projects whose status or blocked work indicates attention. |
 | `refreshLinkedLocalProjects({includeSourceDocuments})` | `Future<LocalProjectBatchRefreshResult>` | Delegates to the existing linked-local refresh workflow. |
 | `runProjectEnrichment({refreshLinkedProjects, includeSourceDocuments})` | `Future<ProjectEnrichmentRunResult>` | Delegates to the Atlas-only enrichment workflow. Refreshes Atlas records and records findings; source repositories are not mutated. |
@@ -862,6 +865,7 @@ Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `A
 | `enqueueLlmTask(...)` | `Future<LlmTaskQueueItem>` | Validates project/work item anchors, priority, and context, then stores a pending queue item. |
 | `listLlmTasks({projectId, status, limit})` / `getLlmTask(taskId)` | `Future<List<LlmTaskQueueItem>>` / `Future<LlmTaskQueueItem?>` | Read queue state for MCP clients and UI surfaces. |
 | `getLlmTaskDetail(taskId)` | `Future<Map<String,Object?>?>` | Returns one queue item as JSON plus attached project media metadata. Used by MCP `get_llm_task` for harness context. |
+| `getLlmTaskBootstrap(taskId, {projectId})` | `Future<AtlasLlmTaskBootstrapContext>` | Returns one active queued/leased/failed LLM task plus its `atlas.project_bootstrap_context.v1` packet. Rejects missing, mismatched, completed, or cancelled tasks. |
 | `updateLlmTask(...)` | `Future<LlmTaskQueueItem>` | Operator-owned queue edit/move path. Validates project/work item anchors and revokes any active lease. Not exposed through MCP. |
 | `claimLlmTask(workerId, {taskId, leaseDuration})` | `Future<LlmTaskQueueItem?>` | Claims the next pending task or a named pending task for a harness worker. |
 | `completeLlmTask(taskId, workerId, {result, proposalBody})` | `Future<LlmTaskQueueItem>` | Completes a leased task. If `proposalBody` is supplied, records a reviewable `handoff_record` proposal draft and stores its ID. Rejects stale completion if the task was edited, cancelled, failed, completed, or requeued out from under the worker. |
@@ -871,11 +875,24 @@ Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `A
 | `inspectGitVisibility(projectId)` | `Future<LocalGitVisibilityReport>` | Read-only local git visibility report. |
 | `listRecentAgentProposals({limit})` | `Future<List<Draft>>` | Recent drafts with `kind='atlas_agent_proposal'`. |
 | `listRecentAgentProposalReviews({limit})` / `getAgentProposalReview(draftId)` | `Future<List<AtlasProposalDraft>>` / `Future<AtlasProposalDraft?>` | Parses proposal envelopes from draft `input_json`, including pending/approved/rejected review status. |
-| `proposeStatusChange(...)`, `proposeTaskUpdate(...)`, `proposeManifestUpdate(...)`, `recordValidationRun(...)`, `recordHandoff(...)` | `Future<AtlasProposalResult>` | Validate inputs and save reviewable proposal drafts. Invalid requests return validation errors and are not saved. |
-| `approveAgentProposal(draftId)` | `Future<AtlasProposalApplyResult>` | Applies supported proposals after human approval: project status, task create/update with tags, manifest metadata/tags, validation-run log entry, or `project_handoff` draft creation. Marks the proposal approved. |
+| `proposeStatusChange(...)`, `proposeTaskUpdate(...)`, `proposeManifestUpdate(...)`, `recordValidationRun(...)`, `recordHandoff(...)`, `proposeCloseout(...)` | `Future<AtlasProposalResult>` | Validate inputs and save reviewable proposal drafts. Invalid requests return validation errors and are not saved. |
+| `approveAgentProposal(draftId)` | `Future<AtlasProposalApplyResult>` | Applies supported proposals after human approval: project status, task create/update with tags, manifest metadata/tags, validation-run log entry, `project_handoff` draft creation, or closeout handoff draft creation. Marks the proposal approved. |
 | `rejectAgentProposal(draftId, {reason})` | `Future<AtlasProposalApplyResult>` | Marks a pending proposal rejected without applying it. |
 
 **Safety boundary:** Agents still cannot directly mutate Atlas state through proposal creation. Queue edit/cancel/requeue controls are operator-owned and not exposed through MCP. Only a human approval path applies supported proposals, and the service does not delete projects, overwrite manifests, write discovered repos, fetch/push Git, deploy, or publish releases.
+
+### ProjectIdentityResolver (`lib/services/project_identity_resolver.dart`)
+
+Read-only path-oriented resolver used by `AtlasAgentService` for capsule-aware identity and bootstrap reads. It does not depend on UI, MCP, Drift, or AppState.
+
+| DTO / Method | Notes |
+|--------------|-------|
+| `AtlasProjectIdentity` | JSON-safe project identity wrapper: Atlas project ID/title/status, local registry, local path, repo root, cached GitHub remote, capsule project ID/display name/profiles, and issue list. |
+| `AtlasCapsuleStatus` | JSON-safe capsule wrapper: `.project` metadata, canonical docs, validation/git/sync policy, evidence availability, local run/outbox counts, warnings, and errors. Raw ledger/outbox contents are not embedded. |
+| `resolveIdentity(...)` | Builds `AtlasProjectIdentity` from caller-provided project/registry/GitHub facts plus capsule metadata under the linked local path. |
+| `resolveCapsuleStatus(projectId, localPath)` | Reads only `.project/project_manifest.json`, `.project/ops_capsule.json`, `.project/runs/`, `.project/atlas_outbox/`, and `.project/boh_outbox/` under the linked project root. Missing local evidence is reported as availability state/warnings rather than treated as accepted truth. |
+
+**Evidence availability states:** `not_linked`, `local_path_missing`, `metadata_missing`, `metadata_present`, and `local_evidence_present`.
 
 ### AtlasMcpAdapter (`lib/mcp/atlas_mcp_server.dart`)
 
@@ -886,7 +903,21 @@ Transport-neutral MCP tool registry and JSON-safe dispatcher for `AtlasAgentServ
 | `listTools()` | `List<AtlasMcpTool>` | Exposes read and proposal-creation tools only. Destructive tools and approval/rejection tools are intentionally absent. |
 | `callTool(name, arguments)` | `Future<AtlasMcpCallResult>` | Dispatches MCP-style tool calls to `AtlasAgentService` and returns JSON-safe text content. Unknown tools return an error result. |
 
-**Tools exposed:** `list_projects`, `get_project_status`, `get_project_brief`, `get_stale_projects`, `list_agent_proposals`, `preview_local_refresh`, `inspect_git_visibility`, `get_github_remote_status`, `refresh_github_remote_status`, `list_project_enrichment_runs`, `get_project_enrichment_run`, `run_project_enrichment`, `enqueue_llm_task`, `list_llm_tasks`, `get_llm_task`, `claim_llm_task`, `complete_llm_task`, `fail_llm_task`, `propose_status_change`, `propose_task_update`, `propose_manifest_update`, `record_validation_run`, and `record_handoff`.
+**Tools exposed:** `list_projects`, `get_project_status`, `get_project_brief`, `get_project_identity`, `get_project_capsule_status`, `get_project_bootstrap_context`, `get_stale_projects`, `list_agent_proposals`, `preview_local_refresh`, `inspect_git_visibility`, `get_github_remote_status`, `refresh_github_remote_status`, `list_project_enrichment_runs`, `get_project_enrichment_run`, `run_project_enrichment`, `enqueue_llm_task`, `list_llm_tasks`, `get_llm_task`, `get_llm_task_bootstrap`, `claim_llm_task`, `complete_llm_task`, `fail_llm_task`, `propose_status_change`, `propose_task_update`, `propose_manifest_update`, `record_validation_run`, `record_handoff`, and `propose_closeout`.
+
+### Atlas MCP stdio wrapper (`lib/mcp/atlas_mcp_stdio*.dart`)
+
+Local JSON-RPC stdio transport for release Windows builds. `project_atlas.exe --mcp-stdio` redirects Flutter debug output to stderr, reads newline-delimited UTF-8 JSON-RPC from stdin, and writes only MCP response frames to stdout. Supported methods: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. Debug builds print the Dart VM service banner to stdout and are not suitable for stdio protocol smoke tests.
+
+### Project runtime defaults
+
+| Export | Type / Signature | Notes |
+|--------|-----------------|-------|
+| `ProjectRuntimeDefaultsSettings` | class | Settings-backed defaults for Dev Launchpad YAML path and Project Ops Capsule fields. Does not store launch/test command defaults. |
+| `AppState.loadProjectRuntimeDefaultsSettings()` | `Future<ProjectRuntimeDefaultsSettings>` | Reads AppMeta defaults, falling back to the historical Dev Launchpad YAML and Project Ops Capsule constants. |
+| `AppState.saveProjectRuntimeDefaultsSettings(settings)` | `Future<void>` | Persists runtime defaults to AppMeta and notifies listeners. |
+| `AppState.defaultProjectRuntimeProfileDraft({workingDirectory})` | `Future<ProjectRuntimeProfileDraft>` | Creates a manual profile draft seeded with settings-backed capsule defaults. |
+| `AppState.importRuntimeProfileFromDevLaunchpad(projectId, {yamlPath})` | `Future<ProjectRuntimeProfile?>` | Uses configured Dev Launchpad YAML when `yamlPath` is omitted, then overlays settings-backed capsule defaults without overwriting imported commands/ports/URLs. |
 
 ### OllamaService (`lib/services/ollama_service.dart`)
 

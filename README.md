@@ -18,14 +18,14 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Stage management: add, rename, delete, and reorder stages via API (`AppState.addStage`, `updateStageTitle`, `deleteStage`, `reorderStage`)
 - Owner pickers on work items, project owners, and governance stages — all linked to the contact directory
 - Project organization: category grouping, pinned categories/projects, category visibility selection, category and project sorting, tag assignment, project filters for context/status/phase/priority, status descriptors for Open/Review/Inactive/Closed lifecycle states, and project merge
-- Project runtime profiles: opt-in per-project launch/stop/test commands, ports, URLs, and health checks with Launch/Test/Capsule actions, run history, Dev Launchpad YAML import, and Project Ops Capsule integration — commands are operator-configured and never invented by the app
+- Project runtime profiles: opt-in per-project launch/stop/test commands, ports, URLs, and health checks with Launch/Test/Capsule actions, run history, settings-backed Dev Launchpad/capsule defaults, Dev Launchpad YAML import, and Project Ops Capsule integration — commands are operator-configured and never invented by the app
 - Project change log: per-project event history with changed-field views and JSON copy in Project Detail
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
 - Project governance: people roster, risk register, decision log
 - Project media: app-owned image/file gallery with cover-image selection; media can be attached to work items and queued LLM tasks; local refresh imports discovered image, video, and audio files from linked project folders
 - Document library: native file picker, app-owned copies, in-app preview, and AI analysis integration
-- Local Operations Registry: manual shallow scans of operator-selected local project folders, selectable additional folders, append-only observations, queue filters, bulk candidate review, reviewed registry records, candidate accept/link/ignore/needs-review actions, create/update existing Project actions, first-import local refresh for docs/media/source/card/native project rows, Atlas-only enrichment runs with open findings, scan JSON copy/export, project bundle preview/export, and app-owned scan artifact storage
-- Agent boundary: `AtlasAgentService` exposes read-heavy project status/brief/summary operations, Atlas-only enrichment runs/findings, an operator-editable persisted LLM task queue with media attachment context, and proposal-first writes stored as reviewable drafts (`kind='atlas_agent_proposal'`) for the future Atlas MCP and local LLM harness
+- Local Operations Registry: manual shallow scans of operator-selected local project folders, selectable additional folders, append-only observations, queue filters, bulk candidate review, reviewed registry records, candidate accept/link/ignore/needs-review actions, create/update existing Project actions, first-import local refresh for docs/media/source/card/native project rows, Atlas-only enrichment runs with open findings, scan JSON copy/export, project bundle preview/export with bootstrap JSON/Markdown artifacts, and app-owned scan artifact storage
+- Agent boundary: `AtlasAgentService` exposes read-heavy project status/brief/summary operations, Project Ops Capsule identity/evidence/bootstrap context reads, queue-bound bootstrap packets, Atlas-only enrichment runs/findings, an operator-editable persisted LLM task queue with media attachment context, and proposal-first writes including closeout records stored as reviewable drafts (`kind='atlas_agent_proposal'`) for the Atlas MCP and local LLM harness
 
 ## Project Ops Capsule Audit
 
@@ -33,13 +33,14 @@ Project Ops Capsule v0.2 is installed as repo-local metadata under `.project/` w
 
 ## Screenshots
 
-These screenshots use demo data to show the current schema v19 operator workflow:
-daily focus, project runtime controls, local Operations review, Library-backed AI
-draft review, and opt-in AI summary settings.
+These screenshots are current Windows desktop captures from the schema v19 app,
+with local project paths and private library rows sanitized for the public repo.
+They show daily focus, project runtime controls, local Operations review,
+Library-backed AI draft review, and opt-in AI summary settings.
 
 ![Today dashboard with focus list, phone queue, and operator signals](docs/screenshots/today.png)
 
-![Projects list with filters, pinned categories, lifecycle tags, and runtime actions](docs/screenshots/projects.png)
+![Opened project detail with work board, metadata, export, launch, test, and capsule actions](docs/screenshots/projects.png)
 
 ![Operations workspace with scan review, registry counts, and project health findings](docs/screenshots/operations.png)
 
@@ -47,7 +48,8 @@ draft review, and opt-in AI summary settings.
 
 ![Settings AI Summaries setup with Library evidence and bulk refresh gates](docs/screenshots/settings.png)
 
-Regenerate the README screenshots with:
+The checked-in PNGs should be recaptured from the desktop app for release docs.
+For fallback public-safe mockups only, run:
 
 ```powershell
 python tools\generate_readme_screenshots.py
@@ -186,10 +188,10 @@ AI actions available:
 
 `lib/services/atlas_agent_service.dart` is the desktop-side contract intended for the future Atlas MCP and for a local LLM harness.
 
-- Read operations assemble stable project DTOs: alphabetical project list, status, brief, stale/attention list, local refresh preview, git visibility inspection, enrichment run history/findings, and local-refresh triggers.
-- Write-shaped operations are proposal-first. Status changes, task updates, manifest updates, validation runs, and handoffs are validated and saved as Library drafts with `kind='atlas_agent_proposal'`.
+- Read operations assemble stable project DTOs: alphabetical project list, status, brief, capsule-aware project identity, capsule evidence availability, bootstrap context, stale/attention list, local refresh preview, git visibility inspection, enrichment run history/findings, and local-refresh triggers.
+- Write-shaped operations are proposal-first. Status changes, task updates, manifest updates, validation runs, handoffs, and agent closeouts are validated and saved as Library drafts with `kind='atlas_agent_proposal'`.
 - Library has an **Agent Proposals** filter with pending/approved/rejected status chips. Pending proposals can be approved or rejected from the detail pane; approved status/task/manifest proposals apply through `AppState`, validation proposals log the run, and handoff proposals create a `project_handoff` draft.
-- The MCP tool registry lives in `lib/mcp/atlas_mcp_server.dart`. It exposes reads, Atlas-only enrichment triggers, LLM queue lifecycle tools, and proposal-creation tools; approval/rejection stays in the desktop review queue. Project Detail lets the operator edit, move, cancel, requeue, and attach media to LLM tasks. MCP `get_llm_task` returns attached media metadata for harness context. Queue completion can attach a proposed handoff as a reviewable draft instead of directly mutating project state.
+- The MCP tool registry lives in `lib/mcp/atlas_mcp_server.dart`, with a local stdio JSON-RPC wrapper available from the Windows executable via `--mcp-stdio` for release builds. It exposes reads, capsule-aware bootstrap tools, Atlas-only enrichment triggers, LLM queue lifecycle tools, and proposal-creation tools; approval/rejection stays in the desktop review queue. Project Detail lets the operator edit, move, cancel, requeue, and attach media to LLM tasks. MCP `get_project_bootstrap_context` returns the project startup packet; `get_llm_task_bootstrap` returns a task plus its project startup packet; `get_llm_task` returns attached media metadata for harness context. Queue completion can attach a proposed handoff as a reviewable draft, and `propose_closeout` records validation/git/packet evidence for review instead of directly mutating project state.
 - The service does not delete projects, overwrite manifests, push/fetch Git, or mutate discovered repositories. Human review remains the approval boundary.
 
 ## Project Runtime Profiles
@@ -200,7 +202,7 @@ Each project can opt into a **software runtime profile**: working directory, lau
 - **Test** runs the configured test commands headless and records output and exit codes.
 - **Capsule** runs the Project Ops Capsule tooling for the project when enabled.
 
-Every action is recorded in a per-project run history (status, exit code, output). All commands are operator-entered; Atlas never generates or auto-runs commands, and the stored `autostart` flag is not acted on. Default Dev Launchpad/capsule paths are machine-specific and must be set per machine.
+Every action is recorded in a per-project run history (status, exit code, output). All commands are operator-entered; Atlas never generates or auto-runs commands, and the stored `autostart` flag is not acted on. Default Dev Launchpad YAML and Project Ops Capsule settings are machine-specific and can be set in Settings -> Integrations -> Project runtime defaults.
 
 ## Telegram
 

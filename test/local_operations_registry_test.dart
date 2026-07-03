@@ -2187,6 +2187,102 @@ Pressure flakes a useful edge.
     },
   );
 
+  test('project bundle export includes bootstrap context artifacts', () async {
+    const projectId = 'bundle-bootstrap-project';
+    await db.createProject(projectId, 'Bundle Bootstrap', DateTime.now());
+    await state.enqueueLlmTask(
+      projectId: projectId,
+      title: 'Use exported bootstrap',
+      objective: 'Verify bundle consumers can start from the packet.',
+      priority: 'high',
+    );
+    await state.saveDraft(
+      kind: 'atlas_agent_proposal',
+      title: 'Review exported bootstrap',
+      body: 'Pending agent proposal.',
+      inputJson: jsonEncode({
+        'schema': 'atlas.agent.proposal.v1',
+        'proposalId': 'proposal-bundle-bootstrap',
+        'type': 'closeout_record',
+        'projectId': projectId,
+        'payload': {'summary': 'Review me'},
+        'validationErrors': <String>[],
+        'warnings': <String>[],
+        'createdAt': DateTime.now().toIso8601String(),
+      }),
+      projectId: projectId,
+    );
+
+    final preview = await state.previewProjectBundleExport(
+      projectId,
+      includeFiles: false,
+      includeBootstrapContext: true,
+    );
+    expect(preview.includeBootstrapContext, isTrue);
+    expect(preview.copiedFileCount, 0);
+
+    final zipPath = p.join(tempDir.path, 'bundle_bootstrap.zip');
+    await state.exportProjectBundleToZip(
+      projectId,
+      zipPath,
+      includeFiles: false,
+      includeBootstrapContext: true,
+    );
+
+    final archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
+    expect(
+      archive.findFile('bootstrap/project_bootstrap_context.json'),
+      isNotNull,
+    );
+    expect(
+      archive.findFile('bootstrap/project_bootstrap_context.md'),
+      isNotNull,
+    );
+    final context =
+        jsonDecode(
+              utf8.decode(
+                archive
+                        .findFile('bootstrap/project_bootstrap_context.json')!
+                        .content
+                    as List<int>,
+              ),
+            )
+            as Map<String, Object?>;
+    expect(context['schema'], 'atlas.project_bootstrap_context.v1');
+    expect(
+      (context['recommendedNextAction'] as String),
+      contains('Use exported bootstrap'),
+    );
+    expect((context['pendingLlmTasks'] as List<Object?>), hasLength(1));
+    expect((context['pendingAgentProposals'] as List<Object?>), hasLength(1));
+
+    final payload =
+        jsonDecode(
+              utf8.decode(
+                archive.findFile('project_bundle.json')!.content as List<int>,
+              ),
+            )
+            as Map<String, Object?>;
+    expect(payload['projectBootstrapContext'], isA<Map<String, Object?>>());
+    final manifest =
+        jsonDecode(
+              utf8.decode(
+                archive.findFile('manifest/export_manifest.json')!.content
+                    as List<int>,
+              ),
+            )
+            as Map<String, Object?>;
+    final manifestContents = manifest['contents'] as Map<String, Object?>;
+    expect(
+      manifestContents['bootstrapContext'],
+      'bootstrap/project_bootstrap_context.json',
+    );
+    expect(
+      manifestContents['bootstrapContextMarkdown'],
+      'bootstrap/project_bootstrap_context.md',
+    );
+  });
+
   test(
     'project bundle clean git export uses a clean linked child registry repo',
     () async {

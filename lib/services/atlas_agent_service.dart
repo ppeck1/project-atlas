@@ -5,6 +5,7 @@ import '../shared/models/app_state.dart';
 import '../shared/models/project_metadata.dart' as project_meta;
 import 'local_git_visibility_service.dart';
 import 'local_project_refresh_service.dart';
+import 'project_identity_resolver.dart';
 
 class AtlasProjectStatus {
   final String id;
@@ -128,6 +129,66 @@ class AtlasProjectBrief {
     'localRegistry': localRegistry,
     'latestLocalObservation': latestLocalObservation,
     'githubRemote': githubRemote,
+  };
+}
+
+class AtlasProjectBootstrapContext {
+  final String schema;
+  final DateTime generatedAt;
+  final AtlasProjectIdentity identity;
+  final AtlasProjectBrief brief;
+  final AtlasCapsuleStatus capsule;
+  final List<Map<String, Object?>> pendingLlmTasks;
+  final List<Map<String, Object?>> pendingAgentProposals;
+  final String recommendedNextAction;
+  final String confidence;
+  final List<String> gaps;
+
+  const AtlasProjectBootstrapContext({
+    this.schema = 'atlas.project_bootstrap_context.v1',
+    required this.generatedAt,
+    required this.identity,
+    required this.brief,
+    required this.capsule,
+    required this.pendingLlmTasks,
+    required this.pendingAgentProposals,
+    required this.recommendedNextAction,
+    required this.confidence,
+    required this.gaps,
+  });
+
+  Map<String, Object?> toJson() => {
+    'schema': schema,
+    'generatedAt': generatedAt.toIso8601String(),
+    'identity': identity.toJson(),
+    'brief': brief.toJson(),
+    'capsule': capsule.toJson(),
+    'pendingLlmTasks': pendingLlmTasks,
+    'pendingAgentProposals': pendingAgentProposals,
+    'recommendedNextAction': recommendedNextAction,
+    'confidence': confidence,
+    'gaps': gaps,
+  };
+}
+
+class AtlasLlmTaskBootstrapContext {
+  final String schema;
+  final DateTime generatedAt;
+  final Map<String, Object?> task;
+  final AtlasProjectBootstrapContext projectBootstrap;
+
+  const AtlasLlmTaskBootstrapContext({
+    this.schema = 'atlas.llm_task_bootstrap_context.v1',
+    required this.generatedAt,
+    required this.task,
+    required this.projectBootstrap,
+  });
+
+  Map<String, Object?> toJson() => {
+    'schema': schema,
+    'generatedAt': generatedAt.toIso8601String(),
+    'task': task,
+    'projectBootstrap': projectBootstrap.toJson(),
   };
 }
 
@@ -449,6 +510,86 @@ class AtlasAgentService {
     );
   }
 
+  Future<AtlasProjectIdentity?> getProjectIdentity(String projectId) async {
+    final project = await _visibleProject(projectId);
+    if (project == null) return null;
+    final registry = await state.getProjectRegistryForAtlasProject(projectId);
+    final githubRemote = await state.getLatestProjectGitRemoteStatus(projectId);
+    return const ProjectIdentityResolver().resolveIdentity(
+      projectId: project.id,
+      title: project.title,
+      status: project.status,
+      localRegistry: registry == null ? null : _registryToJson(registry),
+      localPath: registry?.localPath,
+      repoRoot: registry?.gitRoot ?? registry?.localPath,
+      githubRemote: githubRemote?.toJson(),
+    );
+  }
+
+  Future<AtlasCapsuleStatus?> getProjectCapsuleStatus(String projectId) async {
+    final project = await _visibleProject(projectId);
+    if (project == null) return null;
+    final registry = await state.getProjectRegistryForAtlasProject(projectId);
+    return const ProjectIdentityResolver().resolveCapsuleStatus(
+      projectId: projectId,
+      localPath: registry?.localPath,
+    );
+  }
+
+  Future<AtlasProjectBootstrapContext?> getProjectBootstrapContext(
+    String projectId,
+  ) async {
+    final project = await _visibleProject(projectId);
+    if (project == null) return null;
+    final brief = await getProjectBrief(projectId);
+    final identity = await getProjectIdentity(projectId);
+    final capsule = await getProjectCapsuleStatus(projectId);
+    if (brief == null || identity == null || capsule == null) return null;
+
+    final pendingTasks = await listLlmTasks(
+      projectId: projectId,
+      status: 'pending',
+      limit: 25,
+    );
+    final pendingProposals = (await listRecentAgentProposalReviews(limit: 25))
+        .where(
+          (proposal) => proposal.projectId == projectId && proposal.isPending,
+        )
+        .map((proposal) => proposal.toJson())
+        .toList(growable: false);
+    final gaps = {
+      ...identity.issues,
+      if (brief.localRegistry == null) 'Project has no linked local registry.',
+      if (pendingTasks.isEmpty)
+        'No pending LLM task is queued for this project.',
+      ...capsule.errors,
+    }.toList(growable: false);
+    final recommendedNextAction = pendingTasks.isNotEmpty
+        ? 'Claim next pending LLM task: ${pendingTasks.first.title}.'
+        : capsule.errors.isNotEmpty
+        ? 'Resolve capsule visibility errors before agent startup.'
+        : 'Review project brief and create or claim the next work order.';
+    final confidence = capsule.errors.isNotEmpty
+        ? 'low'
+        : capsule.warnings.isNotEmpty || gaps.isNotEmpty
+        ? 'medium'
+        : 'high';
+
+    return AtlasProjectBootstrapContext(
+      generatedAt: DateTime.now(),
+      identity: identity,
+      brief: brief,
+      capsule: capsule,
+      pendingLlmTasks: pendingTasks
+          .map((task) => task.toJson())
+          .toList(growable: false),
+      pendingAgentProposals: pendingProposals,
+      recommendedNextAction: recommendedNextAction,
+      confidence: confidence,
+      gaps: gaps,
+    );
+  }
+
   Future<List<AtlasProjectStatus>> getStaleProjects() async =>
       (await listProjects())
           .where((project) => project.needsAttention)
@@ -575,6 +716,42 @@ class AtlasAgentService {
       ...task.toJson(),
       'media': media.map(_mediaToJson).toList(growable: false),
     };
+  }
+
+  Future<AtlasLlmTaskBootstrapContext> getLlmTaskBootstrap(
+    String taskId, {
+    String? projectId,
+  }) async {
+    final cleanTaskId = _clean(taskId);
+    if (cleanTaskId == null) throw StateError('Task ID is required.');
+    final task = await state.getLlmTask(cleanTaskId);
+    if (task == null) throw StateError('LLM task not found: $cleanTaskId');
+    final expectedProjectId = _clean(projectId);
+    if (expectedProjectId != null && task.projectId != expectedProjectId) {
+      throw StateError(
+        'LLM task $cleanTaskId belongs to ${task.projectId}, not $expectedProjectId.',
+      );
+    }
+    if (task.status == 'completed' || task.status == 'cancelled') {
+      throw StateError(
+        'LLM task $cleanTaskId is ${task.status}; bootstrap is only available for pending, leased, or failed tasks.',
+      );
+    }
+    final taskDetail = await getLlmTaskDetail(cleanTaskId);
+    if (taskDetail == null) {
+      throw StateError('LLM task detail not found: $cleanTaskId');
+    }
+    final projectBootstrap = await getProjectBootstrapContext(task.projectId);
+    if (projectBootstrap == null) {
+      throw StateError(
+        'Project bootstrap context not available for ${task.projectId}.',
+      );
+    }
+    return AtlasLlmTaskBootstrapContext(
+      generatedAt: DateTime.now(),
+      task: taskDetail,
+      projectBootstrap: projectBootstrap,
+    );
   }
 
   Future<LlmTaskQueueItem> updateLlmTask({
@@ -1011,6 +1188,66 @@ class AtlasAgentService {
     );
   }
 
+  Future<AtlasProposalResult> proposeCloseout({
+    required String projectId,
+    String? runId,
+    String? runState,
+    required String summary,
+    Map<String, Object?> scope = const {},
+    Iterable<String> changedFiles = const [],
+    Iterable<Map<String, Object?>> validation = const [],
+    Map<String, Object?> capsuleDoctor = const {},
+    Iterable<String> packetPaths = const [],
+    Map<String, Object?> gitState = const {},
+    String? commitRecommendation,
+    Iterable<String> risks = const [],
+    Iterable<String> overrides = const [],
+    String? nextAction,
+  }) async {
+    final errors = <String>[];
+    final warnings = <String>[];
+    final project = await _validateProject(projectId, errors);
+    final cleanSummary = _clean(summary);
+    if (cleanSummary == null) {
+      errors.add('Closeout summary is required.');
+    }
+    final cleanValidation = validation
+        .map((entry) => Map<String, Object?>.from(entry))
+        .toList(growable: false);
+    if (cleanValidation.isEmpty) {
+      warnings.add('No validation evidence was included.');
+    }
+    final cleanRunId = _clean(runId);
+    if (cleanRunId == null) {
+      warnings.add('No run ID was included.');
+    }
+
+    return _saveProposal(
+      type: 'closeout_record',
+      project: project,
+      title: project == null
+          ? 'Agent closeout'
+          : 'Agent closeout for ${project.title}',
+      payload: {
+        'runId': cleanRunId,
+        'runState': _clean(runState),
+        'summary': cleanSummary,
+        'scope': Map<String, Object?>.from(scope),
+        'changedFiles': _cleanList(changedFiles),
+        'validation': cleanValidation,
+        'capsuleDoctor': Map<String, Object?>.from(capsuleDoctor),
+        'packetPaths': _cleanList(packetPaths),
+        'gitState': Map<String, Object?>.from(gitState),
+        'commitRecommendation': _clean(commitRecommendation),
+        'risks': _cleanList(risks),
+        'overrides': _cleanList(overrides),
+        'nextAction': _clean(nextAction),
+      },
+      validationErrors: errors,
+      warnings: warnings,
+    );
+  }
+
   Future<Project?> _visibleProject(String projectId) async {
     final project = await state.getProjectFull(projectId);
     if (project == null ||
@@ -1053,6 +1290,8 @@ class AtlasAgentService {
         return _applyValidationProposal(proposal);
       case 'handoff_record':
         return _applyHandoffProposal(proposal);
+      case 'closeout_record':
+        return _applyCloseoutProposal(proposal);
       default:
         throw StateError('Unsupported proposal type: ${proposal.type}');
     }
@@ -1171,6 +1410,33 @@ class AtlasAgentService {
     );
   }
 
+  Future<String> _applyCloseoutProposal(AtlasProposalDraft proposal) async {
+    final projectId = proposal.projectId;
+    if (projectId == null) throw StateError('Project ID is required.');
+    final summary =
+        _payloadString(proposal.payload, 'summary') ?? 'Agent closeout';
+    final draftId = await state.saveDraft(
+      kind: handoffDraftKind,
+      title: 'Agent closeout: $summary',
+      body: _closeoutHandoffBody(proposal),
+      projectId: projectId,
+      inputJson: jsonEncode({
+        'sourceProposalId': proposal.proposalId,
+        'sourceDraftId': proposal.draft.id,
+        'sourceType': proposal.type,
+      }),
+    );
+    await state.db.logEvent(
+      area: 'agent',
+      action: 'closeout_record_approved',
+      entityType: 'project',
+      entityId: projectId,
+      inputJson: jsonEncode(proposal.toJson()),
+      outputJson: jsonEncode({'handoffDraftId': draftId}),
+    );
+    return draftId;
+  }
+
   Future<void> _markProposalReviewed({
     required Draft draft,
     required AtlasProposalDraft proposal,
@@ -1220,6 +1486,10 @@ class AtlasAgentService {
         entityId == null
             ? 'Handoff recorded.'
             : 'Handoff draft created: $entityId.',
+      'closeout_record' =>
+        entityId == null
+            ? 'Closeout recorded.'
+            : 'Closeout handoff draft created: $entityId.',
       _ => 'Proposal approved.',
     };
   }
@@ -1359,6 +1629,100 @@ class AtlasAgentService {
       }
     }
     return buffer.toString();
+  }
+
+  String _closeoutHandoffBody(AtlasProposalDraft proposal) {
+    final payload = proposal.payload;
+    final buffer = StringBuffer()
+      ..writeln('# Agent Closeout')
+      ..writeln()
+      ..writeln('Proposal: `${proposal.proposalId}`')
+      ..writeln(
+        'Run ID: `${_payloadString(payload, 'runId') ?? 'not provided'}`',
+      )
+      ..writeln(
+        'Run state: `${_payloadString(payload, 'runState') ?? 'unknown'}`',
+      )
+      ..writeln()
+      ..writeln('## Summary')
+      ..writeln()
+      ..writeln(_payloadString(payload, 'summary') ?? 'No summary provided.');
+    _writeStringListSection(
+      buffer,
+      'Changed files',
+      _payloadStringList(payload, 'changedFiles'),
+    );
+    _writeJsonSection(buffer, 'Validation', payload['validation']);
+    _writeJsonSection(buffer, 'Capsule doctor', payload['capsuleDoctor']);
+    _writeStringListSection(
+      buffer,
+      'Packet paths',
+      _payloadStringList(payload, 'packetPaths'),
+    );
+    _writeJsonSection(buffer, 'Git state', payload['gitState']);
+    _writeStringListSection(
+      buffer,
+      'Risks',
+      _payloadStringList(payload, 'risks'),
+    );
+    _writeStringListSection(
+      buffer,
+      'Overrides',
+      _payloadStringList(payload, 'overrides'),
+    );
+    final commitRecommendation = _payloadString(
+      payload,
+      'commitRecommendation',
+    );
+    if (commitRecommendation != null) {
+      buffer
+        ..writeln()
+        ..writeln('## Commit recommendation')
+        ..writeln()
+        ..writeln(commitRecommendation);
+    }
+    final nextAction = _payloadString(payload, 'nextAction');
+    if (nextAction != null) {
+      buffer
+        ..writeln()
+        ..writeln('## Next action')
+        ..writeln()
+        ..writeln(nextAction);
+    }
+    _writeJsonSection(buffer, 'Scope', payload['scope']);
+    return buffer.toString();
+  }
+
+  static void _writeStringListSection(
+    StringBuffer buffer,
+    String title,
+    List<String> values,
+  ) {
+    if (values.isEmpty) return;
+    buffer
+      ..writeln()
+      ..writeln('## $title')
+      ..writeln();
+    for (final value in values) {
+      buffer.writeln('- $value');
+    }
+  }
+
+  static void _writeJsonSection(
+    StringBuffer buffer,
+    String title,
+    Object? value,
+  ) {
+    final isEmptyMap = value is Map && value.isEmpty;
+    final isEmptyList = value is Iterable && value.isEmpty;
+    if (value == null || isEmptyMap || isEmptyList) return;
+    buffer
+      ..writeln()
+      ..writeln('## $title')
+      ..writeln()
+      ..writeln('```json')
+      ..writeln(const JsonEncoder.withIndent('  ').convert(value))
+      ..writeln('```');
   }
 
   int _priorityRank(String priority) => switch (priority) {

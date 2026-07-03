@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../db/app_db.dart';
 import '../../services/ollama_service.dart';
+import '../../services/project_runtime_service.dart';
 import '../../services/telegram_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
@@ -142,6 +143,12 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
   List<String> _availableModels = [];
   bool _loadingModels = false;
 
+  final _runtimeYamlCtrl = TextEditingController();
+  final _runtimeCapsuleSourceCtrl = TextEditingController();
+  final _runtimeCapsuleProfileCtrl = TextEditingController();
+  bool _runtimeCapsuleEnabled = true;
+  String _runtimeCapsuleMode = 'check';
+
   bool _loaded = false;
 
   @override
@@ -160,6 +167,7 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
     final enabled = await state.getSetting(AppDb.kTelegramEnabled);
     final host = await state.getSetting(AppDb.kOllamaHost);
     final model = await state.getSetting(AppDb.kOllamaModel);
+    final runtimeDefaults = await state.loadProjectRuntimeDefaultsSettings();
     if (mounted) {
       setState(() {
         _tgTokenCtrl.text = token ?? '';
@@ -167,6 +175,11 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
         _tgEnabled = enabled == '1';
         _ollamaHostCtrl.text = host ?? 'http://localhost:11434';
         _ollamaModelCtrl.text = model ?? 'mistral';
+        _runtimeYamlCtrl.text = runtimeDefaults.resolvedDevLaunchpadYamlPath;
+        _runtimeCapsuleEnabled = runtimeDefaults.capsuleEnabled;
+        _runtimeCapsuleMode = normalizeCapsuleMode(runtimeDefaults.capsuleMode);
+        _runtimeCapsuleSourceCtrl.text = runtimeDefaults.capsuleSourcePath;
+        _runtimeCapsuleProfileCtrl.text = runtimeDefaults.capsuleProfile ?? '';
       });
       _fetchModels();
     }
@@ -220,6 +233,15 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
         _ollamaModelCtrl.text.trim().isEmpty
             ? null
             : _ollamaModelCtrl.text.trim(),
+      ),
+      state.saveProjectRuntimeDefaultsSettings(
+        ProjectRuntimeDefaultsSettings(
+          devLaunchpadYamlPath: _runtimeYamlCtrl.text,
+          capsuleEnabled: _runtimeCapsuleEnabled,
+          capsuleMode: _runtimeCapsuleMode,
+          capsuleSourcePath: _runtimeCapsuleSourceCtrl.text,
+          capsuleProfile: _runtimeCapsuleProfileCtrl.text,
+        ),
       ),
     ]);
     if (mounted) {
@@ -285,6 +307,9 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
     _tgChatCtrl.dispose();
     _ollamaHostCtrl.dispose();
     _ollamaModelCtrl.dispose();
+    _runtimeYamlCtrl.dispose();
+    _runtimeCapsuleSourceCtrl.dispose();
+    _runtimeCapsuleProfileCtrl.dispose();
     super.dispose();
   }
 
@@ -400,6 +425,60 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
           result: _ollamaResult,
           onTest: _testOllama,
         ),
+        const SizedBox(height: 28),
+        const Divider(color: _line),
+        const SizedBox(height: 24),
+
+        _SectionTitle(
+          icon: Icons.rocket_launch_outlined,
+          iconColor: Colors.greenAccent,
+          title: 'Project runtime defaults',
+          subtitle: 'Used when importing or creating runtime profiles.',
+        ),
+        const SizedBox(height: 14),
+        _Field(
+          ctrl: _runtimeYamlCtrl,
+          label: 'Dev Launchpad YAML path',
+          hint: defaultDevLaunchpadYamlPath,
+        ),
+        const SizedBox(height: 12),
+        SwitchListTile(
+          value: _runtimeCapsuleEnabled,
+          onChanged: (v) => setState(() => _runtimeCapsuleEnabled = v),
+          title: const Text('Enable Project Ops Capsule by default'),
+          contentPadding: EdgeInsets.zero,
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          value: normalizeCapsuleMode(_runtimeCapsuleMode),
+          decoration: const InputDecoration(
+            labelText: 'Capsule mode',
+            border: OutlineInputBorder(),
+          ),
+          items: const [
+            DropdownMenuItem(value: 'off', child: Text('off')),
+            DropdownMenuItem(value: 'check', child: Text('check')),
+            DropdownMenuItem(
+              value: 'strict_check',
+              child: Text('strict check'),
+            ),
+          ],
+          onChanged: (value) =>
+              setState(() => _runtimeCapsuleMode = value ?? 'check'),
+        ),
+        const SizedBox(height: 12),
+        _Field(
+          ctrl: _runtimeCapsuleSourceCtrl,
+          label: 'Capsule source path',
+          hint: defaultProjectOpsCapsulePath,
+        ),
+        const SizedBox(height: 12),
+        _Field(
+          ctrl: _runtimeCapsuleProfileCtrl,
+          label: 'Capsule profile',
+          hint: 'software_project',
+        ),
+
         const SizedBox(height: 28),
         const Divider(color: _line),
         const SizedBox(height: 20),
@@ -1337,6 +1416,7 @@ class _ProjectBundleExportWizardState
   bool _includeSummary = true;
   bool _includeLogs = true;
   bool _includeGitArchive = false;
+  bool _includeBootstrap = true;
   bool _exporting = false;
   String? _status;
 
@@ -1365,24 +1445,28 @@ class _ProjectBundleExportWizardState
           _includeSummary = true;
           _includeLogs = true;
           _includeGitArchive = false;
+          _includeBootstrap = true;
           _logWindow = _ProjectBundleLogWindow.last30;
         case _ProjectBundlePreset.handoff:
           _includeFiles = false;
           _includeSummary = true;
           _includeLogs = true;
           _includeGitArchive = false;
+          _includeBootstrap = true;
           _logWindow = _ProjectBundleLogWindow.last30;
         case _ProjectBundlePreset.audit:
           _includeFiles = false;
           _includeSummary = true;
           _includeLogs = true;
           _includeGitArchive = false;
+          _includeBootstrap = true;
           _logWindow = _ProjectBundleLogWindow.all;
         case _ProjectBundlePreset.cleanGit:
           _includeFiles = false;
           _includeSummary = true;
           _includeLogs = true;
           _includeGitArchive = true;
+          _includeBootstrap = true;
           _logWindow = _ProjectBundleLogWindow.last30;
         case _ProjectBundlePreset.custom:
           break;
@@ -1403,6 +1487,7 @@ class _ProjectBundleExportWizardState
             includeEventLogs: _includeLogs,
             eventLogSince: _includeLogs ? _eventLogSince : null,
             includeCleanGitArchive: _includeGitArchive,
+            includeBootstrapContext: _includeBootstrap,
           );
   }
 
@@ -1457,6 +1542,7 @@ class _ProjectBundleExportWizardState
         includeEventLogs: _includeLogs,
         eventLogSince: _includeLogs ? _eventLogSince : null,
         includeCleanGitArchive: _includeGitArchive,
+        includeBootstrapContext: _includeBootstrap,
       );
       if (!mounted) return;
       setState(() => _status = 'Project bundle exported: $outputPath');
@@ -1654,6 +1740,14 @@ class _ProjectBundleExportWizardState
                         : (value) =>
                               _setOption(() => _includeGitArchive = value),
                   ),
+                  _ExportCheckbox(
+                    value: _includeBootstrap,
+                    label: 'Bootstrap',
+                    onChanged: _exporting
+                        ? null
+                        : (value) =>
+                              _setOption(() => _includeBootstrap = value),
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -1845,6 +1939,10 @@ class _ProjectBundlePreview extends StatelessWidget {
                 _ExportMetric(
                   label: 'Git',
                   value: preview.cleanGitArchiveReady ? 'ready' : 'off',
+                ),
+                _ExportMetric(
+                  label: 'Bootstrap',
+                  value: preview.includeBootstrapContext ? 'yes' : 'no',
                 ),
               ],
             ),

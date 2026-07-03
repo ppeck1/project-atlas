@@ -147,6 +147,52 @@ class ProjectRuntimeProfileDraft {
   );
 }
 
+class ProjectRuntimeDefaultsSettings {
+  final String? devLaunchpadYamlPath;
+  final bool capsuleEnabled;
+  final String capsuleMode;
+  final String capsuleSourcePath;
+  final String? capsuleProfile;
+
+  const ProjectRuntimeDefaultsSettings({
+    this.devLaunchpadYamlPath,
+    this.capsuleEnabled = true,
+    this.capsuleMode = 'check',
+    this.capsuleSourcePath = defaultProjectOpsCapsulePath,
+    this.capsuleProfile = 'software_project',
+  });
+
+  String get resolvedDevLaunchpadYamlPath =>
+      _blankToNull(devLaunchpadYamlPath) ?? defaultDevLaunchpadYamlPath;
+
+  ProjectRuntimeProfileDraft emptyDraft({String? workingDirectory}) =>
+      applyToImportedDraft(
+        ProjectRuntimeProfileDraft.empty(workingDirectory: workingDirectory),
+      );
+
+  ProjectRuntimeProfileDraft applyToImportedDraft(
+    ProjectRuntimeProfileDraft draft,
+  ) => ProjectRuntimeProfileDraft(
+    enabled: draft.enabled,
+    workingDirectory: draft.workingDirectory,
+    launchCommand: draft.launchCommand,
+    stopCommand: draft.stopCommand,
+    testCommands: draft.testCommands,
+    ports: draft.ports,
+    urls: draft.urls,
+    healthUrls: draft.healthUrls,
+    notes: draft.notes,
+    autostart: draft.autostart,
+    capsuleEnabled: capsuleEnabled,
+    capsuleMode: normalizeCapsuleMode(capsuleMode),
+    capsuleSourcePath:
+        _blankToNull(capsuleSourcePath) ?? defaultProjectOpsCapsulePath,
+    capsuleProfile: _blankToNull(capsuleProfile),
+    importSource: draft.importSource,
+    lastImportedAt: draft.lastImportedAt,
+  );
+}
+
 class DevLaunchpadRuntimeImporter {
   const DevLaunchpadRuntimeImporter();
 

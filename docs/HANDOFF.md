@@ -2,64 +2,68 @@
 
 ## Current State
 
-Project Atlas is a public Flutter Windows desktop repo. The active app repo is this directory, not the outer wrapper folder. The latest stabilization pass repaired the GitHub CI path assertion, refreshed the public README screenshots, and closed two small product correctness gaps found in review: Telegram sends now respect the enable toggle, and deleting app-owned project media removes its copied file best-effort.
+Project Atlas is a public Flutter Windows desktop repo. The active app repo is this directory, not the outer wrapper folder. The current uncommitted implementation slice completes the Atlas/capsule/MCP control-plane path through WO-8:
+
+- Project identity, capsule status, and project bootstrap reads.
+- Queue-bound LLM task bootstrap reads.
+- Local release-build stdio MCP wrapper over the Atlas MCP adapter.
+- Proposal-first agent closeout records.
+- Project bundle bootstrap JSON/Markdown export.
+- Settings-backed Dev Launchpad and Project Ops Capsule runtime defaults.
+- Repeatable preflight freshness gate script.
+
+No commit or push has been made in this slice. The live Atlas queue rows are still pending so the operator can review the code and evidence first.
 
 ## Last Run
 
 | Field | Value |
 |---|---|
-| Run ID | 20260703-ci-screenshots-product-stabilization |
-| Run State | VALIDATED_LOCAL |
-| Last Verified At | 2026-07-03T10:45:16-04:00 |
-| Validation State | pass |
-| Git Head | working tree based on `7c7d0eb Add project runtime profiles (schema v19); refresh docs and screenshots` |
+| Run ID | 20260703-agent-control-plane-rest |
+| Run State | VALIDATED_LOCAL_AUTOMATED |
+| Last Verified At | 2026-07-03T15:48:00-04:00 |
+| Validation State | pass with manual review pending |
+| Git Head | `ea3c8ac Record CI green closeout` |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
 ## Validation Evidence
 
-- `C:\Users\peckm\AppData\Local\Programs\Python\Python311\python.exe tools\generate_readme_screenshots.py`: pass, regenerated five README screenshots at 1440x900.
-- `C:\Users\peckm\AppData\Local\Programs\Python\Python311\python.exe -m py_compile tools\generate_readme_screenshots.py`: pass.
-- `dart format lib\db\app_db.dart lib\shared\models\app_state.dart test\document_import_test.dart test\local_operations_registry_test.dart`: pass, 0 files changed.
-- `flutter test test\local_operations_registry_test.dart --plain-name "project bundle clean git export uses a clean linked child registry repo"`: pass.
-- `flutter test test\document_import_test.dart test\schema_media_test.dart`: pass, 36 tests passed.
+- `dart format --output=none --set-exit-if-changed lib test`: pass, 0 files changed.
 - `flutter analyze`: pass, no issues found.
-- Full `flutter test`: pass, 188 tests passed.
+- `flutter test test\project_identity_resolver_test.dart test\atlas_agent_service_test.dart test\atlas_mcp_adapter_test.dart test\atlas_mcp_stdio_server_test.dart test\local_operations_registry_test.dart test\project_runtime_service_test.dart --concurrency=1`: pass, 89 tests passed.
+- `flutter test --concurrency=1`: pass, 204 tests passed.
+- `flutter build windows --release`: pass, built `build\windows\x64\runner\Release\project_atlas.exe`.
+- `python .project\verification\smoke_mcp_stdio.py`: pass against the release executable and live app-data DB; 3 JSON-RPC responses, 28 MCP tools, clean stdout protocol.
+- `python tools\preflight_freshness_gate.py --json`: expected blocked because the working tree is dirty; all other checks passed, including local HEAD matching origin/main, latest GitHub main CI run `28667715821` success, capsule JSON parse, docs present, and README screenshots non-trivial.
+- `python B:\Projects\LLM_Modules\Project_Ops_Capsule\scripts\capsule_doctor.py B:\dev\Project_Atlas\project-atlas-main`: pass, result healthy.
 - `git diff --check`: pass, only normal CRLF conversion warnings.
-- GitHub Actions CI run `28667317914` for commit `ade5634`: pass, including Analyze, Test, and Windows release build.
 
-## Latest Stabilization Pass
+## Implemented Slice
 
-Project AI summaries remain behind an explicit Settings -> AI Summaries wizard with Disabled, Manual review, and Manual review + bulk refresh modes. Manual summaries can default to linked Library evidence, bulk refresh remains separately gated, and project summaries can use either the global Ollama model or a summary-specific installed model. The evidence packet classifies docs into operational categories, ranks marker docs before raw source files, surfaces aggregate packet warnings in Project Detail, includes category/reason lines in the LLM prompt, emits deterministic evaluation JSON, and tells the model not to infer from metadata-only document titles. Structured summary output still validates schema, ownership, document IDs, and unsupported generic next actions before acceptance.
+`AtlasAgentService` exposes stable bootstrap DTOs for both projects and individual active LLM queue tasks. `get_llm_task_bootstrap` returns task detail, attached media metadata, and the owning project bootstrap context without claiming or mutating the task. Completed and cancelled tasks fail closed.
 
-The public screenshot generator now creates a cleaner 1440x900 schema v19 README set for Today, Projects, Operations, Library, and Settings. The screenshots use demo data but intentionally show operator-facing workflows: daily focus, project runtime actions, Operations review/project-health signals, Library AI drafts/proposals, and opt-in AI summary settings.
+`lib/mcp/atlas_mcp_stdio_server.dart` and `lib/mcp/atlas_mcp_stdio.dart` add a local JSON-RPC stdio server for release Windows builds. It supports `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. Debug builds are not suitable for stdio smoke because Flutter prints the Dart VM service banner to stdout.
 
-The July 3 CI-only failure on GitHub was the local git archive export test comparing raw Windows path spellings (`RUNNER~1` versus `runneradmin`). The test now compares filesystem identity first, with normalized path comparison as a fallback.
+`propose_closeout` records agent closeout evidence as a reviewable `closeout_record` proposal. Approval creates a `project_handoff` draft and event-log evidence; it does not bypass the human review queue.
 
-Telegram sending now fails closed when `telegram_enabled` is disabled or unset, without creating an outbox row or attempting a send. Project media deletion now removes the app-owned copied file from the `project_media/<projectId>` vault best-effort after removing media links and the DB row; external paths are left alone.
+Project bundle export can include `bootstrap/project_bootstrap_context.json` and `bootstrap/project_bootstrap_context.md` by default. The Settings export wizard exposes a Bootstrap toggle.
 
-## Live Atlas Queue Cleanup
+Settings -> Integrations now includes Project runtime defaults for Dev Launchpad YAML path and Project Ops Capsule defaults. These settings feed first-time manual runtime profiles and Dev Launchpad imports without inventing launch/test commands.
 
-The local Atlas LLM queue was reconciled after the pushed code closeout. Four Project Atlas rows were marked completed with result evidence tied to `db189a6` and CI run `28553381256`: `Project status cleanup`, `Subdivide projects by set types`, `Add media to tasks`, and `Category fix`. The remaining pending row is the Bag of Holding `test review` item; it was intentionally left open because it is not a completed Project Atlas code task.
+`tools/preflight_freshness_gate.py` is the repeatable WO-0 gate. It checks git cleanliness, origin/main, latest GitHub Actions main run, capsule metadata, required docs, and README screenshots.
+
+## Live Atlas Queue State
+
+The live app-data queue still lists `Live Ollama sampling against Library-backed summaries` and WO-0 through WO-8 as pending. Code now covers WO-0 through WO-8, but the queue was intentionally not mutated because this run remains uncommitted and awaiting operator review.
+
+The live Ollama sampling task remains real follow-up work. This implementation did not run live local-model sampling against representative Library sets.
 
 ## Known Risks
 
-- Manual UI smoke of the Settings -> AI Summaries tab is still useful to inspect layout and local Ollama model dropdown behavior.
-- Live Ollama sampling against real project-linked Library sets remains a separate review task; this work order intentionally keeps the regression harness deterministic.
-- Raw capsule run ledgers and outboxes are local-only for public-repo safety.
-- GitHub Actions passed for the stabilization commit; the only annotation was the upstream Node.js 20 deprecation notice from GitHub Actions.
-
-## Project Atlas Status
-
-Atlas sync is outbox-first. The install event is queued locally at `.project/atlas_outbox/20260701-080143-project-atlas-ops-capsule.json`.
-
-## BOH Status
-
-BOH sync is outbox-first and evidence-only. The packet is queued locally at `.project/boh_outbox/20260701-080143-project-atlas-ops-capsule.json`. No BOH promotion was performed.
-
-## Git Status
-
-Git repo verified on branch `main`, remote `https://github.com/ppeck1/project-atlas.git`. This handoff records the locally and remotely validated state after the stabilization commit was pushed.
+- Manual UI/program verification is still deferred by operator constraint.
+- Settings -> Integrations runtime-default layout should be visually checked on the user's machine.
+- The stdio MCP smoke is validated against the release executable; debug builds print non-protocol output on stdout.
+- Live queue rows need closeout/approval after review, commit, and any desired push.
 
 ## Next Best Action
 
-The next substantive product slice is either settings-backed runtime defaults or restore/import flows.
+Review the uncommitted diff, then decide whether to commit/push this control-plane slice and close the corresponding live Atlas queue rows with the validation evidence above. After that, the next substantive product task is live Ollama sampling against real project-linked Library sets.

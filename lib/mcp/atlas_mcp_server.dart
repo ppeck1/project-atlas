@@ -76,6 +76,24 @@ class AtlasMcpAdapter {
       inputSchema: _projectIdSchema,
     ),
     AtlasMcpTool(
+      name: 'get_project_identity',
+      description:
+          'Resolve one Atlas project to its local registry, repo, GitHub, and capsule identity without mutating anything.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'get_project_capsule_status',
+      description:
+          'Read Project Ops Capsule metadata and local evidence availability for one linked project.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
+      name: 'get_project_bootstrap_context',
+      description:
+          'Return the versioned agent startup packet for one project, combining Atlas state, capsule evidence, queue state, and gaps.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
       name: 'get_stale_projects',
       description:
           'List projects needing attention because of status or blocked work.',
@@ -189,6 +207,19 @@ class AtlasMcpAdapter {
         'type': 'object',
         'properties': {
           'taskId': {'type': 'string'},
+        },
+        'required': ['taskId'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'get_llm_task_bootstrap',
+      description:
+          'Get a queued LLM task plus its project bootstrap context for worker startup. Does not claim or mutate the task.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'taskId': {'type': 'string'},
+          'projectId': {'type': 'string'},
         },
         'required': ['taskId'],
       },
@@ -319,6 +350,46 @@ class AtlasMcpAdapter {
         'required': ['projectId', 'title', 'body'],
       },
     ),
+    AtlasMcpTool(
+      name: 'propose_closeout',
+      description:
+          'Create a reviewable agent closeout proposal with validation, git, packet, and next-action evidence. Does not apply the closeout.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'runId': {'type': 'string'},
+          'runState': {'type': 'string'},
+          'summary': {'type': 'string'},
+          'scope': {'type': 'object'},
+          'changedFiles': {
+            'type': 'array',
+            'items': {'type': 'string'},
+          },
+          'validation': {
+            'type': 'array',
+            'items': {'type': 'object'},
+          },
+          'capsuleDoctor': {'type': 'object'},
+          'packetPaths': {
+            'type': 'array',
+            'items': {'type': 'string'},
+          },
+          'gitState': {'type': 'object'},
+          'commitRecommendation': {'type': 'string'},
+          'risks': {
+            'type': 'array',
+            'items': {'type': 'string'},
+          },
+          'overrides': {
+            'type': 'array',
+            'items': {'type': 'string'},
+          },
+          'nextAction': {'type': 'string'},
+        },
+        'required': ['projectId', 'summary'],
+      },
+    ),
   ];
 
   Future<AtlasMcpCallResult> callTool(
@@ -346,6 +417,16 @@ class AtlasMcpAdapter {
       'get_project_brief' => (await agent.getProjectBrief(
         _requiredString(args, 'projectId'),
       ))?.toJson(),
+      'get_project_identity' => (await agent.getProjectIdentity(
+        _requiredString(args, 'projectId'),
+      ))?.toJson(),
+      'get_project_capsule_status' => (await agent.getProjectCapsuleStatus(
+        _requiredString(args, 'projectId'),
+      ))?.toJson(),
+      'get_project_bootstrap_context' =>
+        (await agent.getProjectBootstrapContext(
+          _requiredString(args, 'projectId'),
+        ))?.toJson(),
       'get_stale_projects' =>
         (await agent.getStaleProjects())
             .map((project) => project.toJson())
@@ -393,6 +474,10 @@ class AtlasMcpAdapter {
       'get_llm_task' => await agent.getLlmTaskDetail(
         _requiredString(args, 'taskId'),
       ),
+      'get_llm_task_bootstrap' => (await agent.getLlmTaskBootstrap(
+        _requiredString(args, 'taskId'),
+        projectId: _string(args, 'projectId'),
+      )).toJson(),
       'claim_llm_task' => (await agent.claimLlmTask(
         taskId: _string(args, 'taskId'),
         workerId: _requiredString(args, 'workerId'),
@@ -444,6 +529,22 @@ class AtlasMcpAdapter {
         projectId: _requiredString(args, 'projectId'),
         title: _requiredString(args, 'title'),
         body: _requiredString(args, 'body'),
+      )).toJson(),
+      'propose_closeout' => (await agent.proposeCloseout(
+        projectId: _requiredString(args, 'projectId'),
+        runId: _string(args, 'runId'),
+        runState: _string(args, 'runState'),
+        summary: _requiredString(args, 'summary'),
+        scope: _objectMap(args['scope']),
+        changedFiles: _stringList(args, 'changedFiles'),
+        validation: _objectList(args, 'validation'),
+        capsuleDoctor: _objectMap(args['capsuleDoctor']),
+        packetPaths: _stringList(args, 'packetPaths'),
+        gitState: _objectMap(args['gitState']),
+        commitRecommendation: _string(args, 'commitRecommendation'),
+        risks: _stringList(args, 'risks'),
+        overrides: _stringList(args, 'overrides'),
+        nextAction: _string(args, 'nextAction'),
       )).toJson(),
       _ => throw ArgumentError('Unknown Atlas MCP tool: $name'),
     };
@@ -563,5 +664,20 @@ class AtlasMcpAdapter {
   Map<String, Object?> _objectMap(Object? value) {
     if (value is! Map) return const {};
     return value.map((key, value) => MapEntry('$key', value));
+  }
+
+  List<Map<String, Object?>> _objectList(
+    Map<String, Object?> args,
+    String key,
+  ) {
+    final value = args[key];
+    if (value is Iterable) {
+      return value
+          .whereType<Map>()
+          .map((entry) => entry.map((key, value) => MapEntry('$key', value)))
+          .toList();
+    }
+    final single = _objectMap(value);
+    return single.isEmpty ? const [] : [single];
   }
 }

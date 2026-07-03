@@ -104,4 +104,102 @@ apps:
     expect(saved.autostart, isTrue);
     expect(saved.capsuleProfile, 'software_project');
   });
+
+  test('AppState saves and loads runtime default settings', () async {
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+
+    final fallback = await state.loadProjectRuntimeDefaultsSettings();
+    expect(fallback.resolvedDevLaunchpadYamlPath, defaultDevLaunchpadYamlPath);
+    expect(fallback.capsuleEnabled, isTrue);
+    expect(fallback.capsuleMode, 'check');
+    expect(fallback.capsuleSourcePath, defaultProjectOpsCapsulePath);
+    expect(fallback.capsuleProfile, 'software_project');
+
+    final yamlPath = p.join(tempDir.path, 'configured_launchpad.yaml');
+    await state.saveProjectRuntimeDefaultsSettings(
+      ProjectRuntimeDefaultsSettings(
+        devLaunchpadYamlPath: yamlPath,
+        capsuleEnabled: false,
+        capsuleMode: 'strict_check',
+        capsuleSourcePath: r'B:\Capsules\Project_Ops_Capsule',
+        capsuleProfile: 'public_repo',
+      ),
+    );
+
+    final loaded = await state.loadProjectRuntimeDefaultsSettings();
+    final draft = await state.defaultProjectRuntimeProfileDraft(
+      workingDirectory: r'B:\dev\example',
+    );
+
+    expect(loaded.resolvedDevLaunchpadYamlPath, yamlPath);
+    expect(loaded.capsuleEnabled, isFalse);
+    expect(loaded.capsuleMode, 'strict_check');
+    expect(loaded.capsuleSourcePath, r'B:\Capsules\Project_Ops_Capsule');
+    expect(loaded.capsuleProfile, 'public_repo');
+    expect(draft.workingDirectory, r'B:\dev\example');
+    expect(draft.capsuleEnabled, isFalse);
+    expect(draft.capsuleMode, 'strict_check');
+    expect(draft.capsuleSourcePath, r'B:\Capsules\Project_Ops_Capsule');
+    expect(draft.capsuleProfile, 'public_repo');
+  });
+
+  test(
+    'AppState imports runtime profiles from configured Dev Launchpad defaults',
+    () async {
+      final db = AppDb.withExecutor(NativeDatabase.memory());
+      final state = AppState(db, enableBackgroundSummaryRefresh: false);
+      addTearDown(() async {
+        state.dispose();
+        await db.close();
+      });
+      await db.createProject('atlas', 'Project Atlas', DateTime(2026, 7, 2));
+
+      final yamlPath = p.join(tempDir.path, 'configured_launchpad.yaml');
+      File(yamlPath).writeAsStringSync(r'''
+apps:
+- name: Project Atlas
+  path: B:\dev\Project_Atlas\project-atlas-main
+  start: .\launch.ps1
+  tests:
+  - flutter test
+  ports:
+  - 5174
+  urls: []
+  health_urls: []
+  autostart: false
+''');
+      await state.saveProjectRuntimeDefaultsSettings(
+        ProjectRuntimeDefaultsSettings(
+          devLaunchpadYamlPath: yamlPath,
+          capsuleEnabled: false,
+          capsuleMode: 'strict_check',
+          capsuleSourcePath: r'B:\Capsules\Project_Ops_Capsule',
+          capsuleProfile: 'public_repo',
+        ),
+      );
+
+      final profile = await state.importRuntimeProfileFromDevLaunchpad('atlas');
+      final saved = await db.getProjectRuntimeProfile('atlas');
+
+      expect(profile, isNotNull);
+      expect(saved, isNotNull);
+      expect(
+        saved!.workingDirectory,
+        r'B:\dev\Project_Atlas\project-atlas-main',
+      );
+      expect(saved.launchCommand, r'.\launch.ps1');
+      expect(decodeStringList(saved.testCommandsJson), ['flutter test']);
+      expect(decodeIntList(saved.portsJson), [5174]);
+      expect(saved.importSource, yamlPath);
+      expect(saved.capsuleEnabled, isFalse);
+      expect(saved.capsuleMode, 'strict_check');
+      expect(saved.capsuleSourcePath, r'B:\Capsules\Project_Ops_Capsule');
+      expect(saved.capsuleProfile, 'public_repo');
+    },
+  );
 }

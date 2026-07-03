@@ -87,6 +87,7 @@ class ProjectBundleExportPreview {
   final bool includeLatestSummary;
   final bool includeEventLogs;
   final bool includeCleanGitArchive;
+  final bool includeBootstrapContext;
   final int stages;
   final int workItems;
   final int workItemNotes;
@@ -114,6 +115,7 @@ class ProjectBundleExportPreview {
     required this.includeLatestSummary,
     required this.includeEventLogs,
     required this.includeCleanGitArchive,
+    required this.includeBootstrapContext,
     required this.stages,
     required this.workItems,
     required this.workItemNotes,
@@ -149,7 +151,8 @@ class ProjectBundleExportPreview {
       observations +
       refreshItems +
       latestSummaryDrafts +
-      eventLogs;
+      eventLogs +
+      (includeBootstrapContext ? 1 : 0);
 
   int get copiedFileCount =>
       includeFiles ? copiedDocumentFiles + copiedMediaFiles : 0;
@@ -1031,6 +1034,68 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<ProjectRuntimeDefaultsSettings>
+  loadProjectRuntimeDefaultsSettings() async {
+    final yamlPath = await getSetting(
+      AppDb.kProjectRuntimeDefaultDevLaunchpadYamlPath,
+    );
+    final capsuleEnabled = await getSetting(
+      AppDb.kProjectRuntimeDefaultCapsuleEnabled,
+    );
+    final capsuleMode = await getSetting(
+      AppDb.kProjectRuntimeDefaultCapsuleMode,
+    );
+    final capsuleSourcePath = await getSetting(
+      AppDb.kProjectRuntimeDefaultCapsuleSourcePath,
+    );
+    final capsuleProfile = await getSetting(
+      AppDb.kProjectRuntimeDefaultCapsuleProfile,
+    );
+    return ProjectRuntimeDefaultsSettings(
+      devLaunchpadYamlPath: _metaString(yamlPath),
+      capsuleEnabled: _metaBool(capsuleEnabled, fallback: true),
+      capsuleMode: normalizeCapsuleMode(_metaString(capsuleMode) ?? 'check'),
+      capsuleSourcePath:
+          _metaString(capsuleSourcePath) ?? defaultProjectOpsCapsulePath,
+      capsuleProfile: _metaString(capsuleProfile) ?? 'software_project',
+    );
+  }
+
+  Future<void> saveProjectRuntimeDefaultsSettings(
+    ProjectRuntimeDefaultsSettings settings,
+  ) async {
+    await Future.wait([
+      db.setMetaString(
+        AppDb.kProjectRuntimeDefaultDevLaunchpadYamlPath,
+        _metaString(settings.devLaunchpadYamlPath),
+      ),
+      db.setMetaString(
+        AppDb.kProjectRuntimeDefaultCapsuleEnabled,
+        _boolMeta(settings.capsuleEnabled),
+      ),
+      db.setMetaString(
+        AppDb.kProjectRuntimeDefaultCapsuleMode,
+        normalizeCapsuleMode(settings.capsuleMode),
+      ),
+      db.setMetaString(
+        AppDb.kProjectRuntimeDefaultCapsuleSourcePath,
+        _metaString(settings.capsuleSourcePath) ?? defaultProjectOpsCapsulePath,
+      ),
+      db.setMetaString(
+        AppDb.kProjectRuntimeDefaultCapsuleProfile,
+        _metaString(settings.capsuleProfile),
+      ),
+    ]);
+    notifyListeners();
+  }
+
+  Future<ProjectRuntimeProfileDraft> defaultProjectRuntimeProfileDraft({
+    String? workingDirectory,
+  }) async {
+    final settings = await loadProjectRuntimeDefaultsSettings();
+    return settings.emptyDraft(workingDirectory: workingDirectory);
+  }
+
   // ---------------------------------------------------------------------------
   // Drafts
   // ---------------------------------------------------------------------------
@@ -1352,23 +1417,29 @@ class AppState extends ChangeNotifier {
 
   Future<ProjectRuntimeProfile?> importRuntimeProfileFromDevLaunchpad(
     String projectId, {
-    String yamlPath = defaultDevLaunchpadYamlPath,
+    String? yamlPath,
     DevLaunchpadRuntimeImporter importer = const DevLaunchpadRuntimeImporter(),
   }) async {
     final project = await db.getProjectFull(projectId);
     if (project == null) throw StateError('Project not found: $projectId');
+    final defaults = await loadProjectRuntimeDefaultsSettings();
+    final resolvedYamlPath =
+        _metaString(yamlPath) ?? defaults.resolvedDevLaunchpadYamlPath;
     final draft = await importer.readProfileForProject(
       projectTitle: project.title,
-      yamlPath: yamlPath,
+      yamlPath: resolvedYamlPath,
     );
     if (draft == null) return null;
-    final profile = await saveProjectRuntimeProfileDraft(projectId, draft);
+    final profile = await saveProjectRuntimeProfileDraft(
+      projectId,
+      defaults.applyToImportedDraft(draft),
+    );
     await db.logEvent(
       area: 'runtime',
       action: 'runtime_profile_imported',
       entityType: 'project',
       entityId: projectId,
-      inputJson: yamlPath,
+      inputJson: resolvedYamlPath,
       outputJson: jsonEncode({'matched': project.title}),
     );
     return profile;
@@ -7179,6 +7250,7 @@ class AppState extends ChangeNotifier {
     bool includeEventLogs = false,
     DateTime? eventLogSince,
     bool includeCleanGitArchive = false,
+    bool includeBootstrapContext = true,
   }) async {
     final project = await db.getProjectFull(projectId);
     if (project == null) {
@@ -7266,6 +7338,7 @@ class AppState extends ChangeNotifier {
       includeLatestSummary: includeLatestSummary,
       includeEventLogs: includeEventLogs,
       includeCleanGitArchive: includeCleanGitArchive,
+      includeBootstrapContext: includeBootstrapContext,
       stages: stages.length,
       workItems: workItems.length,
       workItemNotes: notes.length,
@@ -7295,6 +7368,7 @@ class AppState extends ChangeNotifier {
     bool includeEventLogs = false,
     DateTime? eventLogSince,
     bool includeCleanGitArchive = false,
+    bool includeBootstrapContext = true,
   }) async {
     final preview = await previewProjectBundleExport(
       projectId,
@@ -7303,6 +7377,7 @@ class AppState extends ChangeNotifier {
       includeEventLogs: includeEventLogs,
       eventLogSince: eventLogSince,
       includeCleanGitArchive: includeCleanGitArchive,
+      includeBootstrapContext: includeBootstrapContext,
     );
     final project = await db.getProjectFull(projectId);
     if (project == null) {
@@ -7345,12 +7420,27 @@ class AppState extends ChangeNotifier {
     }
 
     final exportedAt = DateTime.now().toIso8601String();
+    final bootstrapContext = includeBootstrapContext
+        ? await _projectBundleBootstrapContext(
+            project: project,
+            exportedAt: exportedAt,
+            workItems: workItems,
+            registry: registry,
+            registries: registries,
+            observations: observations,
+            refreshItems: refreshItems,
+          )
+        : null;
+    final bootstrapMarkdown = bootstrapContext == null
+        ? null
+        : _projectBundleBootstrapMarkdown(bootstrapContext);
     final options = <String, Object?>{
       'includeFiles': includeFiles,
       'includeLatestSummary': includeLatestSummary,
       'includeEventLogs': includeEventLogs,
       'eventLogSince': eventLogSince?.toIso8601String(),
       'includeCleanGitArchive': includeCleanGitArchive,
+      'includeBootstrapContext': includeBootstrapContext,
     };
     final counts = <String, Object?>{
       'atlasRecords': preview.atlasRecordCount,
@@ -7370,11 +7460,18 @@ class AppState extends ChangeNotifier {
       'refreshItems': preview.refreshItems,
       'latestSummaryDrafts': preview.latestSummaryDrafts,
       'eventLogs': preview.eventLogs,
+      'bootstrapContexts': bootstrapContext == null ? 0 : 1,
     };
     final contents = <String, Object?>{
       'projectBundle': 'project_bundle.json',
       'manifest': 'manifest/export_manifest.json',
       'readme': 'README.md',
+      'bootstrapContext': bootstrapContext == null
+          ? null
+          : 'bootstrap/project_bootstrap_context.json',
+      'bootstrapContextMarkdown': bootstrapMarkdown == null
+          ? null
+          : 'bootstrap/project_bootstrap_context.md',
       'summary': latestSummary == null
           ? null
           : 'summary/latest_project_summary.md',
@@ -7439,6 +7536,7 @@ class AppState extends ChangeNotifier {
       'latestProjectSummary': latestSummary?.toJson(),
       'projectEventLogs': eventLogs.map((row) => row.toJson()).toList(),
       'cleanGitArchive': gitArchive?.metadata,
+      'projectBootstrapContext': bootstrapContext,
     };
 
     final archive = Archive();
@@ -7469,6 +7567,26 @@ class AppState extends ChangeNotifier {
       ),
     );
     archive.addFile(ArchiveFile('README.md', readmeBytes.length, readmeBytes));
+    if (bootstrapContext != null && bootstrapMarkdown != null) {
+      final bootstrapJsonBytes = utf8.encode(
+        const JsonEncoder.withIndent('  ').convert(bootstrapContext),
+      );
+      archive.addFile(
+        ArchiveFile(
+          'bootstrap/project_bootstrap_context.json',
+          bootstrapJsonBytes.length,
+          bootstrapJsonBytes,
+        ),
+      );
+      final bootstrapMarkdownBytes = utf8.encode(bootstrapMarkdown);
+      archive.addFile(
+        ArchiveFile(
+          'bootstrap/project_bootstrap_context.md',
+          bootstrapMarkdownBytes.length,
+          bootstrapMarkdownBytes,
+        ),
+      );
+    }
     if (exportWarnings.isNotEmpty) {
       final warningBytes = utf8.encode('${exportWarnings.join('\n')}\n');
       archive.addFile(
@@ -7560,6 +7678,7 @@ class AppState extends ChangeNotifier {
         'includeEventLogs': includeEventLogs,
         'eventLogSince': eventLogSince?.toIso8601String(),
         'includeCleanGitArchive': includeCleanGitArchive,
+        'includeBootstrapContext': includeBootstrapContext,
         'atlasRecords': preview.atlasRecordCount,
         'copiedFiles': preview.copiedFileCount,
         'warnings': exportWarnings,
@@ -7608,6 +7727,254 @@ class AppState extends ChangeNotifier {
         ..addAll(warnings.map((warning) => '- $warning'));
     }
     return '${lines.join('\n')}\n';
+  }
+
+  Future<Map<String, Object?>> _projectBundleBootstrapContext({
+    required ProjectFull project,
+    required String exportedAt,
+    required List<WorkItem> workItems,
+    required ProjectRegistryEntry? registry,
+    required List<ProjectRegistryEntry> registries,
+    required List<ProjectObservation> observations,
+    required List<LocalProjectRefreshItem> refreshItems,
+  }) async {
+    final activeWorkItems = workItems
+        .where((item) => !{'done', 'archived'}.contains(item.status))
+        .toList(growable: false);
+    final blockedWorkItems = activeWorkItems
+        .where((item) => _metaString(item.blockedReason) != null)
+        .toList(growable: false);
+    final llmTasks = (await db.getLlmTasksForProject(
+      project.id,
+      limit: 50,
+    )).where((task) => !{'completed', 'cancelled'}.contains(task.status));
+    final proposals = (await db.watchDrafts().first)
+        .where(_isPendingAgentProposalDraft)
+        .where((draft) => draft.projectId == project.id)
+        .take(25)
+        .map(_agentProposalDraftToBundleJson)
+        .toList(growable: false);
+    final githubRemote = await db.getLatestProjectGitRemoteStatus(project.id);
+    final gaps = <String>[
+      if (registry == null) 'Project has no linked local registry entry.',
+      if (githubRemote == null) 'Project has no cached GitHub remote status.',
+      if (llmTasks.isEmpty && proposals.isEmpty)
+        'No pending queue tasks or agent proposals were present at export time.',
+    ];
+    final pendingLlmTasks = llmTasks
+        .map((task) => task.toJson())
+        .toList(growable: false);
+
+    return {
+      'schema': 'atlas.project_bootstrap_context.v1',
+      'generatedAt': exportedAt,
+      'project': {
+        'id': project.id,
+        'title': project.title,
+        'status': project.status,
+        'category': project.category,
+        'owner': project.owner,
+        'phase': project.phase,
+        'priority': project.priority,
+        'description': project.description,
+        'desiredOutcome': project.desiredOutcome,
+        'successCriteria': project.successCriteria,
+        'scopeIncluded': project.scopeIncluded,
+        'scopeExcluded': project.scopeExcluded,
+        'outcomeSummary': project.outcomeSummary,
+        'lessonsLearned': project.lessonsLearned,
+        'createdAt': project.createdAt.toIso8601String(),
+      },
+      'identity': {
+        'projectId': project.id,
+        'projectTitle': project.title,
+        'registryId': registry?.id,
+        'localPath': registry?.localPath,
+        'gitRoot': registry?.gitRoot,
+        'classification': registry?.classification,
+        'reviewState': registry?.reviewState,
+        'registryEntries': registries.map((row) => row.toJson()).toList(),
+        'githubRemote': githubRemote?.toJson(),
+      },
+      'counts': {
+        'activeWorkItems': activeWorkItems.length,
+        'blockedWorkItems': blockedWorkItems.length,
+        'pendingLlmTasks': pendingLlmTasks.length,
+        'pendingAgentProposals': proposals.length,
+        'observations': observations.length,
+        'refreshItems': refreshItems.length,
+      },
+      'localEvidence': {
+        'hasRegistry': registry != null,
+        'latestObservation': observations.isEmpty
+            ? null
+            : observations.first.toJson(),
+        'refreshItems': refreshItems
+            .take(25)
+            .map((row) => row.toJson())
+            .toList(),
+      },
+      'pendingLlmTasks': pendingLlmTasks,
+      'pendingAgentProposals': proposals,
+      'recommendedNextAction': _projectBundleBootstrapNextAction(
+        pendingLlmTasks: pendingLlmTasks,
+        pendingAgentProposals: proposals,
+        gaps: gaps,
+      ),
+      'confidence': gaps.isEmpty
+          ? 'high'
+          : registry == null
+          ? 'low'
+          : 'medium',
+      'gaps': gaps,
+    };
+  }
+
+  String _projectBundleBootstrapNextAction({
+    required List<Map<String, Object?>> pendingLlmTasks,
+    required List<Map<String, Object?>> pendingAgentProposals,
+    required List<String> gaps,
+  }) {
+    if (pendingLlmTasks.isNotEmpty) {
+      final title =
+          _cleanNullableString(pendingLlmTasks.first['title']) ?? 'queued task';
+      return 'Claim next pending LLM task: $title.';
+    }
+    if (pendingAgentProposals.isNotEmpty) {
+      final title =
+          _cleanNullableString(pendingAgentProposals.first['title']) ??
+          'agent proposal';
+      return 'Review pending agent proposal: $title.';
+    }
+    if (gaps.isNotEmpty) {
+      return 'Resolve exported bootstrap gap: ${gaps.first}';
+    }
+    return 'No pending agent handoff action found in this bundle.';
+  }
+
+  String _projectBundleBootstrapMarkdown(Map<String, Object?> context) {
+    final project = _bundleObjectMap(context['project']);
+    final identity = _bundleObjectMap(context['identity']);
+    final counts = _bundleObjectMap(context['counts']);
+    final gaps = _bundleStringList(context['gaps']);
+    final pendingTasks = _bundleMapList(context['pendingLlmTasks']);
+    final proposals = _bundleMapList(context['pendingAgentProposals']);
+    final buffer = StringBuffer()
+      ..writeln('# Project Bootstrap Context')
+      ..writeln()
+      ..writeln('Schema: `${context['schema']}`')
+      ..writeln('Generated: ${context['generatedAt']}')
+      ..writeln()
+      ..writeln('## Project')
+      ..writeln()
+      ..writeln('- ID: ${project['id']}')
+      ..writeln('- Title: ${project['title']}')
+      ..writeln('- Status: ${project['status']}')
+      ..writeln('- Phase: ${project['phase'] ?? 'none'}')
+      ..writeln()
+      ..writeln('## Identity')
+      ..writeln()
+      ..writeln('- Registry: ${identity['registryId'] ?? 'none'}')
+      ..writeln('- Local path: ${identity['localPath'] ?? 'none'}')
+      ..writeln('- Git root: ${identity['gitRoot'] ?? 'none'}')
+      ..writeln()
+      ..writeln('## Counts')
+      ..writeln();
+    for (final entry in counts.entries) {
+      buffer.writeln('- ${entry.key}: ${entry.value}');
+    }
+    buffer
+      ..writeln()
+      ..writeln('## Next Action')
+      ..writeln()
+      ..writeln(context['recommendedNextAction'] ?? 'none');
+    if (pendingTasks.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('## Pending LLM Tasks')
+        ..writeln();
+      for (final task in pendingTasks) {
+        buffer.writeln(
+          '- ${task['title'] ?? task['id']} '
+          '(${task['status'] ?? 'unknown'}, ${task['priority'] ?? 'normal'})',
+        );
+      }
+    }
+    if (proposals.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('## Pending Agent Proposals')
+        ..writeln();
+      for (final proposal in proposals) {
+        buffer.writeln(
+          '- ${proposal['title'] ?? proposal['proposalId']} '
+          '(${proposal['type'] ?? 'proposal'})',
+        );
+      }
+    }
+    if (gaps.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('## Gaps')
+        ..writeln();
+      for (final gap in gaps) {
+        buffer.writeln('- $gap');
+      }
+    }
+    return buffer.toString();
+  }
+
+  bool _isPendingAgentProposalDraft(Draft draft) {
+    if (draft.kind != 'atlas_agent_proposal' || draft.accepted) return false;
+    final envelope = _bundleObjectMap(_bundleJsonDecode(draft.inputJson));
+    final reviewStatus =
+        _cleanNullableString(envelope['reviewStatus']) ?? 'pending';
+    return reviewStatus == 'pending';
+  }
+
+  Map<String, Object?> _agentProposalDraftToBundleJson(Draft draft) {
+    final envelope = _bundleObjectMap(_bundleJsonDecode(draft.inputJson));
+    return {
+      'draftId': draft.id,
+      'proposalId': envelope['proposalId'] ?? draft.id,
+      'type': envelope['type'] ?? draft.kind,
+      'projectId': envelope['projectId'] ?? draft.projectId,
+      'title': draft.title,
+      'reviewStatus': envelope['reviewStatus'] ?? 'pending',
+      'validationErrors': _bundleStringList(envelope['validationErrors']),
+      'warnings': _bundleStringList(envelope['warnings']),
+      'createdAt': draft.createdAt.toIso8601String(),
+    };
+  }
+
+  Object? _bundleJsonDecode(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      return jsonDecode(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Map<String, Object?> _bundleObjectMap(Object? value) {
+    if (value is! Map) return const {};
+    return value.map((key, value) => MapEntry('$key', value));
+  }
+
+  List<String> _bundleStringList(Object? value) {
+    if (value is Iterable) {
+      return value.map(_cleanNullableString).whereType<String>().toList();
+    }
+    final single = _cleanNullableString(value);
+    return single == null ? const [] : [single];
+  }
+
+  List<Map<String, Object?>> _bundleMapList(Object? value) {
+    if (value is! Iterable) return const [];
+    return value
+        .whereType<Map>()
+        .map((entry) => entry.map((key, value) => MapEntry('$key', value)))
+        .toList();
   }
 
   Future<List<EventLogData>> _projectBundleEventLogs(

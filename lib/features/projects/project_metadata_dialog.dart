@@ -278,8 +278,11 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
   Future<void> _loadRuntimeProfile() async {
     final state = AppStateScope.of(context);
     final profile = await state.getProjectRuntimeProfile(widget.project.id);
-    if (!mounted || profile == null) return;
-    _applyRuntimeDraft(ProjectRuntimeProfileDraft.fromProfile(profile));
+    final draft = profile == null
+        ? await state.defaultProjectRuntimeProfileDraft()
+        : ProjectRuntimeProfileDraft.fromProfile(profile);
+    if (!mounted) return;
+    _applyRuntimeDraft(draft);
   }
 
   Widget _runtimeSection(AppState state) {

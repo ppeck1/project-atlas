@@ -661,6 +661,16 @@ class AppDb extends _$AppDb {
   static const kProjectAiSummaryAllowBulkRefresh =
       'project_ai_summary_allow_bulk_refresh';
   static const kProjectAiSummaryModel = 'project_ai_summary_model';
+  static const kProjectRuntimeDefaultDevLaunchpadYamlPath =
+      'project_runtime_default_dev_launchpad_yaml_path';
+  static const kProjectRuntimeDefaultCapsuleEnabled =
+      'project_runtime_default_capsule_enabled';
+  static const kProjectRuntimeDefaultCapsuleMode =
+      'project_runtime_default_capsule_mode';
+  static const kProjectRuntimeDefaultCapsuleSourcePath =
+      'project_runtime_default_capsule_source_path';
+  static const kProjectRuntimeDefaultCapsuleProfile =
+      'project_runtime_default_capsule_profile';
   static const kTelegramBotToken = 'telegram_bot_token';
   static const kTelegramChatId = 'telegram_chat_id';
   static const kTelegramEnabled = 'telegram_enabled';

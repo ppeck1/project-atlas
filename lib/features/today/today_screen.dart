@@ -579,6 +579,7 @@ class _TodayTaskFilters extends StatelessWidget {
         final children = [
           _filterDropdown(
             label: 'Project',
+            allLabel: 'All projects',
             value: projectFilterId,
             values: {
               AppDb.kGeneralTasksProjectId: 'General tasks',
@@ -588,12 +589,14 @@ class _TodayTaskFilters extends StatelessWidget {
           ),
           _filterDropdown(
             label: 'Tag',
+            allLabel: 'All tags',
             value: tagFilterId,
             values: {for (final tag in tags) tag.id: tag.name},
             onChanged: onTagFilterChanged,
           ),
           _filterDropdown(
             label: 'Status',
+            allLabel: 'All status',
             value: statusFilter,
             values: {
               for (final option in statusOptions.where(
@@ -606,6 +609,7 @@ class _TodayTaskFilters extends StatelessWidget {
         ];
         if (narrow) {
           return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               for (final child in children) ...[
                 child,
@@ -628,21 +632,33 @@ class _TodayTaskFilters extends StatelessWidget {
 
   Widget _filterDropdown({
     required String label,
+    required String allLabel,
     required String? value,
     required Map<String, String> values,
     required ValueChanged<String?> onChanged,
   }) {
     return DropdownButtonFormField<String>(
       value: value ?? '',
+      isExpanded: true,
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       ),
       items: [
-        DropdownMenuItem(value: '', child: Text('All ${label.toLowerCase()}s')),
+        DropdownMenuItem(
+          value: '',
+          child: Text(allLabel, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
         for (final entry in values.entries)
-          DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+          DropdownMenuItem(
+            value: entry.key,
+            child: Text(
+              entry.value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
       ],
       onChanged: (next) =>
           onChanged(next == null || next.isEmpty ? null : next),

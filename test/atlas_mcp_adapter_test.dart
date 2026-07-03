@@ -1,5 +1,9 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/mcp/atlas_mcp_server.dart';
 import 'package:project_atlas/services/atlas_agent_service.dart';
@@ -27,6 +31,9 @@ void main() {
 
       expect(names, contains('list_projects'));
       expect(names, contains('get_project_brief'));
+      expect(names, contains('get_project_identity'));
+      expect(names, contains('get_project_capsule_status'));
+      expect(names, contains('get_project_bootstrap_context'));
       expect(names, contains('get_github_remote_status'));
       expect(names, contains('refresh_github_remote_status'));
       expect(names, contains('list_project_enrichment_runs'));
@@ -35,8 +42,10 @@ void main() {
       expect(names, contains('enqueue_llm_task'));
       expect(names, contains('claim_llm_task'));
       expect(names, contains('complete_llm_task'));
+      expect(names, contains('get_llm_task_bootstrap'));
       expect(names, contains('propose_status_change'));
       expect(names, contains('record_validation_run'));
+      expect(names, contains('propose_closeout'));
       expect(names, isNot(contains('get_project_summary')));
       expect(names, isNot(contains('refresh_project_summaries')));
       expect(names, isNot(contains('delete_project')));
@@ -54,6 +63,115 @@ void main() {
       final rows = result.data as List;
       expect(rows.map((row) => (row as Map)['title']), ['Alpha', 'Bravo']);
       expect((rows.first as Map)['category'], 'Program');
+    });
+
+    test('dispatches bootstrap context with capsule visibility', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'atlas_mcp_bootstrap_test_',
+      );
+      try {
+        final projectDir = Directory(p.join(root.path, '.project'));
+        Directory(p.join(projectDir.path, 'runs')).createSync(recursive: true);
+        Directory(
+          p.join(projectDir.path, 'atlas_outbox'),
+        ).createSync(recursive: true);
+        Directory(
+          p.join(projectDir.path, 'boh_outbox'),
+        ).createSync(recursive: true);
+        File(
+          p.join(projectDir.path, 'project_manifest.json'),
+        ).writeAsStringSync(
+          jsonEncode({
+            'schema_version': '0.2',
+            'project_id': 'atlas',
+            'display_name': 'Atlas',
+            'root': '.',
+            'repo_kind': 'software',
+            'visibility': 'public',
+            'profiles': ['public_repo', 'software_project'],
+            'canonical_docs': {
+              'readme': 'README.md',
+              'handoff': 'docs/HANDOFF.md',
+              'variable_matrix': 'docs/VARIABLE_MATRIX.md',
+            },
+            'validation': {
+              'required': ['flutter analyze'],
+              'focused': <String>[],
+              'smoke': <String>[],
+              'manual': <String>[],
+            },
+            'protected_paths': ['README.md'],
+            'generated_paths': ['build/'],
+            'secrets_policy': 'names-only',
+            'atlas_sync': {
+              'enabled': true,
+              'mode': 'outbox',
+              'project_key': 'atlas',
+            },
+            'boh_sync': {
+              'enabled': true,
+              'mode': 'outbox',
+              'authority': 'evidence-only',
+              'project_key': 'atlas',
+            },
+            'git_policy': {
+              'require_git': true,
+              'commit_after_signable_run': true,
+              'push_policy': 'manual',
+              'allow_dirty_unrelated': false,
+            },
+          }),
+        );
+        File(p.join(projectDir.path, 'ops_capsule.json')).writeAsStringSync(
+          jsonEncode({
+            'schema_version': '0.2',
+            'capsule_version': '0.2',
+            'installed_from': 'test',
+            'installed_at': '2026-01-01T00:00:00Z',
+            'run_ledger_required': true,
+            'repair_iteration_limit': 2,
+            'readme_update_mode': 'audit-every-run',
+            'variable_matrix_update_mode': 'audit-every-run',
+            'handoff_update_mode': 'non-read-only',
+            'subagent_policy': 'token-saving-default',
+            'profiles': ['public_repo', 'software_project'],
+          }),
+        );
+        File(
+          p.join(projectDir.path, 'atlas_outbox', 'latest.json'),
+        ).writeAsStringSync('{}');
+
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        await _insertProjectRegistry(
+          db,
+          id: 'registry-atlas',
+          projectId: 'atlas',
+          displayName: 'Atlas Repo',
+          localPath: root.path,
+          gitRoot: root.path,
+        );
+        await adapter.callTool('enqueue_llm_task', {
+          'projectId': 'atlas',
+          'title': 'Read startup packet',
+          'objective': 'Use the bootstrap context before work.',
+        });
+
+        final result = await adapter.callTool('get_project_bootstrap_context', {
+          'projectId': 'atlas',
+        });
+
+        expect(result.isError, isFalse);
+        final data = result.data as Map;
+        expect(data['schema'], 'atlas.project_bootstrap_context.v1');
+        expect((data['identity'] as Map)['capsuleProjectId'], 'atlas');
+        expect(
+          ((data['capsule'] as Map)['counts'] as Map)['atlasOutboxPending'],
+          1,
+        );
+        expect((data['pendingLlmTasks'] as List), hasLength(1));
+      } finally {
+        await root.delete(recursive: true);
+      }
     });
 
     test('returns cached GitHub remote status through read tool', () async {
@@ -122,6 +240,35 @@ void main() {
       expect(project!.status, 'active');
       expect(proposals.isError, isFalse);
       expect((proposals.data as List), hasLength(1));
+    });
+
+    test('dispatches closeout proposals without applying them', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+
+      final result = await adapter.callTool('propose_closeout', {
+        'projectId': 'atlas',
+        'runId': 'run-20260703',
+        'runState': 'signable',
+        'summary': 'MCP stdio smoke passed.',
+        'changedFiles': ['lib/mcp/atlas_mcp_stdio.dart'],
+        'validation': [
+          {'command': 'smoke_mcp_stdio.py', 'passed': true},
+        ],
+        'gitState': {'dirty': true},
+        'risks': ['Manual UI verification remains pending.'],
+        'nextAction': 'Human review.',
+      });
+      final project = await db.getProjectFull('atlas');
+      final proposals = await adapter.callTool('list_agent_proposals');
+
+      expect(result.isError, isFalse);
+      expect((result.data as Map)['type'], 'closeout_record');
+      expect((result.data as Map)['acceptedForReview'], isTrue);
+      expect(project!.status, 'active');
+      expect(proposals.isError, isFalse);
+      final review = (proposals.data as List).single as Map;
+      expect(review['type'], 'closeout_record');
+      expect(review['reviewStatus'], AtlasAgentService.reviewStatusPending);
     });
 
     test(
@@ -200,6 +347,30 @@ void main() {
       expect((media.single as Map)['storedPath'], r'B:\tmp\screenshot.png');
     });
 
+    test('dispatches queue-bound bootstrap context for an LLM task', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+      final enqueue = await adapter.callTool('enqueue_llm_task', {
+        'projectId': 'atlas',
+        'title': 'Start from queue context',
+        'objective': 'Read the task-bound bootstrap packet first.',
+      });
+      final taskId = (enqueue.data as Map)['id'] as String;
+
+      final result = await adapter.callTool('get_llm_task_bootstrap', {
+        'taskId': taskId,
+        'projectId': 'atlas',
+      });
+
+      expect(result.isError, isFalse);
+      final data = result.data as Map;
+      expect(data['schema'], 'atlas.llm_task_bootstrap_context.v1');
+      expect((data['task'] as Map)['id'], taskId);
+      expect(
+        ((data['projectBootstrap'] as Map)['identity'] as Map)['projectId'],
+        'atlas',
+      );
+    });
+
     test('returns an error result for unknown tools', () async {
       final result = await adapter.callTool('delete_project', {
         'projectId': 'atlas',
@@ -209,4 +380,35 @@ void main() {
       expect((result.data as Map)['tool'], 'delete_project');
     });
   });
+}
+
+Future<void> _insertProjectRegistry(
+  AppDb db, {
+  required String id,
+  required String projectId,
+  required String displayName,
+  required String localPath,
+  required String gitRoot,
+}) async {
+  final now = DateTime(2026, 1, 1).millisecondsSinceEpoch;
+  await db.customStatement(
+    '''INSERT INTO project_registry (
+       id, atlas_project_id, display_name, local_path, git_root,
+       classification, review_state, notes, created_at, updated_at,
+       last_reviewed_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+    [
+      id,
+      projectId,
+      displayName,
+      localPath,
+      gitRoot,
+      'software',
+      'linked',
+      null,
+      now,
+      now,
+      now,
+    ],
+  );
 }
