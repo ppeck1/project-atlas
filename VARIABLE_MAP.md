@@ -147,7 +147,7 @@ Key-value store for all runtime settings and active-state flags.
 | `id` | TEXT PK | | |
 | `project_id` | TEXT? | null | Optional link to a project. |
 | `work_item_id` | TEXT? | null | Optional link to a work item. |
-| `kind` | TEXT | | `project_summary\|today_summary\|email_draft\|task_extract\|atlas_agent_proposal\|custom` |
+| `kind` | TEXT | | `project_summary\|project_change_summary\|today_summary\|email_draft\|task_extract\|atlas_agent_proposal\|custom` |
 | `title` | TEXT | | Display label. |
 | `body` | TEXT | | Full AI output. |
 | `created_at` | DATETIME | | |
@@ -158,6 +158,8 @@ Key-value store for all runtime settings and active-state flags.
 **Written by:** `saveDraft()` — called after explicit "Save Draft" action by user, automatically for `kind='project_summary'` entries after background or on-demand structured summary generation, and by `AtlasAgentService` for validated agent proposals with `kind='atlas_agent_proposal'`
 **Read by:** `watchDrafts()` — Library screen (AI Drafts filter)  
 **Quirks:** `accepted` field exists in schema but is unused. The Drafts route is not yet a first-class navigation destination; drafts are accessed via Library → type filter.
+
+**Project change summaries:** successful Project Detail -> Change Log summarization saves `kind='project_change_summary'` drafts with `project_change_summary_draft_input_v1` input JSON, full evidence, and compact prompt evidence. The latest draft is read back into the Change Log panel and can be exported with project bundles.
 
 **Agent proposal review:** `kind='atlas_agent_proposal'` drafts use `input_json.reviewStatus` (`pending`, `approved`, `rejected`) plus the existing `accepted` boolean. `updateDraftReview()` updates `accepted`, `input_json`, `body`, and `updated_at` after approve/reject without a schema migration.
 
@@ -219,6 +221,8 @@ Key-value store for all runtime settings and active-state flags.
 **Quirks:** No rotation or size limit. Use "Clear event log" in Settings → Admin to prune. Project summary provenance uses `entity_type='project_summary'` so summary runs do not appear as normal project-update attribution rows.
 
 ---
+
+**Change-summary provenance:** `AppState.summarizeProjectChanges()` logs `project_change_summary_started`, `project_change_summary_draft_saved`, and `project_change_summary_failed` with `entity_type='project_change_summary'` and a shared correlation ID. These rows are intentionally excluded from normal project-update attribution rows.
 
 ### `documents`
 
@@ -937,11 +941,12 @@ Local JSON-RPC stdio transport for release Windows builds. `project_atlas.exe --
 | `extractTasksFromNote(...)` | raw text, project title | `OllamaResult` | |
 | `analyzeWorkItem(...)` | work item fields + linked document text | `OllamaResult` | Read-only; does not mutate any record. |
 | `summarizeProjectStructured({required ProjectSummaryContext context})` | `ProjectSummaryContext` | `({OllamaResult result, ProjectSummaryResult? parsed, ProjectSummaryValidationReport validation})` | Structured JSON summary via `format:"json"`, low temperature. Validates parsed output and retries once with validation feedback before failing closed. |
+| `summarizeProjectChanges(...)` | project title + compact `project_change_summary_prompt_evidence_packet_v1` | `OllamaResult` | Markdown change summary saved as `kind='project_change_summary'` by `AppState` only when `OllamaResult.isSuccess` is true. |
 
 **`OllamaResult`:** `{ input: String, output: String?, kind: String, title: String, isSuccess: bool }`  
 `output == null` or `isSuccess == false` means unavailable or empty. Never auto-applied.
 
-**Timeout:** Both `_chat` and `_chatStructured` use a 300 s timeout (previously 90 s).
+**Timeout:** `_chat` defaults to 300 s and can be overridden per call; `summarizeProjectChanges()` uses 12 minutes because local Ollama change-log summaries can be slower. `_chatStructured` uses a 300 s timeout.
 
 ---
 
@@ -1034,9 +1039,21 @@ Executes operator-configured runtime actions for a project and records each run 
 | Method | Returns | Notes |
 |--------|---------|-------|
 | `getLatestProjectSummaryDraft(projectId)` | `Future<Draft?>` | Finds the most recent draft with `kind='project_summary'` for the given project. |
+| `getLatestProjectChangeSummaryDraft(projectId)` | `Future<Draft?>` | Finds the most recent draft with `kind='project_change_summary'` for the given project. |
 | `hasTodayProjectSummaryDraft(projectId)` | `Future<bool>` | True if a `project_summary` draft exists with today's date. |
 | `getDocumentPathsForProject(projectId)` | `Future<Map<String, String?>>` | Returns a map of `documentId → storedPath` for all docs linked to the project. |
 | `deleteProjectSummaryDrafts(projectId)` | `Future<void>` | Deletes all `kind='project_summary'` drafts for the project. Called before saving a fresh summary to avoid accumulation. |
+
+### Project Change Log / Summary AppState Methods (`lib/shared/models/app_state.dart`)
+
+| Method / Field | Returns | Notes |
+|--------|---------|-------|
+| `getProjectEventLogs(projectId, {since, limit, newestFirst})` | `Future<List<EventLogData>>` | Collects project-attributed events, sorts newest-first by default, and applies the requested limit after sorting. |
+| `getProjectChangeLog(projectId, {since, limit, newestFirst})` | `Future<List<ProjectChangeLogEntry>>` | Normalizes project event rows into actor/action/change records for Project Detail and export. |
+| `summarizeProjectChanges(projectId, {since, limit})` | `Future<OllamaResult>` | Builds full evidence plus compact prompt evidence, calls Ollama, saves a `project_change_summary` draft only on success, and logs start/result events. |
+| `startProjectChangeSummary(projectId, {since, limit})` | `Future<OllamaResult>` | App-owned background run wrapper. Reuses an in-flight run per project, updates `ProjectChangeSummaryRunStatus`, and allows the UI to navigate away without cancelling the request. |
+| `getProjectChangeSummaryRunStatus(projectId)` | `ProjectChangeSummaryRunStatus?` | Read by Project Detail to show running/error/saved summary state without treating transport failures as valid summaries. |
+| `includeChangeLog` | export option | Adds normalized change-log JSON, change-summary evidence JSON, and latest saved change-summary draft/input JSON to project bundle exports. |
 
 ---
 
@@ -1129,6 +1146,24 @@ Settings → Export tab → "Send to Telegram"
   → else → show OllamaReviewDialog
     → "Discard" → nothing saved
     → "Save Draft" → AppDb.saveDraft(...) → INSERT INTO drafts
+```
+
+### Project Change Log and AI Change Summary
+```
+ProjectDetailScreen -> Change Log
+  -> AppState.getProjectChangeLog(projectId, since, limit, newestFirst)
+     -> AppState.getProjectEventLogs(...) normalizes event_log rows
+     -> ProjectChangeLogEntry rows render newest-first by default
+     -> operator can switch to oldest-first, copy JSON, or refresh
+  -> Summarize changes
+     -> AppState.startProjectChangeSummary(projectId, since, limit)
+        -> tracks ProjectChangeSummaryRunStatus outside the widget lifecycle
+        -> AppState.summarizeProjectChanges(...)
+           -> builds project_change_summary_evidence_packet_v1 for saved/exported evidence
+           -> builds project_change_summary_prompt_evidence_packet_v1 without raw payload blocks for Ollama
+           -> OllamaService.summarizeProjectChanges(..., timeout: 12 minutes)
+           -> on success: saveDraft(kind='project_change_summary')
+           -> on failure/timeout: record status/error and do not overwrite the latest saved summary
 ```
 
 ### Contact Responsibility Lookup

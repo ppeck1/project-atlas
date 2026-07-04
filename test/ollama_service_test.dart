@@ -51,6 +51,26 @@ void main() {
       expect(result.result.output, contains('Ollama returned HTTP 500'));
     });
   });
+
+  group('OllamaResult', () {
+    test('treats timeout and transport text as failed output', () {
+      const timeout = OllamaResult(
+        input: 'input',
+        output: 'Ollama request failed: TimeoutException after 0:05:00.000000',
+        kind: 'project_change_summary',
+        title: 'Change Summary',
+      );
+      const http = OllamaResult(
+        input: 'input',
+        output: 'Ollama returned HTTP 500 for model "x"',
+        kind: 'project_change_summary',
+        title: 'Change Summary',
+      );
+
+      expect(timeout.isSuccess, isFalse);
+      expect(http.isSuccess, isFalse);
+    });
+  });
 }
 
 const _context = ProjectSummaryContext(

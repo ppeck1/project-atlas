@@ -1219,10 +1219,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 subtitle: 'Who changed what, and when',
                 expanded: _expandedSection == 'change_log',
                 onTap: () => _toggleSection('change_log'),
-                child: _ProjectChangeLogSection(
-                  projectId: widget.projectId,
-                  workItemIds: _workItems.map((item) => item.id).toSet(),
-                ),
+                child: _ProjectChangeLogSection(projectId: widget.projectId),
               ),
               _Section(
                 id: 'media',
@@ -3585,12 +3582,8 @@ class _EvidencePacketPreview extends StatelessWidget {
 
 class _ProjectChangeLogSection extends StatefulWidget {
   final String projectId;
-  final Set<String> workItemIds;
 
-  const _ProjectChangeLogSection({
-    required this.projectId,
-    required this.workItemIds,
-  });
+  const _ProjectChangeLogSection({required this.projectId});
 
   @override
   State<_ProjectChangeLogSection> createState() =>
@@ -3599,6 +3592,30 @@ class _ProjectChangeLogSection extends StatefulWidget {
 
 class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
   String _window = '30';
+  String _sort = 'newest';
+  Future<List<ProjectChangeLogEntry>>? _future;
+  String? _changeSummary;
+  DateTime? _changeSummaryAt;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_future == null) {
+      _future = _load();
+      _loadLatestChangeSummary();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProjectChangeLogSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.projectId != widget.projectId) {
+      _future = _load();
+      _changeSummary = null;
+      _changeSummaryAt = null;
+      _loadLatestChangeSummary();
+    }
+  }
 
   DateTime? get _since {
     final days = switch (_window) {
@@ -3610,104 +3627,77 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
     return days == null ? null : DateTime.now().subtract(Duration(days: days));
   }
 
-  List<EventLogData> _filter(List<EventLogData> rows) {
-    final since = _since;
-    return rows
-        .where((event) {
-          if (since != null && event.timestamp.isBefore(since)) return false;
-          if (event.entityId == widget.projectId) return true;
-          if (event.entityType == 'work_item' &&
-              event.entityId != null &&
-              widget.workItemIds.contains(event.entityId)) {
-            return true;
-          }
-          final input = event.inputJson ?? '';
-          final output = event.outputJson ?? '';
-          return input.contains(widget.projectId) ||
-              output.contains(widget.projectId);
-        })
-        .take(80)
-        .toList(growable: false);
+  Future<List<ProjectChangeLogEntry>> _load() =>
+      AppStateScope.of(context).getProjectChangeLog(
+        widget.projectId,
+        since: _since,
+        limit: 80,
+        newestFirst: _sort == 'newest',
+      );
+
+  void _loadLatestChangeSummary() {
+    final projectId = widget.projectId;
+    unawaited(() async {
+      final draft = await AppStateScope.of(
+        context,
+      ).getLatestProjectChangeSummaryDraft(projectId);
+      if (!mounted || widget.projectId != projectId || draft == null) return;
+      setState(() {
+        _changeSummary = draft.body;
+        _changeSummaryAt = draft.createdAt;
+      });
+    }());
   }
 
-  Future<void> _copyJson(List<EventLogData> rows) async {
-    final data = rows.map(_eventToJson).toList();
+  void _refresh() {
+    setState(() => _future = _load());
+  }
+
+  Future<void> _copyJson(List<ProjectChangeLogEntry> rows) async {
+    final data = rows.map((entry) => entry.toJson()).toList();
     await Clipboard.setData(
       ClipboardData(text: const JsonEncoder.withIndent('  ').convert(data)),
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Copied ${rows.length} project log event(s).')),
+      SnackBar(content: Text('Copied ${rows.length} project change(s).')),
     );
   }
 
-  Map<String, Object?> _eventToJson(EventLogData event) => {
-    'id': event.id,
-    'timestamp': event.timestamp.toIso8601String(),
-    'actor': _actorForEvent(event),
-    'summary': _summaryForEvent(event),
-    'level': event.level,
-    'area': event.area,
-    'action': event.action,
-    'entityType': event.entityType,
-    'entityId': event.entityId,
-    'inputJson': event.inputJson,
-    'outputJson': event.outputJson,
-    'error': event.error,
-    'stackTrace': event.stackTrace,
-    'correlationId': event.correlationId,
-  };
+  Future<void> _copySummary() async {
+    final text = _changeSummary;
+    if (text == null || text.trim().isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Copied change summary.')));
+  }
 
-  String _actorForEvent(EventLogData event) {
-    final output = _tryParseJsonObject(event.outputJson);
-    final actor = output['actor'];
-    if (actor is Map) {
-      final displayName =
-          actor['displayName']?.toString() ?? actor['name']?.toString();
-      if (displayName != null && displayName.trim().isNotEmpty) {
-        return displayName.trim();
+  void _summarizeChanges() {
+    final projectId = widget.projectId;
+    final future = AppStateScope.of(
+      context,
+    ).startProjectChangeSummary(projectId, since: _since, limit: 80);
+    unawaited(() async {
+      try {
+        final result = await future;
+        if (!mounted) return;
+        if (widget.projectId != projectId) return;
+        if (result.isSuccess) {
+          _loadLatestChangeSummary();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Change summary draft saved.')),
+          );
+        }
+      } catch (error) {
+        if (!mounted) return;
+        if (widget.projectId != projectId) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Change summary failed: $error')),
+        );
       }
-    } else if (actor is String && actor.trim().isNotEmpty) {
-      return actor.trim();
-    }
-    final agent = output['agent']?.toString().trim();
-    if (agent != null && agent.isNotEmpty) {
-      final lower = agent.toLowerCase();
-      if (lower == 'codex') return 'Codex';
-      if (lower == 'operator') return 'Operator';
-      return agent;
-    }
-    if (event.area == 'ai') return 'AI';
-    return 'Atlas';
-  }
-
-  String _summaryForEvent(EventLogData event) {
-    final changed = _changedFields(event);
-    if (changed.isNotEmpty) {
-      return 'Changed ${changed.keys.join(', ')}';
-    }
-    return _labelForAction(event.action);
-  }
-
-  Map<String, Object?> _changedFields(EventLogData event) {
-    final output = _tryParseJsonObject(event.outputJson);
-    final changed = output['changedFields'];
-    if (changed is Map) {
-      return changed.map((key, value) => MapEntry('$key', value));
-    }
-    return const <String, Object?>{};
-  }
-
-  String _labelForAction(String action) {
-    return action
-        .split('_')
-        .where((part) => part.isNotEmpty)
-        .map(
-          (part) => part.length == 1
-              ? part.toUpperCase()
-              : '${part[0].toUpperCase()}${part.substring(1)}',
-        )
-        .join(' ');
+    }());
   }
 
   Color _levelColor(String level) => switch (level) {
@@ -3724,9 +3714,8 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
     return text.length <= 90 ? text : '${text.substring(0, 90)}...';
   }
 
-  Widget _changedFieldsView(EventLogData event) {
-    final changed = _changedFields(event);
-    if (changed.isEmpty) return const SizedBox.shrink();
+  Widget _changedFieldsView(ProjectChangeLogEntry entry) {
+    if (entry.changedFields.isEmpty) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 8),
@@ -3738,8 +3727,8 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: changed.entries.map((entry) {
-          final value = entry.value;
+        children: entry.changedFields.entries.map((field) {
+          final value = field.value;
           Object? from;
           Object? to;
           if (value is Map) {
@@ -3752,13 +3741,18 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
           return Padding(
             padding: const EdgeInsets.only(bottom: 4),
             child: Text(
-              '${entry.key}: $detail',
+              '${field.key}: $detail',
               style: const TextStyle(fontSize: 12, color: Colors.white70),
             ),
           );
         }).toList(),
       ),
     );
+  }
+
+  Widget _mapBlock(String label, Map<String, Object?> value) {
+    if (value.isEmpty) return const SizedBox.shrink();
+    return _rawBlock(label, const JsonEncoder.withIndent('  ').convert(value));
   }
 
   Widget _rawBlock(String label, String? value) {
@@ -3779,10 +3773,17 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
     );
   }
 
-  Widget _eventRow(EventLogData event) {
-    final color = _levelColor(event.level);
-    final summary = _summaryForEvent(event);
-    final actor = _actorForEvent(event);
+  Color _actorTypeColor(String actorType) => switch (actorType) {
+    'ai_model' => const Color(0xFFCE93D8),
+    'system' => const Color(0xFF90CAF9),
+    'mcp' => const Color(0xFFFFCC80),
+    'import' => const Color(0xFFA5D6A7),
+    _ => _kPrimary,
+  };
+
+  Widget _changeRow(ProjectChangeLogEntry entry) {
+    final color = _levelColor(entry.level);
+    final actorColor = _actorTypeColor(entry.actorType);
     return Container(
       decoration: BoxDecoration(
         color: Colors.white.withAlpha(6),
@@ -3796,26 +3797,126 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           leading: Icon(Icons.history, color: color, size: 18),
           title: Text(
-            summary,
+            entry.summary,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
           subtitle: Text(
-            '$actor - ${_compactDateTime(event.timestamp)} - ${event.area}.${event.action}',
+            '${entry.actor} - ${_compactDateTime(entry.timestamp)} - ${entry.area}.${entry.action}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 11, color: Colors.white38),
           ),
-          trailing: _Pill(label: event.level, color: color),
+          trailing: _Pill(label: entry.level, color: color),
           children: [
-            _changedFieldsView(event),
-            _rawBlock('Input', event.inputJson),
-            _rawBlock('Output', event.outputJson),
-            _rawBlock('Error', event.error),
-            _rawBlock('Stack', event.stackTrace),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _Pill(label: entry.actorType, color: actorColor),
+                _MiniPill('Source event', entry.sourceEventId),
+                if ((entry.entityType ?? '').isNotEmpty)
+                  _MiniPill('Entity', '${entry.entityType}:${entry.entityId}'),
+                if ((entry.correlationId ?? '').isNotEmpty)
+                  _MiniPill('Correlation', entry.correlationId!),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _changedFieldsView(entry),
+            _mapBlock('Before', entry.beforeJson),
+            _mapBlock('After', entry.afterJson),
+            _mapBlock('Input', entry.input),
+            _mapBlock('Output', entry.output),
+            _rawBlock('Error', entry.error),
+            _rawBlock('Stack', entry.stackTrace),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _changeSummaryPanel(ProjectChangeSummaryRunStatus? runStatus) {
+    final running = runStatus?.isRunning == true;
+    final error = running ? null : runStatus?.error;
+    final summary = _changeSummary;
+    if (!running &&
+        (summary == null || summary.trim().isEmpty) &&
+        (error == null || error.trim().isEmpty)) {
+      return const SizedBox.shrink();
+    }
+    final hasSummary = summary != null && summary.trim().isNotEmpty;
+    final showError = !running && !hasSummary && error != null;
+    final title = running
+        ? 'AI change summary running'
+        : hasSummary
+        ? 'Latest AI change summary'
+        : 'Summary failed';
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(6),
+        border: Border.all(
+          color: showError ? Colors.redAccent.withAlpha(120) : _kLine,
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                running || hasSummary
+                    ? Icons.auto_awesome_outlined
+                    : Icons.error_outline,
+                color: running || hasSummary ? _kPrimary : Colors.redAccent,
+                size: 16,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (_changeSummaryAt != null)
+                _MiniPill('Updated', _compactDateTime(_changeSummaryAt!)),
+              if (hasSummary) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Copy summary',
+                  onPressed: _copySummary,
+                  icon: const Icon(Icons.copy, size: 16),
+                ),
+              ],
+            ],
+          ),
+          if (running) ...[
+            const SizedBox(height: 10),
+            const LinearProgressIndicator(minHeight: 2),
+            const SizedBox(height: 8),
+            const Text(
+              'Still running in the background. You can leave this screen; a successful result will be saved to the project.',
+              style: TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            SelectableText(
+              hasSummary ? summary : (error ?? ''),
+              style: TextStyle(
+                fontSize: 12,
+                color: showError ? Colors.redAccent : Colors.white70,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -3823,10 +3924,13 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
-    return StreamBuilder<List<EventLogData>>(
-      stream: state.watchRecentEvents(),
+    final runStatus = state.getProjectChangeSummaryRunStatus(widget.projectId);
+    final summaryRunning = runStatus?.isRunning == true;
+    return FutureBuilder<List<ProjectChangeLogEntry>>(
+      future: _future,
       builder: (context, snap) {
-        final rows = _filter(snap.data ?? const <EventLogData>[]);
+        final rows = snap.data ?? const <ProjectChangeLogEntry>[];
+        final loading = snap.connectionState != ConnectionState.done;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3835,7 +3939,7 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _MiniPill('Events', '${rows.length}'),
+                _MiniPill('Changes', '${rows.length}'),
                 DropdownButton<String>(
                   value: _window,
                   items: const [
@@ -3846,18 +3950,79 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
                   ],
                   onChanged: (value) {
                     if (value == null) return;
-                    setState(() => _window = value);
+                    setState(() {
+                      _window = value;
+                      _future = _load();
+                    });
                   },
+                ),
+                DropdownButton<String>(
+                  value: _sort,
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'newest',
+                      child: Text('Newest first'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'oldest',
+                      child: Text('Oldest first'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _sort = value;
+                      _future = _load();
+                    });
+                  },
+                ),
+                OutlinedButton.icon(
+                  onPressed: loading ? null : _refresh,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Refresh'),
                 ),
                 OutlinedButton.icon(
                   onPressed: rows.isEmpty ? null : () => _copyJson(rows),
                   icon: const Icon(Icons.data_object, size: 16),
                   label: const Text('Copy JSON'),
                 ),
+                if (state.projectAiSummariesEnabled)
+                  OutlinedButton.icon(
+                    onPressed: rows.isEmpty || loading || summaryRunning
+                        ? null
+                        : _summarizeChanges,
+                    icon: summaryRunning
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.auto_awesome_outlined, size: 16),
+                    label: Text(
+                      summaryRunning ? 'Summarizing' : 'Summarize changes',
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 10),
-            if (rows.isEmpty)
+            _changeSummaryPanel(runStatus),
+            if (snap.hasError)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withAlpha(18),
+                  border: Border.all(color: Colors.red.withAlpha(80)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'Change log failed to load: ${snap.error}',
+                  style: const TextStyle(fontSize: 12, color: Colors.redAccent),
+                ),
+              )
+            else if (loading)
+              const LinearProgressIndicator(minHeight: 2)
+            else if (rows.isEmpty)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
@@ -3867,15 +4032,15 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Text(
-                  'No project events in this window.',
+                  'No project changes in this window.',
                   style: TextStyle(fontSize: 12, color: Colors.white54),
                 ),
               )
             else
               ...rows.map(
-                (event) => Padding(
+                (entry) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: _eventRow(event),
+                  child: _changeRow(entry),
                 ),
               ),
           ],

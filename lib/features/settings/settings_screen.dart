@@ -1415,6 +1415,7 @@ class _ProjectBundleExportWizardState
   bool _includeFiles = true;
   bool _includeSummary = true;
   bool _includeLogs = true;
+  bool _includeChangeLog = true;
   bool _includeGitArchive = false;
   bool _includeBootstrap = true;
   bool _exporting = false;
@@ -1436,6 +1437,8 @@ class _ProjectBundleExportWizardState
     };
   }
 
+  bool get _usesLogWindow => _includeLogs || _includeChangeLog;
+
   void _applyPreset(_ProjectBundlePreset preset) {
     setState(() {
       _preset = preset;
@@ -1444,6 +1447,7 @@ class _ProjectBundleExportWizardState
           _includeFiles = true;
           _includeSummary = true;
           _includeLogs = true;
+          _includeChangeLog = true;
           _includeGitArchive = false;
           _includeBootstrap = true;
           _logWindow = _ProjectBundleLogWindow.last30;
@@ -1451,6 +1455,7 @@ class _ProjectBundleExportWizardState
           _includeFiles = false;
           _includeSummary = true;
           _includeLogs = true;
+          _includeChangeLog = true;
           _includeGitArchive = false;
           _includeBootstrap = true;
           _logWindow = _ProjectBundleLogWindow.last30;
@@ -1458,6 +1463,7 @@ class _ProjectBundleExportWizardState
           _includeFiles = false;
           _includeSummary = true;
           _includeLogs = true;
+          _includeChangeLog = true;
           _includeGitArchive = false;
           _includeBootstrap = true;
           _logWindow = _ProjectBundleLogWindow.all;
@@ -1465,6 +1471,7 @@ class _ProjectBundleExportWizardState
           _includeFiles = false;
           _includeSummary = true;
           _includeLogs = true;
+          _includeChangeLog = true;
           _includeGitArchive = true;
           _includeBootstrap = true;
           _logWindow = _ProjectBundleLogWindow.last30;
@@ -1485,7 +1492,8 @@ class _ProjectBundleExportWizardState
             includeFiles: _includeFiles,
             includeLatestSummary: _includeSummary,
             includeEventLogs: _includeLogs,
-            eventLogSince: _includeLogs ? _eventLogSince : null,
+            includeChangeLog: _includeChangeLog,
+            eventLogSince: _usesLogWindow ? _eventLogSince : null,
             includeCleanGitArchive: _includeGitArchive,
             includeBootstrapContext: _includeBootstrap,
           );
@@ -1540,7 +1548,8 @@ class _ProjectBundleExportWizardState
         includeFiles: _includeFiles,
         includeLatestSummary: _includeSummary,
         includeEventLogs: _includeLogs,
-        eventLogSince: _includeLogs ? _eventLogSince : null,
+        includeChangeLog: _includeChangeLog,
+        eventLogSince: _usesLogWindow ? _eventLogSince : null,
         includeCleanGitArchive: _includeGitArchive,
         includeBootstrapContext: _includeBootstrap,
       );
@@ -1609,7 +1618,7 @@ class _ProjectBundleExportWizardState
                 DropdownMenuItem(value: 'last90', child: Text('Last 90 days')),
                 DropdownMenuItem(value: 'all', child: Text('All logs')),
               ],
-              onChanged: !_includeLogs || _exporting
+              onChanged: !_usesLogWindow || _exporting
                   ? null
                   : (value) => _setOption(
                       () => _logWindow = _ProjectBundleLogWindow.values
@@ -1731,6 +1740,14 @@ class _ProjectBundleExportWizardState
                     onChanged: _exporting
                         ? null
                         : (value) => _setOption(() => _includeLogs = value),
+                  ),
+                  _ExportCheckbox(
+                    value: _includeChangeLog,
+                    label: 'Change log',
+                    onChanged: _exporting
+                        ? null
+                        : (value) =>
+                              _setOption(() => _includeChangeLog = value),
                   ),
                   _ExportCheckbox(
                     value: _includeGitArchive,
@@ -1932,6 +1949,14 @@ class _ProjectBundlePreview extends StatelessWidget {
                   value: '${preview.copiedFileCount}',
                 ),
                 _ExportMetric(label: 'Logs', value: '${preview.eventLogs}'),
+                _ExportMetric(
+                  label: 'Changes',
+                  value: '${preview.changeLogEntries}',
+                ),
+                _ExportMetric(
+                  label: 'Change summary',
+                  value: '${preview.changeSummaryDrafts}',
+                ),
                 _ExportMetric(
                   label: 'Summary',
                   value: '${preview.latestSummaryDrafts}',

@@ -2127,6 +2127,13 @@ Pressure flakes a useful edge.
         inputJson: '{"source":"test"}',
         projectId: projectId,
       );
+      await state.saveDraft(
+        kind: 'project_change_summary',
+        title: 'Bundle Options Change Summary',
+        body: 'Latest change summary body.',
+        inputJson: '{"source":"change-test"}',
+        projectId: projectId,
+      );
       await db.logEvent(
         area: 'project',
         action: 'bundle_option_changed',
@@ -2140,10 +2147,13 @@ Pressure flakes a useful edge.
         includeFiles: false,
         includeLatestSummary: true,
         includeEventLogs: true,
+        includeChangeLog: true,
         eventLogSince: DateTime.now().subtract(const Duration(days: 1)),
       );
       expect(preview.latestSummaryDrafts, 1);
       expect(preview.eventLogs, 1);
+      expect(preview.changeLogEntries, 1);
+      expect(preview.changeSummaryDrafts, 1);
       expect(preview.copiedFileCount, 0);
 
       final zipPath = p.join(tempDir.path, 'bundle_options.zip');
@@ -2153,6 +2163,7 @@ Pressure flakes a useful edge.
         includeFiles: false,
         includeLatestSummary: true,
         includeEventLogs: true,
+        includeChangeLog: true,
         eventLogSince: DateTime.now().subtract(const Duration(days: 1)),
       );
 
@@ -2161,6 +2172,19 @@ Pressure flakes a useful edge.
       expect(archive.findFile('manifest/export_manifest.json'), isNotNull);
       expect(archive.findFile('summary/latest_project_summary.md'), isNotNull);
       expect(archive.findFile('logs/project_event_log.json'), isNotNull);
+      expect(archive.findFile('change_log/project_changes.json'), isNotNull);
+      expect(
+        archive.findFile('change_log/project_change_summary_evidence.json'),
+        isNotNull,
+      );
+      expect(
+        archive.findFile('change_log/latest_change_summary.md'),
+        isNotNull,
+      );
+      expect(
+        archive.findFile('change_log/latest_change_summary_input.json'),
+        isNotNull,
+      );
       final payload =
           jsonDecode(
                 utf8.decode(
@@ -2171,7 +2195,19 @@ Pressure flakes a useful edge.
       final options = payload['options'] as Map<String, Object?>;
       expect(options['includeLatestSummary'], isTrue);
       expect(options['includeEventLogs'], isTrue);
+      expect(options['includeChangeLog'], isTrue);
       expect((payload['projectEventLogs'] as List<Object?>), hasLength(1));
+      expect((payload['projectChangeLog'] as List<Object?>), hasLength(1));
+      final latestChangeSummary =
+          payload['latestProjectChangeSummary'] as Map<String, Object?>;
+      expect(latestChangeSummary['body'], 'Latest change summary body.');
+      final changeEvidence =
+          payload['projectChangeSummaryEvidence'] as Map<String, Object?>;
+      expect(
+        changeEvidence['schema'],
+        'project_change_summary_evidence_packet_v1',
+      );
+      expect(changeEvidence['changeCount'], 1);
       final manifest =
           jsonDecode(
                 utf8.decode(
@@ -2184,6 +2220,22 @@ Pressure flakes a useful edge.
       final manifestContents = manifest['contents'] as Map<String, Object?>;
       expect(manifestContents['summary'], 'summary/latest_project_summary.md');
       expect(manifestContents['eventLogs'], 'logs/project_event_log.json');
+      expect(manifestContents['changeLog'], 'change_log/project_changes.json');
+      expect(
+        manifestContents['changeSummaryEvidence'],
+        'change_log/project_change_summary_evidence.json',
+      );
+      expect(
+        manifestContents['changeSummary'],
+        'change_log/latest_change_summary.md',
+      );
+      expect(
+        manifestContents['changeSummaryInput'],
+        'change_log/latest_change_summary_input.json',
+      );
+      final manifestCounts = manifest['counts'] as Map<String, Object?>;
+      expect(manifestCounts['changeLogEntries'], 1);
+      expect(manifestCounts['changeSummaryDrafts'], 1);
     },
   );
 

@@ -19,7 +19,7 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Owner pickers on work items, project owners, and governance stages — all linked to the contact directory
 - Project organization: category grouping, pinned categories/projects, category visibility selection, category and project sorting, tag assignment, project filters for context/status/phase/priority, status descriptors for Open/Review/Inactive/Closed lifecycle states, and project merge
 - Project runtime profiles: opt-in per-project launch/stop/test commands, ports, URLs, and health checks with Launch/Test/Capsule actions, run history, settings-backed Dev Launchpad/capsule defaults, Dev Launchpad YAML import, and Project Ops Capsule integration — commands are operator-configured and never invented by the app
-- Project change log: per-project event history with changed-field views and JSON copy in Project Detail
+- Project change log: per-project event history with changed-field views, newest/oldest sort controls, JSON copy, and persisted AI change-summary drafts in Project Detail
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
 - Project governance: people roster, risk register, decision log
 - Project media: app-owned image/file gallery with cover-image selection; media can be attached to work items and queued LLM tasks; local refresh imports discovered image, video, and audio files from linked project folders
@@ -85,7 +85,7 @@ After changing Drift tables or database code, rerun build runner before launchin
 | --- | --- |
 | Today | Focus list for doing, overdue, due today, phone queue, blocked, and high-priority work |
 | Projects | Category-grouped project list with pinned category/project ordering, category visibility, runtime quick actions (launch/test/capsule), active project switching, lifecycle metadata, tag/status/phase/priority filters, project merge, project bundle export wizard, detail entry point |
-| Project Detail | Collapsible task header with project tasks and editable/movable LLM queue items with media attachments, identity, scope, lifecycle fields, runtime profile section with run history, project change log, local repo refresh preview/apply for docs/media/native rows, read-only git visibility inspection, project bundle preview/export, people roster, risk register, decision log, media gallery, tag assignment |
+| Project Detail | Collapsible task header with project tasks and editable/movable LLM queue items with media attachments, identity, scope, lifecycle fields, runtime profile section with run history, project change log with sort controls and persisted AI change summaries, local repo refresh preview/apply for docs/media/native rows, read-only git visibility inspection, project bundle preview/export, people roster, risk register, decision log, media gallery, tag assignment |
 | Operations | Manual local project scans, reviewable observations, local registry records, create/update existing Project bridge, enrichment run dashboard/findings, Project Health tab with grouped finding actions (dismiss/suppress/mark reviewed), warnings, scan JSON copy/export, warnings JSON save, and app scan-folder access |
 | Library | Documents, project media, and AI drafts with search, project/type filters, native file picker import, copy, preview, and file-open actions |
 | Settings | Integrations, AI summary setup, activity log, export tools, workforce contacts, backup export, app-data access, and admin controls |
@@ -179,6 +179,7 @@ When Ollama is reachable, the model field becomes a **dropdown** populated with 
 AI actions available:
 - **Today summary** — summarizes doing/overdue/blocked items (Export tab or Review screen)
 - **Project AI summaries** — opt-in via **Settings -> AI Summaries**; project summaries can use the global Ollama model or a summary-specific installed model, can default to Library evidence, preview the categorized ranked evidence packet with warnings, log summary run provenance, emit deterministic evaluation JSON for tests, and keep bulk refresh separately gated while invalid schema/claim output fails validation
+- **Project change summaries** — Project Detail -> Change Log can summarize normalized project changes into a saved `project_change_summary` draft. Runs are tracked in app state so navigation does not cancel them, failed/timeout output is not treated as a saved summary, and project bundle exports can include the latest summary plus full evidence/input JSON.
 - **Project summary (prose)** — legacy prose summary; still available via `summarizeProject()` in OllamaService
 - **Email draft** — drafts an email for a specific work item (Work Item Detail)
 - **Task extract** — extracts tasks from free-form note text (Work Item Detail)

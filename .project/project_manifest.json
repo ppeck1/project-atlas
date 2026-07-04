@@ -24,7 +24,7 @@
     "focused": [
       "dart run build_runner build",
       "flutter test test\\schema_media_test.dart test\\local_operations_registry_test.dart test\\document_import_test.dart test\\smoke_test.dart test\\project_summary_models_test.dart test\\ollama_service_test.dart",
-      "flutter test test\\local_operations_scanner_test.dart test\\local_git_visibility_service_test.dart test\\github_remote_metadata_service_test.dart test\\atlas_agent_service_test.dart test\\atlas_mcp_adapter_test.dart test\\project_update_attribution_test.dart"
+      "flutter test test\\local_operations_scanner_test.dart test\\local_git_visibility_service_test.dart test\\github_remote_metadata_service_test.dart test\\atlas_agent_service_test.dart test\\atlas_mcp_adapter_test.dart test\\project_update_attribution_test.dart test\\ollama_service_test.dart"
     ],
     "smoke": [
       "flutter build windows --release"

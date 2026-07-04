@@ -73,6 +73,93 @@ class ProjectAiSummarySettings {
   }
 }
 
+class ProjectChangeLogEntry {
+  final String id;
+  final String sourceEventId;
+  final String projectId;
+  final DateTime timestamp;
+  final String level;
+  final String actor;
+  final String actorType;
+  final String area;
+  final String action;
+  final String? entityType;
+  final String? entityId;
+  final String summary;
+  final Map<String, Object?> changedFields;
+  final Map<String, Object?> beforeJson;
+  final Map<String, Object?> afterJson;
+  final Map<String, Object?> input;
+  final Map<String, Object?> output;
+  final String? error;
+  final String? stackTrace;
+  final String? correlationId;
+
+  const ProjectChangeLogEntry({
+    required this.id,
+    required this.sourceEventId,
+    required this.projectId,
+    required this.timestamp,
+    required this.level,
+    required this.actor,
+    required this.actorType,
+    required this.area,
+    required this.action,
+    required this.entityType,
+    required this.entityId,
+    required this.summary,
+    required this.changedFields,
+    required this.beforeJson,
+    required this.afterJson,
+    required this.input,
+    required this.output,
+    this.error,
+    this.stackTrace,
+    this.correlationId,
+  });
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'sourceEventId': sourceEventId,
+    'projectId': projectId,
+    'timestamp': timestamp.toIso8601String(),
+    'level': level,
+    'actor': actor,
+    'actorType': actorType,
+    'area': area,
+    'action': action,
+    'entityType': entityType,
+    'entityId': entityId,
+    'summary': summary,
+    'changedFields': changedFields,
+    'before': beforeJson,
+    'after': afterJson,
+    'input': input,
+    'output': output,
+    'error': error,
+    'stackTrace': stackTrace,
+    'correlationId': correlationId,
+  };
+}
+
+class ProjectChangeSummaryRunStatus {
+  final String projectId;
+  final DateTime startedAt;
+  final DateTime? completedAt;
+  final bool isRunning;
+  final String? output;
+  final String? error;
+
+  const ProjectChangeSummaryRunStatus({
+    required this.projectId,
+    required this.startedAt,
+    required this.isRunning,
+    this.completedAt,
+    this.output,
+    this.error,
+  });
+}
+
 String _pathKey(String value) => value
     .trim()
     .replaceAll('/', r'\')
@@ -86,6 +173,7 @@ class ProjectBundleExportPreview {
   final bool includeFiles;
   final bool includeLatestSummary;
   final bool includeEventLogs;
+  final bool includeChangeLog;
   final bool includeCleanGitArchive;
   final bool includeBootstrapContext;
   final int stages;
@@ -104,6 +192,8 @@ class ProjectBundleExportPreview {
   final int refreshItems;
   final int latestSummaryDrafts;
   final int eventLogs;
+  final int changeLogEntries;
+  final int changeSummaryDrafts;
   final bool cleanGitArchiveReady;
   final List<String> warnings;
 
@@ -114,6 +204,7 @@ class ProjectBundleExportPreview {
     required this.includeFiles,
     required this.includeLatestSummary,
     required this.includeEventLogs,
+    required this.includeChangeLog,
     required this.includeCleanGitArchive,
     required this.includeBootstrapContext,
     required this.stages,
@@ -132,6 +223,8 @@ class ProjectBundleExportPreview {
     required this.refreshItems,
     required this.latestSummaryDrafts,
     required this.eventLogs,
+    required this.changeLogEntries,
+    required this.changeSummaryDrafts,
     required this.cleanGitArchiveReady,
     required this.warnings,
   });
@@ -152,6 +245,8 @@ class ProjectBundleExportPreview {
       refreshItems +
       latestSummaryDrafts +
       eventLogs +
+      changeLogEntries +
+      changeSummaryDrafts +
       (includeBootstrapContext ? 1 : 0);
 
   int get copiedFileCount =>
@@ -523,6 +618,9 @@ class AppState extends ChangeNotifier {
   bool _projectAiSummaryIncludeLibrary = true;
   bool _projectAiSummaryAllowBulkRefresh = false;
   String? _projectAiSummaryModel;
+  final Map<String, Future<OllamaResult>> _projectChangeSummaryRuns = {};
+  final Map<String, ProjectChangeSummaryRunStatus>
+  _projectChangeSummaryRunStatuses = {};
   String? _projectEnrichmentStatus;
   DateTime? _projectEnrichmentStartedAt;
   int? _projectEnrichmentProgressCurrent;
@@ -535,6 +633,11 @@ class AppState extends ChangeNotifier {
   bool get projectAiSummaryAllowBulkRefresh =>
       _projectAiSummaryAllowBulkRefresh;
   String? get projectAiSummaryModel => _projectAiSummaryModel;
+  ProjectChangeSummaryRunStatus? getProjectChangeSummaryRunStatus(
+    String projectId,
+  ) => _projectChangeSummaryRunStatuses[projectId];
+  bool isProjectChangeSummaryRunning(String projectId) =>
+      _projectChangeSummaryRuns.containsKey(projectId);
   bool get isLocalProjectRefreshRunning => _localProjectRefreshRunning;
   bool get isProjectEnrichmentRunning => _projectEnrichmentRunning;
   String? get projectEnrichmentStatus => _projectEnrichmentStatus;
@@ -6239,6 +6342,9 @@ class AppState extends ChangeNotifier {
   Future<Draft?> getLatestProjectSummaryDraft(String projectId) =>
       db.getLatestProjectSummaryDraft(projectId);
 
+  Future<Draft?> getLatestProjectChangeSummaryDraft(String projectId) =>
+      db.getLatestProjectChangeSummaryDraft(projectId);
+
   Future<Map<String, String?>> getDocumentPathsForProject(String projectId) =>
       db.getDocumentPathsForProject(projectId);
 
@@ -7094,6 +7200,7 @@ class AppState extends ChangeNotifier {
     DateTime? since,
     int limit = 500,
     bool includeRelatedWorkItems = true,
+    bool newestFirst = true,
   }) async {
     final relatedWorkItemIds = includeRelatedWorkItems
         ? (await db.getWorkItemsForProject(
@@ -7102,7 +7209,7 @@ class AppState extends ChangeNotifier {
         : const <String>{};
     final cap = limit <= 0 ? 500 : limit;
     final events = await db.getRecentEvents();
-    return events
+    final filtered = events
         .where((event) {
           if (since != null && event.timestamp.isBefore(since)) {
             return false;
@@ -7116,8 +7223,466 @@ class AppState extends ChangeNotifier {
           }
           return _eventPayloadMentionsProject(event, projectId);
         })
-        .take(cap)
+        .toList(growable: true);
+    filtered.sort((a, b) {
+      final comparison = a.timestamp.compareTo(b.timestamp);
+      return newestFirst ? -comparison : comparison;
+    });
+    return filtered.take(cap).toList(growable: false);
+  }
+
+  Future<List<ProjectChangeLogEntry>> getProjectChangeLog(
+    String projectId, {
+    DateTime? since,
+    int limit = 200,
+    bool includeRelatedWorkItems = true,
+    bool newestFirst = true,
+  }) async {
+    final workItems = includeRelatedWorkItems
+        ? await db.getWorkItemsForProject(projectId)
+        : const <WorkItem>[];
+    final workItemTitles = {for (final item in workItems) item.id: item.title};
+    final events = await getProjectEventLogs(
+      projectId,
+      since: since,
+      limit: limit,
+      includeRelatedWorkItems: includeRelatedWorkItems,
+      newestFirst: newestFirst,
+    );
+    return events
+        .map(
+          (event) => _projectChangeFromEvent(
+            projectId: projectId,
+            event: event,
+            workItemTitles: workItemTitles,
+          ),
+        )
         .toList(growable: false);
+  }
+
+  Future<Map<String, Object?>> buildProjectChangeSummaryEvidencePacket(
+    String projectId, {
+    DateTime? since,
+    int limit = 200,
+  }) async {
+    final changes = await getProjectChangeLog(
+      projectId,
+      since: since,
+      limit: limit,
+    );
+    return _projectChangeSummaryEvidencePacket(
+      projectId: projectId,
+      changes: changes,
+      since: since,
+      limit: limit,
+    );
+  }
+
+  Future<Map<String, Object?>> _projectChangeSummaryEvidencePacket({
+    required String projectId,
+    required List<ProjectChangeLogEntry> changes,
+    required DateTime? since,
+    required int limit,
+  }) async {
+    final project = await db.getProjectFull(projectId);
+    return {
+      'schema': 'project_change_summary_evidence_packet_v1',
+      'generatedAt': DateTime.now().toIso8601String(),
+      'project': {'id': projectId, 'title': project?.title ?? projectId},
+      'window': {'since': since?.toIso8601String(), 'limit': limit},
+      'changeCount': changes.length,
+      'changes': changes.map((entry) => entry.toJson()).toList(),
+    };
+  }
+
+  Map<String, Object?> _projectChangeSummaryPromptEvidencePacket(
+    Map<String, Object?> evidence,
+  ) {
+    final changes = evidence['changes'];
+    return {
+      'schema': 'project_change_summary_prompt_evidence_packet_v1',
+      'generatedAt': evidence['generatedAt'],
+      'project': evidence['project'],
+      'window': evidence['window'],
+      'changeCount': evidence['changeCount'],
+      'changes': changes is Iterable
+          ? changes
+                .whereType<Map>()
+                .map((raw) {
+                  final entry = raw.map(
+                    (key, value) => MapEntry('$key', value),
+                  );
+                  return {
+                    'timestamp': entry['timestamp'],
+                    'actor': entry['actor'],
+                    'actorType': entry['actorType'],
+                    'area': entry['area'],
+                    'action': entry['action'],
+                    'entityType': entry['entityType'],
+                    'entityId': entry['entityId'],
+                    'summary': entry['summary'],
+                    'changedFields': entry['changedFields'],
+                    'error': entry['error'],
+                    'correlationId': entry['correlationId'],
+                  };
+                })
+                .toList(growable: false)
+          : const [],
+    };
+  }
+
+  Future<OllamaResult> summarizeProjectChanges(
+    String projectId, {
+    DateTime? since,
+    int limit = 80,
+    String trigger = 'manual',
+  }) async {
+    if (!projectAiSummariesEnabled) {
+      throw StateError('Project AI summaries are disabled in Settings.');
+    }
+    final project = await db.getProjectFull(projectId);
+    if (project == null) {
+      throw StateError('Project not found: $projectId');
+    }
+    final changes = await getProjectChangeLog(
+      projectId,
+      since: since,
+      limit: limit,
+    );
+    if (changes.isEmpty) {
+      throw StateError('No project changes matched the selected window.');
+    }
+
+    final host = await getSetting(AppDb.kOllamaHost);
+    final model = await _projectSummaryModelSetting();
+    final svc = _buildOllama(host, model);
+    final evidence = await _projectChangeSummaryEvidencePacket(
+      projectId: projectId,
+      changes: changes,
+      since: since,
+      limit: limit,
+    );
+    final promptEvidence = _projectChangeSummaryPromptEvidencePacket(evidence);
+    final correlationId =
+        'project_change_summary_${DateTime.now().microsecondsSinceEpoch}';
+    final inputPacket = <String, Object?>{
+      'schema': 'project_change_summary_draft_input_v1',
+      'model': model,
+      'trigger': trigger,
+      'evidence': evidence,
+      'promptEvidence': promptEvidence,
+    };
+
+    await db.logEvent(
+      area: 'ai',
+      action: 'project_change_summary_started',
+      entityType: 'project_change_summary',
+      entityId: projectId,
+      correlationId: correlationId,
+      inputJson: jsonEncode(inputPacket),
+    );
+
+    final result = await svc.summarizeProjectChanges(
+      projectTitle: project.title,
+      evidencePacket: promptEvidence,
+    );
+
+    String? draftId;
+    if (result.isSuccess) {
+      final draftInput = <String, Object?>{
+        ...inputPacket,
+        'prompt': result.input,
+      };
+      draftId = await db.saveDraft(
+        kind: 'project_change_summary',
+        title: 'Project Change Summary - ${project.title}',
+        body: result.output ?? '',
+        inputJson: const JsonEncoder.withIndent('  ').convert(draftInput),
+        projectId: projectId,
+      );
+      notifyListeners();
+    }
+
+    await db.logEvent(
+      level: result.isSuccess ? 'info' : 'warn',
+      area: 'ai',
+      action: result.isSuccess
+          ? 'project_change_summary_draft_saved'
+          : 'project_change_summary_failed',
+      entityType: 'project_change_summary',
+      entityId: projectId,
+      correlationId: correlationId,
+      outputJson: jsonEncode({
+        'agent': 'atlas',
+        'actor': {'kind': 'app', 'id': 'atlas', 'displayName': 'Atlas'},
+        'projectId': projectId,
+        'projectTitle': project.title,
+        'model': model,
+        'trigger': trigger,
+        'draftId': draftId,
+        'success': result.isSuccess,
+        'changeCount': changes.length,
+        'rawOutputChars': result.output?.length ?? 0,
+        'evidence': evidence,
+      }),
+    );
+
+    return result;
+  }
+
+  Future<OllamaResult> startProjectChangeSummary(
+    String projectId, {
+    DateTime? since,
+    int limit = 80,
+    String trigger = 'manual',
+  }) {
+    final existing = _projectChangeSummaryRuns[projectId];
+    if (existing != null) return existing;
+
+    final startedAt = DateTime.now();
+    _projectChangeSummaryRunStatuses[projectId] = ProjectChangeSummaryRunStatus(
+      projectId: projectId,
+      startedAt: startedAt,
+      isRunning: true,
+    );
+    notifyListeners();
+
+    final future = () async {
+      try {
+        final result = await summarizeProjectChanges(
+          projectId,
+          since: since,
+          limit: limit,
+          trigger: trigger,
+        );
+        final completedAt = DateTime.now();
+        _projectChangeSummaryRunStatuses[projectId] =
+            ProjectChangeSummaryRunStatus(
+              projectId: projectId,
+              startedAt: startedAt,
+              completedAt: completedAt,
+              isRunning: false,
+              output: result.isSuccess ? result.output : null,
+              error: result.isSuccess
+                  ? null
+                  : _projectChangeSummaryFailureMessage(result),
+            );
+        return result;
+      } catch (error) {
+        final completedAt = DateTime.now();
+        _projectChangeSummaryRunStatuses[projectId] =
+            ProjectChangeSummaryRunStatus(
+              projectId: projectId,
+              startedAt: startedAt,
+              completedAt: completedAt,
+              isRunning: false,
+              error: '$error',
+            );
+        rethrow;
+      } finally {
+        _projectChangeSummaryRuns.remove(projectId);
+        notifyListeners();
+      }
+    }();
+
+    _projectChangeSummaryRuns[projectId] = future;
+    return future;
+  }
+
+  String _projectChangeSummaryFailureMessage(OllamaResult result) {
+    final output = result.output?.trim();
+    if (output == null || output.isEmpty) return 'No output from model.';
+    return output;
+  }
+
+  ProjectChangeLogEntry _projectChangeFromEvent({
+    required String projectId,
+    required EventLogData event,
+    required Map<String, String> workItemTitles,
+  }) {
+    final input = _decodeJsonMap(event.inputJson);
+    final output = _decodeJsonMap(event.outputJson);
+    final changedFields = _extractChangedFields(output);
+    final before = _beforeValuesFromChangedFields(changedFields);
+    final after = _afterValuesFromChangedFields(changedFields);
+    final actor = _actorFromEventPayload(event, input, output);
+    final actorType = _actorTypeFromEventPayload(event, input, output, actor);
+    final entityLabel =
+        event.entityType == 'work_item' && event.entityId != null
+        ? workItemTitles[event.entityId!]
+        : null;
+    return ProjectChangeLogEntry(
+      id: 'change_${event.id}',
+      sourceEventId: event.id,
+      projectId: projectId,
+      timestamp: event.timestamp,
+      level: event.level,
+      actor: actor,
+      actorType: actorType,
+      area: event.area,
+      action: event.action,
+      entityType: event.entityType,
+      entityId: event.entityId,
+      summary: _changeSummaryForEvent(
+        event,
+        changedFields: changedFields,
+        entityLabel: entityLabel,
+      ),
+      changedFields: changedFields,
+      beforeJson: before,
+      afterJson: after,
+      input: input,
+      output: output,
+      error: event.error,
+      stackTrace: event.stackTrace,
+      correlationId: event.correlationId,
+    );
+  }
+
+  Map<String, Object?> _decodeJsonMap(String? raw) {
+    final text = raw?.trim();
+    if (text == null || text.isEmpty) return const <String, Object?>{};
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map) return Map<String, Object?>.from(decoded);
+    } catch (_) {}
+    return {'raw': raw};
+  }
+
+  Map<String, Object?> _extractChangedFields(Map<String, Object?> output) {
+    final raw = output['changedFields'];
+    if (raw is! Map) return const <String, Object?>{};
+    return Map<String, Object?>.from(raw);
+  }
+
+  Map<String, Object?> _beforeValuesFromChangedFields(
+    Map<String, Object?> changedFields,
+  ) {
+    final values = <String, Object?>{};
+    for (final entry in changedFields.entries) {
+      final diff = entry.value;
+      if (diff is Map && diff.containsKey('from')) {
+        values[entry.key] = diff['from'];
+      }
+    }
+    return values;
+  }
+
+  Map<String, Object?> _afterValuesFromChangedFields(
+    Map<String, Object?> changedFields,
+  ) {
+    final values = <String, Object?>{};
+    for (final entry in changedFields.entries) {
+      final diff = entry.value;
+      if (diff is Map && diff.containsKey('to')) {
+        values[entry.key] = diff['to'];
+      }
+    }
+    return values;
+  }
+
+  String _actorFromEventPayload(
+    EventLogData event,
+    Map<String, Object?> input,
+    Map<String, Object?> output,
+  ) {
+    final actor = output['actor'] ?? input['actor'];
+    final actorName = _actorName(actor);
+    if (actorName != null) return actorName;
+    final agent = _cleanNullableString(output['agent'] ?? input['agent']);
+    if (agent != null) return agent;
+    if (event.area == 'mcp') return 'MCP';
+    if (event.area == 'ollama' || event.action.contains('summary')) {
+      return 'Atlas AI';
+    }
+    if (event.area == 'github') return 'GitHub';
+    if (event.area == 'operations' || event.area == 'local_operations') {
+      return 'Atlas';
+    }
+    return 'Operator';
+  }
+
+  String? _actorName(Object? actor) {
+    if (actor is String && actor.trim().isNotEmpty) return actor.trim();
+    if (actor is Map) {
+      final displayName =
+          actor['displayName']?.toString() ?? actor['name']?.toString();
+      if (displayName != null && displayName.trim().isNotEmpty) {
+        return displayName.trim();
+      }
+    }
+    return null;
+  }
+
+  String _actorTypeFromEventPayload(
+    EventLogData event,
+    Map<String, Object?> input,
+    Map<String, Object?> output,
+    String actor,
+  ) {
+    final rawActor = output['actor'] ?? input['actor'];
+    if (rawActor is Map) {
+      final rawType =
+          rawActor['actorType']?.toString() ??
+          rawActor['type']?.toString() ??
+          rawActor['kind']?.toString();
+      final normalized = _normalizeChangeActorType(rawType);
+      if (normalized != null) return normalized;
+    }
+    if (event.area == 'mcp') return 'mcp';
+    if (event.area == 'ollama' || event.action.contains('summary')) {
+      return 'ai_model';
+    }
+    if (event.area == 'operations' || event.area == 'local_operations') {
+      return 'import';
+    }
+    final fromLabel = _normalizeChangeActorType(_actorTypeForLabel(actor));
+    return fromLabel ?? 'operator';
+  }
+
+  String? _normalizeChangeActorType(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    if (normalized == null || normalized.isEmpty) return null;
+    return switch (normalized) {
+      'ai' || 'model' || 'ai_model' => 'ai_model',
+      'app' || 'atlas' || 'system' => 'system',
+      'mcp' => 'mcp',
+      'import' || 'local_operations' || 'operations' => 'import',
+      'operator' || 'user' => 'operator',
+      _ => 'operator',
+    };
+  }
+
+  String _changeSummaryForEvent(
+    EventLogData event, {
+    required Map<String, Object?> changedFields,
+    String? entityLabel,
+  }) {
+    final action = _humanizeIdentifier(event.action);
+    if (event.level == 'error') {
+      return '$action failed${event.error == null ? '' : ': ${event.error}'}';
+    }
+    if (changedFields.isNotEmpty) {
+      final fields = changedFields.keys.map(_humanizeIdentifier).join(', ');
+      return '$action: $fields';
+    }
+    if (entityLabel != null && entityLabel.trim().isNotEmpty) {
+      return '$action: $entityLabel';
+    }
+    return action;
+  }
+
+  String _humanizeIdentifier(String value) {
+    final spaced = value
+        .replaceAll('_', ' ')
+        .replaceAllMapped(
+          RegExp(r'([a-z0-9])([A-Z])'),
+          (match) => '${match.group(1)} ${match.group(2)}',
+        )
+        .trim()
+        .toLowerCase();
+    if (spaced.isEmpty) return value;
+    return '${spaced[0].toUpperCase()}${spaced.substring(1)}';
   }
 
   Future<String> getAppDataPath() async {
@@ -7248,6 +7813,7 @@ class AppState extends ChangeNotifier {
     bool includeFiles = true,
     bool includeLatestSummary = false,
     bool includeEventLogs = false,
+    bool includeChangeLog = false,
     DateTime? eventLogSince,
     bool includeCleanGitArchive = false,
     bool includeBootstrapContext = true,
@@ -7289,9 +7855,15 @@ class AppState extends ChangeNotifier {
     final latestSummary = includeLatestSummary
         ? await db.getLatestProjectSummaryDraft(projectId)
         : null;
+    final latestChangeSummary = includeChangeLog
+        ? await db.getLatestProjectChangeSummaryDraft(projectId)
+        : null;
     final eventLogs = includeEventLogs
         ? await _projectBundleEventLogs(projectId, eventLogSince)
         : const <EventLogData>[];
+    final changeLog = includeChangeLog
+        ? await getProjectChangeLog(projectId, since: eventLogSince, limit: 500)
+        : const <ProjectChangeLogEntry>[];
     var copiedDocumentFiles = 0;
     var copiedMediaFiles = 0;
     final warnings = <String>[];
@@ -7322,6 +7894,11 @@ class AppState extends ChangeNotifier {
         'No project event logs matched the selected timestamp window.',
       );
     }
+    if (includeChangeLog && changeLog.isEmpty) {
+      warnings.add(
+        'No normalized project changes matched the selected timestamp window.',
+      );
+    }
     if (includeCleanGitArchive) {
       cleanGitArchiveReady = await _projectGitArchiveIsReady(
         projectId,
@@ -7337,6 +7914,7 @@ class AppState extends ChangeNotifier {
       includeFiles: includeFiles,
       includeLatestSummary: includeLatestSummary,
       includeEventLogs: includeEventLogs,
+      includeChangeLog: includeChangeLog,
       includeCleanGitArchive: includeCleanGitArchive,
       includeBootstrapContext: includeBootstrapContext,
       stages: stages.length,
@@ -7355,6 +7933,8 @@ class AppState extends ChangeNotifier {
       refreshItems: refreshItems.length,
       latestSummaryDrafts: latestSummary == null ? 0 : 1,
       eventLogs: eventLogs.length,
+      changeLogEntries: changeLog.length,
+      changeSummaryDrafts: latestChangeSummary == null ? 0 : 1,
       cleanGitArchiveReady: cleanGitArchiveReady,
       warnings: List.unmodifiable(warnings),
     );
@@ -7366,6 +7946,7 @@ class AppState extends ChangeNotifier {
     bool includeFiles = true,
     bool includeLatestSummary = false,
     bool includeEventLogs = false,
+    bool includeChangeLog = false,
     DateTime? eventLogSince,
     bool includeCleanGitArchive = false,
     bool includeBootstrapContext = true,
@@ -7375,6 +7956,7 @@ class AppState extends ChangeNotifier {
       includeFiles: includeFiles,
       includeLatestSummary: includeLatestSummary,
       includeEventLogs: includeEventLogs,
+      includeChangeLog: includeChangeLog,
       eventLogSince: eventLogSince,
       includeCleanGitArchive: includeCleanGitArchive,
       includeBootstrapContext: includeBootstrapContext,
@@ -7406,9 +7988,23 @@ class AppState extends ChangeNotifier {
     final latestSummary = includeLatestSummary
         ? await db.getLatestProjectSummaryDraft(projectId)
         : null;
+    final latestChangeSummary = includeChangeLog
+        ? await db.getLatestProjectChangeSummaryDraft(projectId)
+        : null;
     final eventLogs = includeEventLogs
         ? await _projectBundleEventLogs(projectId, eventLogSince)
         : const <EventLogData>[];
+    final changeLog = includeChangeLog
+        ? await getProjectChangeLog(projectId, since: eventLogSince, limit: 500)
+        : const <ProjectChangeLogEntry>[];
+    final changeSummaryEvidence = includeChangeLog
+        ? await _projectChangeSummaryEvidencePacket(
+            projectId: projectId,
+            changes: changeLog,
+            since: eventLogSince,
+            limit: 500,
+          )
+        : null;
     final exportWarnings = [...preview.warnings];
     _ProjectGitArchive? gitArchive;
     if (includeCleanGitArchive && preview.cleanGitArchiveReady) {
@@ -7438,6 +8034,7 @@ class AppState extends ChangeNotifier {
       'includeFiles': includeFiles,
       'includeLatestSummary': includeLatestSummary,
       'includeEventLogs': includeEventLogs,
+      'includeChangeLog': includeChangeLog,
       'eventLogSince': eventLogSince?.toIso8601String(),
       'includeCleanGitArchive': includeCleanGitArchive,
       'includeBootstrapContext': includeBootstrapContext,
@@ -7460,6 +8057,8 @@ class AppState extends ChangeNotifier {
       'refreshItems': preview.refreshItems,
       'latestSummaryDrafts': preview.latestSummaryDrafts,
       'eventLogs': preview.eventLogs,
+      'changeLogEntries': preview.changeLogEntries,
+      'changeSummaryDrafts': preview.changeSummaryDrafts,
       'bootstrapContexts': bootstrapContext == null ? 0 : 1,
     };
     final contents = <String, Object?>{
@@ -7479,6 +8078,17 @@ class AppState extends ChangeNotifier {
           ? null
           : 'summary/latest_project_summary_input.json',
       'eventLogs': eventLogs.isEmpty ? null : 'logs/project_event_log.json',
+      'changeLog': includeChangeLog ? 'change_log/project_changes.json' : null,
+      'changeSummaryEvidence': includeChangeLog
+          ? 'change_log/project_change_summary_evidence.json'
+          : null,
+      'changeSummary': latestChangeSummary == null
+          ? null
+          : 'change_log/latest_change_summary.md',
+      'changeSummaryInput':
+          (latestChangeSummary?.inputJson ?? '').trim().isEmpty
+          ? null
+          : 'change_log/latest_change_summary_input.json',
       'warnings': exportWarnings.isEmpty ? null : 'logs/export_warnings.txt',
       'cleanGitArchive': gitArchive?.archivePath,
       'documentFiles': includeFiles ? preview.copiedDocumentFiles : 0,
@@ -7535,6 +8145,9 @@ class AppState extends ChangeNotifier {
           .toList(),
       'latestProjectSummary': latestSummary?.toJson(),
       'projectEventLogs': eventLogs.map((row) => row.toJson()).toList(),
+      'projectChangeLog': changeLog.map((row) => row.toJson()).toList(),
+      'projectChangeSummaryEvidence': changeSummaryEvidence,
+      'latestProjectChangeSummary': latestChangeSummary?.toJson(),
       'cleanGitArchive': gitArchive?.metadata,
       'projectBootstrapContext': bootstrapContext,
     };
@@ -7631,6 +8244,50 @@ class AppState extends ChangeNotifier {
         ),
       );
     }
+    if (includeChangeLog) {
+      final changeBytes = utf8.encode(
+        const JsonEncoder.withIndent(
+          '  ',
+        ).convert(changeLog.map((row) => row.toJson()).toList()),
+      );
+      archive.addFile(
+        ArchiveFile(
+          'change_log/project_changes.json',
+          changeBytes.length,
+          changeBytes,
+        ),
+      );
+      final evidenceBytes = utf8.encode(
+        const JsonEncoder.withIndent('  ').convert(changeSummaryEvidence),
+      );
+      archive.addFile(
+        ArchiveFile(
+          'change_log/project_change_summary_evidence.json',
+          evidenceBytes.length,
+          evidenceBytes,
+        ),
+      );
+      if (latestChangeSummary != null) {
+        final summaryBytes = utf8.encode(latestChangeSummary.body);
+        archive.addFile(
+          ArchiveFile(
+            'change_log/latest_change_summary.md',
+            summaryBytes.length,
+            summaryBytes,
+          ),
+        );
+        if ((latestChangeSummary.inputJson ?? '').trim().isNotEmpty) {
+          final inputBytes = utf8.encode(latestChangeSummary.inputJson!);
+          archive.addFile(
+            ArchiveFile(
+              'change_log/latest_change_summary_input.json',
+              inputBytes.length,
+              inputBytes,
+            ),
+          );
+        }
+      }
+    }
     if (gitArchive != null) {
       archive.addFile(
         ArchiveFile(
@@ -7676,10 +8333,13 @@ class AppState extends ChangeNotifier {
         'includeFiles': includeFiles,
         'includeLatestSummary': includeLatestSummary,
         'includeEventLogs': includeEventLogs,
+        'includeChangeLog': includeChangeLog,
         'eventLogSince': eventLogSince?.toIso8601String(),
         'includeCleanGitArchive': includeCleanGitArchive,
         'includeBootstrapContext': includeBootstrapContext,
         'atlasRecords': preview.atlasRecordCount,
+        'changeLogEntries': preview.changeLogEntries,
+        'changeSummaryDrafts': preview.changeSummaryDrafts,
         'copiedFiles': preview.copiedFileCount,
         'warnings': exportWarnings,
       }),

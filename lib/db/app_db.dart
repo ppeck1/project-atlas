@@ -1649,6 +1649,18 @@ class AppDb extends _$AppDb {
             ..limit(1))
           .getSingleOrNull();
 
+  /// Latest cached AI project change summary draft for [projectId], or null.
+  Future<Draft?> getLatestProjectChangeSummaryDraft(String projectId) =>
+      (select(drafts)
+            ..where(
+              (t) =>
+                  t.projectId.equals(projectId) &
+                  t.kind.equals('project_change_summary'),
+            )
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
+            ..limit(1))
+          .getSingleOrNull();
+
   /// True if a project_summary draft for [projectId] was saved today.
   Future<bool> hasTodayProjectSummaryDraft(String projectId) async {
     final today = DateTime.now();

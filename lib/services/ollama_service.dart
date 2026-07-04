@@ -75,7 +75,11 @@ class OllamaService {
   /// Send a chat message and get the response text.
   /// Returns an error string prefixed with "⚠ " on failure so callers can
   /// distinguish a real empty response from a connection/model error.
-  Future<String?> _chat(String systemPrompt, String userMessage) async {
+  Future<String?> _chat(
+    String systemPrompt,
+    String userMessage, {
+    Duration timeout = const Duration(seconds: 300),
+  }) async {
     try {
       final res = await http
           .post(
@@ -90,7 +94,7 @@ class OllamaService {
               ],
             }),
           )
-          .timeout(const Duration(seconds: 300));
+          .timeout(timeout);
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -278,6 +282,55 @@ Write the summary now.
     );
   }
 
+  /// Summarize a bounded project change-log evidence packet.
+  Future<OllamaResult> summarizeProjectChanges({
+    required String projectTitle,
+    required Map<String, Object?> evidencePacket,
+  }) async {
+    const system = '''
+You are a project change-log summarizer for a local project management app.
+
+Rules:
+- Use only the supplied evidence packet. Do not invent actors, actions, dates, files, risks, or outcomes.
+- Preserve attribution. Name whether changes came from an operator, import, system, MCP, or AI model when supplied.
+- Separate material project changes from routine noise.
+- Call out errors, failed updates, and unresolved risks only when present in the evidence.
+- Keep the answer concise and reviewable.
+
+Return Markdown with these sections:
+## Summary
+## Material Changes
+## Attribution
+## Errors or Risks
+## Review Notes
+''';
+
+    final evidenceJson = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(evidencePacket);
+    final user =
+        '''
+Project: $projectTitle
+
+Change evidence packet:
+$evidenceJson
+
+Write the change summary now.
+''';
+
+    final output = await _chat(
+      system,
+      user,
+      timeout: const Duration(minutes: 12),
+    );
+    return OllamaResult(
+      input: user,
+      output: output,
+      kind: 'project_change_summary',
+      title: 'Project Change Summary - $projectTitle',
+    );
+  }
+
   /// Summarize today's task list into an action-oriented briefing.
   Future<OllamaResult> summarizeToday({
     required List<String> doingItems,
@@ -449,8 +502,15 @@ class OllamaResult {
     required this.title,
   });
 
-  bool get isSuccess =>
-      output != null && output!.trim().isNotEmpty && !output!.startsWith('⚠ ');
+  bool get isSuccess {
+    final text = output?.trimLeft();
+    if (text == null || text.isEmpty) return false;
+    if (text.startsWith('⚠')) return false;
+    if (text.startsWith('Ollama request failed')) return false;
+    if (text.startsWith('Ollama returned HTTP')) return false;
+    if (text.contains('TimeoutException')) return false;
+    return true;
+  }
 }
 
 class LinkedDocumentContext {
