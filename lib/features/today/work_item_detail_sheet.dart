@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../db/app_db.dart';
+import '../../services/workload_planning_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/widgets/document_preview.dart';
@@ -46,11 +47,18 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
   late TextEditingController _descCtrl;
   late TextEditingController _ownerCtrl;
   late TextEditingController _blockedCtrl;
+  late TextEditingController _nextActionCtrl;
+  late TextEditingController _planningNotesCtrl;
   late TextEditingController _emailInstCtrl;
   late TextEditingController _noteCtrl;
 
   String _status = 'next';
   String _priority = 'normal';
+  String _readiness = 'ready';
+  String _size = 'medium';
+  String _risk = 'low_code';
+  String _suggestedActor = 'user';
+  String _verificationNeeded = 'none';
   DateTime? _dueAt;
   bool _phoneQueue = false;
 
@@ -61,6 +69,8 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
     _descCtrl = TextEditingController();
     _ownerCtrl = TextEditingController();
     _blockedCtrl = TextEditingController();
+    _nextActionCtrl = TextEditingController();
+    _planningNotesCtrl = TextEditingController();
     _emailInstCtrl = TextEditingController();
     _noteCtrl = TextEditingController();
   }
@@ -94,8 +104,17 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
           _descCtrl.text = item.description ?? '';
           _ownerCtrl.text = item.owner ?? '';
           _blockedCtrl.text = item.blockedReason ?? '';
+          _nextActionCtrl.text = item.nextAction ?? '';
+          _planningNotesCtrl.text = item.planningNotes ?? '';
           _status = normalizeStatusValue(item.status);
           _priority = normalizePriorityValue(item.priority);
+          _readiness = normalizeWorkloadReadiness(item.readiness);
+          _size = normalizeWorkloadSize(item.size);
+          _risk = normalizeWorkloadRisk(item.risk);
+          _suggestedActor = normalizeWorkloadActor(item.suggestedActor);
+          _verificationNeeded = normalizeWorkloadVerification(
+            item.verificationNeeded,
+          );
           _dueAt = item.dueAt;
           _phoneQueue = item.phoneQueue;
         }
@@ -149,6 +168,15 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
       blockedReason: _blockedCtrl.text.trim(),
       clearBlockedReason: _blockedCtrl.text.trim().isEmpty,
       phoneQueue: _phoneQueue,
+      readiness: _readiness,
+      size: _size,
+      risk: _risk,
+      suggestedActor: _suggestedActor,
+      verificationNeeded: _verificationNeeded,
+      nextAction: _nextActionCtrl.text.trim(),
+      clearNextAction: _nextActionCtrl.text.trim().isEmpty,
+      planningNotes: _planningNotesCtrl.text.trim(),
+      clearPlanningNotes: _planningNotesCtrl.text.trim().isEmpty,
     );
     if (mounted) {
       setState(() => _saving = false);
@@ -392,6 +420,8 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
     _descCtrl.dispose();
     _ownerCtrl.dispose();
     _blockedCtrl.dispose();
+    _nextActionCtrl.dispose();
+    _planningNotesCtrl.dispose();
     _emailInstCtrl.dispose();
     _noteCtrl.dispose();
     super.dispose();
@@ -594,6 +624,77 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
           controller: _blockedCtrl,
           decoration: const InputDecoration(
             labelText: 'Blocked reason',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _PlanningDropdown(
+                label: 'Readiness',
+                value: _readiness,
+                values: workloadReadinessValues,
+                onChanged: (value) => setState(() => _readiness = value),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _PlanningDropdown(
+                label: 'Size',
+                value: _size,
+                values: workloadSizeValues,
+                onChanged: (value) => setState(() => _size = value),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _PlanningDropdown(
+                label: 'Risk',
+                value: _risk,
+                values: workloadRiskValues,
+                onChanged: (value) => setState(() => _risk = value),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _PlanningDropdown(
+                label: 'Actor',
+                value: _suggestedActor,
+                values: workloadActorValues,
+                onChanged: (value) => setState(() => _suggestedActor = value),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _PlanningDropdown(
+          label: 'Verification needed',
+          value: _verificationNeeded,
+          values: workloadVerificationValues,
+          onChanged: (value) => setState(() => _verificationNeeded = value),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _nextActionCtrl,
+          minLines: 2,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'Next action',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _planningNotesCtrl,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: 'Planning notes',
             border: OutlineInputBorder(),
           ),
         ),
@@ -1111,6 +1212,42 @@ class _OllamaDraftDialog extends StatelessWidget {
           child: const Text('Save Draft'),
         ),
       ],
+    );
+  }
+}
+
+class _PlanningDropdown extends StatelessWidget {
+  final String label;
+  final String value;
+  final List<String> values;
+  final ValueChanged<String> onChanged;
+
+  const _PlanningDropdown({
+    required this.label,
+    required this.value,
+    required this.values,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+      items: values
+          .map(
+            (value) => DropdownMenuItem(
+              value: value,
+              child: Text(workloadLabel(value)),
+            ),
+          )
+          .toList(),
+      onChanged: (value) {
+        if (value != null) onChanged(value);
+      },
     );
   }
 }

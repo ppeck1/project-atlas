@@ -77,6 +77,15 @@ class WorkItems extends Table {
   TextColumn get source => text().nullable()();
   BoolColumn get phoneQueue => boolean().withDefault(const Constant(false))();
   BoolColumn get completed => boolean().withDefault(const Constant(false))();
+  TextColumn get readiness => text().withDefault(const Constant('ready'))();
+  TextColumn get size => text().withDefault(const Constant('medium'))();
+  TextColumn get risk => text().withDefault(const Constant('low_code'))();
+  TextColumn get suggestedActor => text().withDefault(const Constant('user'))();
+  TextColumn get verificationNeeded =>
+      text().withDefault(const Constant('none'))();
+  TextColumn get nextAction => text().nullable()();
+  TextColumn get planningNotes => text().nullable()();
+  DateTimeColumn get lastReviewedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member

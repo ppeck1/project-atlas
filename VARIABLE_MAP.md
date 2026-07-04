@@ -99,11 +99,19 @@ Key-value store for all runtime settings and active-state flags.
 | `source` | TEXT? | null | Free-text origin note (e.g., "Slack", "email from Alice"). |
 | `phone_queue` | BOOLEAN | `false` | Sends item to Today → Phone Queue section. |
 | `completed` | BOOLEAN | `false` | Legacy bool; `status='done'` is canonical. Both are updated together for backwards compat. |
+| `readiness` | TEXT | `'ready'` | Added v20. Planning value: `ready\|blocked\|needs_decision\|needs_context\|review_needed`. Board grouping derives from this plus status/blocker state. |
+| `size` | TEXT | `'medium'` | Added v20. Planning estimate: `tiny\|small\|medium\|large`. Used by deterministic next-work scoring. |
+| `risk` | TEXT | `'low_code'` | Added v20. Planning risk: `docs_only\|low_code\|medium_code\|db_schema\|release\|external_facing`. |
+| `suggested_actor` | TEXT | `'user'` | Added v20. Suggested handler: `user\|codex\|claude\|local_llm\|manual_review`. Advisory only. |
+| `verification_needed` | TEXT | `'none'` | Added v20. Expected verification: `none\|tests\|smoke\|build\|manual_ui`. |
+| `next_action` | TEXT? | null | Added v20. Operator-authored next action shown on Workboard cards and used to seed queue objectives. |
+| `planning_notes` | TEXT? | null | Added v20. Operator notes for planning; not used for automatic execution. |
+| `last_reviewed_at` | DATETIME? | null | Added v20. Workboard stale/unreviewed filter treats null or older than 14 days as stale. |
 
 **Written by:** `addWorkItem()`, `updateWorkItem()`, `setWorkItemStatus()`, `toggleWorkDone()`  
-**Read by:** `WorkScreen`, `TodayScreen`, `ReviewScreen`, `ExportScreen`, Ollama summarizers, Telegram formatter  
+**Read by:** `WorkScreen` Workboard, `TodayScreen`, `ReviewScreen`, `ExportScreen`, Ollama summarizers, Telegram formatter, workload snapshot/scoring service, MCP `atlas.work_item_context_bundle`
 **Today query criteria (any one triggers inclusion):** `status='doing'` OR `phone_queue=1` OR `priority IN ('high','urgent')` OR `due_at <= end of today` — AND `status NOT IN ('done','archived')`  
-**Quirks:** `completed` boolean is kept in sync with `status='done'` but is not the authoritative source. Do not use `completed` for business logic; use `status`.
+**Quirks:** `completed` boolean is kept in sync with `status='done'` but is not the authoritative source. Do not use `completed` for business logic; use `status`. Work item blocker metadata uses existing `blocked_reason`; there is no separate `blocker_reason` work-item column.
 
 ---
 
@@ -632,10 +640,19 @@ Persisted queue for MCP/local harness LLM jobs attached to Atlas projects and op
 | `error` | TEXT? | null | Failure detail for failed tasks. |
 | `review_draft_id` | TEXT? | null | Optional `atlas_agent_proposal` draft created from completion output. |
 | `completed_at` | INTEGER? | null | Completion, failure, or cancellation timestamp. |
+| `readiness` | TEXT | `ready` | Added v20. Same planning enum as work items. Does not affect queue claim/lease lifecycle. |
+| `size` | TEXT | `medium` | Added v20. Same size enum as work items. |
+| `risk` | TEXT | `low_code` | Added v20. Same risk enum as work items. |
+| `suggested_actor` | TEXT | `user` | Added v20. Advisory suggested handler for planning. |
+| `verification_needed` | TEXT | `none` | Added v20. Advisory verification expectation. |
+| `next_action` | TEXT? | null | Added v20. Planning next action; not executed automatically. |
+| `blocker_reason` | TEXT? | null | Added v20. Queue-item blocker reason. Work items use `work_items.blocked_reason`. |
+| `planning_notes` | TEXT? | null | Added v20. Planning notes for operator review. |
+| `last_reviewed_at` | INTEGER? | null | Added v20. Used by stale/unreviewed filters and scoring. |
 
-**Written by:** `enqueueLlmTask()`, `updateLlmTask()`, `cancelLlmTask()`, `requeueLlmTask()`, `claimLlmTask()`, `completeLlmTask()`, and `failLlmTask()` through `AppState`, `AtlasAgentService`, the Project Detail operator UI, and MCP queue lifecycle tools.
-**Read by:** `ProjectDetailScreen` collapsible task header and queue manager, `AtlasAgentService.listLlmTasks()`, `AtlasAgentService.getLlmTaskDetail()`, MCP `list_llm_tasks` / `get_llm_task`.
-**Quirks:** The queue is a handoff/lease boundary, not autonomous execution by itself. Project Detail can edit/move/cancel/requeue tasks and attach/unlink project media. Editing a leased task clears the lease and returns it to `pending`. Workers can only complete or fail leased tasks. `completeLlmTask()` can create a reviewable handoff proposal draft when `proposalBody` is supplied; it does not directly apply project mutations. MCP `get_llm_task` includes attached media metadata; `list_llm_tasks` stays queue-row focused.
+**Written by:** `enqueueLlmTask()`, `updateLlmTask()`, `updateLlmTaskPlanning()`, `linkLlmTaskToWorkItem()`, `cancelLlmTask()`, `requeueLlmTask()`, `claimLlmTask()`, `completeLlmTask()`, and `failLlmTask()` through `AppState`, `AtlasAgentService`, the Project Detail operator UI, Workboard bulk actions, and existing MCP queue lifecycle tools.
+**Read by:** `ProjectDetailScreen` collapsible task header and queue manager, Workboard cards/snapshot/scoring service, `AtlasAgentService.listLlmTasks()`, `AtlasAgentService.getLlmTaskDetail()`, MCP `list_llm_tasks` / `get_llm_task`, and read-only workload MCP tools.
+**Quirks:** The queue is a handoff/lease boundary, not autonomous execution by itself. Project Detail can edit/move/cancel/requeue tasks and attach/unlink project media. Editing a leased task clears the lease and returns it to `pending`. Workers can only complete or fail leased tasks. `completeLlmTask()` can create a reviewable handoff proposal draft when `proposalBody` is supplied; it does not directly apply project mutations. MCP `get_llm_task` includes attached media metadata; `list_llm_tasks` stays queue-row focused. Planning metadata updates do not change lease/status/result fields.
 
 ---
 
@@ -739,6 +756,18 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | `claimLlmTask(workerId, {taskId, leaseDuration})` | `Future<LlmTaskQueueItem?>` | Claims a pending task or a specific pending task, increments attempts, and sets lease fields. |
 | `completeLlmTask(taskId, workerId, {result, reviewDraftId})` | `Future<LlmTaskQueueItem?>` | Marks a leased task complete after worker validation. Optional review draft ID links completion to a human-approved proposal. Throws if the task is no longer leased. |
 | `failLlmTask(taskId, workerId, error, {result})` | `Future<LlmTaskQueueItem?>` | Marks a leased task failed and stores error/result payloads. Throws if the task is no longer leased. |
+
+**AppState workload planning methods:**
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `getWorkloadCards()` | `Future<List<WorkloadCard>>` | Builds a combined planning card list from visible projects, stages, work items, and LLM queue rows. |
+| `getWorkloadSnapshot({filters, now, suggestionLimit})` | `Future<WorkloadSnapshot>` | Applies Workboard filters and returns counts, actor/risk breakdowns, stale count, review-needed items, and deterministic next-work suggestions. Read-only. |
+| `updateWorkloadPlanning({items, ...})` | `Future<void>` | Bulk metadata update for selected work items and queue rows. Does not change queue lease/result fields. |
+| `markWorkloadReviewedToday(items, {reviewedAt})` | `Future<void>` | Sets `last_reviewed_at` for selected work items/queue rows. |
+| `createLlmTaskFromWorkItem(workItemId)` | `Future<String>` | Operator action that creates a pending queue row linked to a work item, carrying planning metadata into the queue item. |
+| `linkExistingLlmTaskToWorkItem({taskId, workItemId})` | `Future<void>` | Operator action that validates same-project ownership and links an existing queue row to a work item. |
+| `getWorkItemContextBundle(workItemId)` | `Future<Map<String,Object?>>` | Read-only bundle for MCP: project, stage, work item, notes, documents, media, analyses, and linked LLM tasks. |
 
 **AppState media attachment methods:**
 
@@ -849,6 +878,22 @@ Standalone pure-Dart utility module. No Flutter dependency; fully unit-testable.
 
 ## 5. Services
 
+### WorkloadPlanningService (`lib/services/workload_planning_service.dart`)
+
+Pure Dart planning model and deterministic scoring helpers used by Workboard, `AppState`, tests, and read-only MCP workload tools.
+
+| Symbol | Type | Notes |
+|--------|------|-------|
+| `workloadReadinessValues` | `List<String>` | `ready`, `blocked`, `needs_decision`, `needs_context`, `review_needed`. |
+| `workloadSizeValues` | `List<String>` | `tiny`, `small`, `medium`, `large`. |
+| `workloadRiskValues` | `List<String>` | `docs_only`, `low_code`, `medium_code`, `db_schema`, `release`, `external_facing`. |
+| `workloadActorValues` | `List<String>` | `user`, `codex`, `claude`, `local_llm`, `manual_review`. |
+| `workloadVerificationValues` | `List<String>` | `none`, `tests`, `smoke`, `build`, `manual_ui`. |
+| `WorkloadFilters` | DTO | Project/readiness/actor/risk/size filters plus blocked/review/stale/high-priority booleans. |
+| `WorkloadCard` | DTO | Normalized card for work items and LLM queue rows. Includes project, status, planning metadata, queue linkage, stale state, and score. |
+| `WorkloadSnapshot` | DTO | Filtered cards, grouped counts, actor/risk breakdowns, stale count, review-needed cards, and suggested next cards. |
+| `WorkloadPlanner.scoreCard()` | deterministic scoring | Ready before needs-context/needs-decision before blocked; then priority, size, risk, due date, and stale review state. Review-needed/done/in-progress cards are not execution candidates. |
+
 ### AtlasAgentService (`lib/services/atlas_agent_service.dart`)
 
 Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `AppState` and exposes stable DTOs rather than UI widgets or raw screen state.
@@ -862,6 +907,10 @@ Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `A
 | `getProjectCapsuleStatus(projectId)` | `Future<AtlasCapsuleStatus?>` | Reads linked repo `.project/project_manifest.json`, `.project/ops_capsule.json`, local run-ledger/outbox evidence counts, and availability states through the read-only resolver. |
 | `getProjectBootstrapContext(projectId)` | `Future<AtlasProjectBootstrapContext?>` | Versioned agent startup packet (`atlas.project_bootstrap_context.v1`) combining identity, brief, capsule status, pending LLM tasks, pending proposals, recommended next action, confidence, and gaps. |
 | `getStaleProjects()` | `Future<List<AtlasProjectStatus>>` | Returns projects whose status or blocked work indicates attention. |
+| `workloadSnapshot({filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only Workboard snapshot across projects. Returns cards, counts, actor/risk breakdowns, stale count, review-needed list, and deterministic next-work candidates. |
+| `projectWorkload(projectId, {filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only project-scoped Workboard snapshot. Validates visible project. |
+| `suggestNextWork({projectId, limit})` | `Future<List<Map<String,Object?>>>` | Deterministic next-work card list. Excludes review-needed cards from execution candidates. |
+| `workItemContextBundle(workItemId)` | `Future<Map<String,Object?>>` | Read-only work item context bundle for MCP. Includes linked LLM queue rows and local attachments/notes/analyses. |
 | `refreshLinkedLocalProjects({includeSourceDocuments})` | `Future<LocalProjectBatchRefreshResult>` | Delegates to the existing linked-local refresh workflow. |
 | `runProjectEnrichment({refreshLinkedProjects, includeSourceDocuments})` | `Future<ProjectEnrichmentRunResult>` | Delegates to the Atlas-only enrichment workflow. Refreshes Atlas records and records findings; source repositories are not mutated. |
 | `listProjectEnrichmentRuns({limit})` | `Future<List<ProjectEnrichmentRun>>` | Recent enrichment run summaries for MCP/harness reads. |
@@ -883,7 +932,7 @@ Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `A
 | `approveAgentProposal(draftId)` | `Future<AtlasProposalApplyResult>` | Applies supported proposals after human approval: project status, task create/update with tags, manifest metadata/tags, validation-run log entry, `project_handoff` draft creation, or closeout handoff draft creation. Marks the proposal approved. |
 | `rejectAgentProposal(draftId, {reason})` | `Future<AtlasProposalApplyResult>` | Marks a pending proposal rejected without applying it. |
 
-**Safety boundary:** Agents still cannot directly mutate Atlas state through proposal creation. Queue edit/cancel/requeue controls are operator-owned and not exposed through MCP. Only a human approval path applies supported proposals, and the service does not delete projects, overwrite manifests, write discovered repos, fetch/push Git, deploy, or publish releases.
+**Safety boundary:** Agents still cannot directly mutate Atlas state through proposal creation. New Workboard MCP tools are read-only and do not claim, complete, enqueue, or execute work. Queue edit/cancel/requeue controls are operator-owned and not exposed through MCP. Existing queue lifecycle MCP tools remain the approved queue pathway. Only a human approval path applies supported proposals, and the service does not delete projects, overwrite manifests, write discovered repos, fetch/push Git, deploy, or publish releases.
 
 ### ProjectIdentityResolver (`lib/services/project_identity_resolver.dart`)
 
@@ -907,7 +956,7 @@ Transport-neutral MCP tool registry and JSON-safe dispatcher for `AtlasAgentServ
 | `listTools()` | `List<AtlasMcpTool>` | Exposes read and proposal-creation tools only. Destructive tools and approval/rejection tools are intentionally absent. |
 | `callTool(name, arguments)` | `Future<AtlasMcpCallResult>` | Dispatches MCP-style tool calls to `AtlasAgentService` and returns JSON-safe text content. Unknown tools return an error result. |
 
-**Tools exposed:** `list_projects`, `get_project_status`, `get_project_brief`, `get_project_identity`, `get_project_capsule_status`, `get_project_bootstrap_context`, `get_stale_projects`, `list_agent_proposals`, `preview_local_refresh`, `inspect_git_visibility`, `get_github_remote_status`, `refresh_github_remote_status`, `list_project_enrichment_runs`, `get_project_enrichment_run`, `run_project_enrichment`, `enqueue_llm_task`, `list_llm_tasks`, `get_llm_task`, `get_llm_task_bootstrap`, `claim_llm_task`, `complete_llm_task`, `fail_llm_task`, `propose_status_change`, `propose_task_update`, `propose_manifest_update`, `record_validation_run`, `record_handoff`, and `propose_closeout`.
+**Tools exposed:** `list_projects`, `get_project_status`, `get_project_brief`, `get_project_identity`, `get_project_capsule_status`, `get_project_bootstrap_context`, `get_stale_projects`, `atlas.workload_snapshot`, `atlas.project_workload`, `atlas.suggest_next_work`, `atlas.work_item_context_bundle`, `list_agent_proposals`, `preview_local_refresh`, `inspect_git_visibility`, `get_github_remote_status`, `refresh_github_remote_status`, `list_project_enrichment_runs`, `get_project_enrichment_run`, `run_project_enrichment`, `enqueue_llm_task`, `list_llm_tasks`, `get_llm_task`, `get_llm_task_bootstrap`, `claim_llm_task`, `complete_llm_task`, `fail_llm_task`, `propose_status_change`, `propose_task_update`, `propose_manifest_update`, `record_validation_run`, `record_handoff`, and `propose_closeout`.
 
 ### Atlas MCP stdio wrapper (`lib/mcp/atlas_mcp_stdio*.dart`)
 
@@ -1071,7 +1120,7 @@ Shell: `lib/shared/widgets/atlas_shell.dart`
 | `/library` | `LibraryScreen` | No | Accepts query params `?entryType=document&entryId=<id>`. `LibraryScreen` constructor accepts `initialEntryId` and `initialEntryType` optional params; `initState` pre-selects the entry when params are provided. |
 | `/settings` | `SettingsScreen` | No | |
 | `/` | `DashboardScreen` (legacy) | Yes | |
-| `/work` | `WorkScreen` (legacy) | Yes | |
+| `/work` | `WorkScreen` | No | Primary Workboard planning surface with readiness columns, filters, snapshot counts, deterministic suggestions, and bulk planning actions. |
 | `/review` | `ReviewScreen` (legacy) | Yes | |
 | `/export` | `ExportScreen` (legacy) | Yes | |
 | `/governance` | `GovernanceScreen` (legacy) | Yes | |
@@ -1096,7 +1145,7 @@ ProjectsScreen → showCreateProjectDialog()
   → watchActiveProject() fires → hasActiveProject = true → nav unlocks
 ```
 
-### Task Creation (Work screen)
+### Task Creation (historical stage-list path)
 ```
 WorkScreen → showCreateWorkItemDialog()
   → ContactOwnerField selects owner from contacts or creates new contact
@@ -1106,6 +1155,51 @@ WorkScreen → showCreateWorkItemDialog()
       → INSERT INTO work_items
     → notifyListeners()
   → watchWorkItemsForStage() fires → list updates
+```
+
+### Task Creation (Workboard)
+```
+WorkScreen -> showCreateWorkItemDialog()
+  -> ContactOwnerField selects owner from contacts or creates new contact
+  -> returns Map { title, description, owner, status, priority, dueAt(ISO string) }
+  -> AppState.addWorkItemToProject(projectId, title, ..., dueAt)
+    -> AppDb.addWorkItem(...)
+      -> INSERT INTO work_items with planning defaults
+    -> notifyListeners()
+  -> Workboard reloads getWorkloadSnapshot(filters)
+```
+
+### Workboard Planning Snapshot
+```
+WorkScreen
+  -> AppState.getWorkloadSnapshot(filters)
+    -> getWorkloadCards()
+      -> visible projects + general task project
+      -> stages + work_items + llm_task_queue
+      -> WorkloadPlanner.buildCards()
+    -> WorkloadPlanner.snapshot()
+      -> filters by project/readiness/actor/risk/size/blocked/review/stale/high-priority
+      -> counts Ready/Blocked/Review/Stale and breakdowns by actor/risk
+      -> deterministic suggested next work
+```
+
+### Workboard Bulk Planning
+```
+WorkScreen selected cards
+  -> AppState.updateWorkloadPlanning(...)
+    -> work item refs: AppDb.updateWorkItem(...)
+    -> LLM queue refs: AppDb.updateLlmTaskPlanning(...)
+  -> AppDb.logEvent(area='workload', action='planning_metadata_updated')
+  -> Workboard reloads snapshot
+
+WorkScreen "Create queue"
+  -> AppState.createLlmTaskFromWorkItem(workItemId)
+    -> AppState.enqueueLlmTask(... workItemId, planning metadata ...)
+
+WorkScreen "Link queue"
+  -> AppState.linkExistingLlmTaskToWorkItem(taskId, workItemId)
+    -> validates same project
+    -> AppDb.linkLlmTaskToWorkItem(...)
 ```
 
 ### Today Screen Population
@@ -1350,6 +1444,7 @@ ProjectsScreen project tile -> merge action
 | 17 | `llm_task_queue` added | Persisted MCP/local harness queue with claim/complete/fail lifecycle, operator edit/cancel/requeue controls, and optional review-draft handoff linkage. |
 | 18 | `projects.category`, `media_links` added | Free-text project grouping plus reusable project media attachments for work items and queued LLM tasks. |
 | 19 | `project_runtime_profiles`, `project_runtime_runs` added | Per-project software runtime profiles (launch/stop/test commands, ports, URLs, health checks, capsule settings, Dev Launchpad import) and runtime action run history. Also created via `CREATE TABLE IF NOT EXISTS` in the startup repair path. |
+| 20 | Workboard planning metadata added | `work_items` gained readiness/size/risk/suggested_actor/verification_needed/next_action/planning_notes/last_reviewed_at. `llm_task_queue` gained the same planning fields plus `blocker_reason`. Workboard and read-only workload MCP tools use deterministic scoring only; no harness execution integration. |
 
 **Migration strategy:** `onCreate` calls `createAll()`. `onUpgrade` applies changes sequentially by version. `addColumn` calls are wrapped in typed `on SqliteException` catches (v4+) that only swallow duplicate-column errors and rethrow anything else. New tables use `CREATE TABLE IF NOT EXISTS` in the startup repair path.
 

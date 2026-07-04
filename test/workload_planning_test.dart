@@ -1,0 +1,174 @@
+import 'package:drift/native.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:project_atlas/db/app_db.dart';
+import 'package:project_atlas/services/workload_planning_service.dart';
+import 'package:project_atlas/shared/models/app_state.dart';
+
+void main() {
+  group('workload planning', () {
+    late AppDb db;
+    late AppState state;
+
+    setUp(() {
+      db = AppDb.withExecutor(NativeDatabase.memory());
+      state = AppState(db, enableBackgroundSummaryRefresh: false);
+    });
+
+    tearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+
+    test('work item and LLM queue planning metadata default safely', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+      final stage = (await db.getStagesForProject('atlas')).single;
+      final workItemId = await db.addWorkItem(
+        stageId: stage.id,
+        title: 'Default planning task',
+      );
+      final queueId = await db.enqueueLlmTask(
+        projectId: 'atlas',
+        title: 'Default queue task',
+        objective: 'Check defaults.',
+        contextJson: '{}',
+      );
+
+      final item = await db.getWorkItem(workItemId);
+      final task = await db.getLlmTask(queueId);
+
+      expect(item!.readiness, 'ready');
+      expect(item.size, 'medium');
+      expect(item.risk, 'low_code');
+      expect(item.suggestedActor, 'user');
+      expect(item.verificationNeeded, 'none');
+      expect(item.nextAction, isNull);
+      expect(item.planningNotes, isNull);
+      expect(item.lastReviewedAt, isNull);
+
+      expect(task!.readiness, 'ready');
+      expect(task.size, 'medium');
+      expect(task.risk, 'low_code');
+      expect(task.suggestedActor, 'user');
+      expect(task.verificationNeeded, 'none');
+      expect(task.nextAction, isNull);
+      expect(task.blockerReason, isNull);
+      expect(task.planningNotes, isNull);
+      expect(task.lastReviewedAt, isNull);
+    });
+
+    test('filters and scores deterministic next work', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+      final stage = (await db.getStagesForProject('atlas')).single;
+      final readyId = await db.addWorkItem(
+        stageId: stage.id,
+        title: 'Ship docs patch',
+        priority: 'high',
+      );
+      await db.updateWorkItem(
+        id: readyId,
+        readiness: 'ready',
+        size: 'tiny',
+        risk: 'docs_only',
+        suggestedActor: 'codex',
+        verificationNeeded: 'tests',
+        nextAction: 'Run focused workload tests.',
+      );
+      final blockedId = await db.addWorkItem(
+        stageId: stage.id,
+        title: 'Blocked schema change',
+        priority: 'urgent',
+        blockedReason: 'Needs owner decision.',
+      );
+      await db.updateWorkItem(
+        id: blockedId,
+        readiness: 'blocked',
+        size: 'tiny',
+        risk: 'db_schema',
+        suggestedActor: 'user',
+      );
+      final reviewId = await db.addWorkItem(
+        stageId: stage.id,
+        title: 'Review generated handoff',
+        priority: 'normal',
+      );
+      await db.updateWorkItem(id: reviewId, readiness: 'review_needed');
+      await db.enqueueLlmTask(
+        projectId: 'atlas',
+        workItemId: readyId,
+        title: 'Queue context draft',
+        objective: 'Prepare review notes.',
+        contextJson: '{}',
+        readiness: 'needs_context',
+        size: 'small',
+        risk: 'medium_code',
+        suggestedActor: 'local_llm',
+      );
+
+      final now = DateTime(2026, 7, 4);
+      final snapshot = await state.getWorkloadSnapshot(now: now);
+      final codexOnly = await state.getWorkloadSnapshot(
+        filters: const WorkloadFilters(actor: 'codex'),
+        now: now,
+      );
+      final blockedOnly = await state.getWorkloadSnapshot(
+        filters: const WorkloadFilters(blockedOnly: true),
+        now: now,
+      );
+
+      expect(snapshot.readyTasks, 1);
+      expect(snapshot.blockedTasks, 1);
+      expect(snapshot.reviewNeededTasks, 1);
+      expect(snapshot.staleTasks, 4);
+      expect(codexOnly.cards.map((card) => card.id), [readyId]);
+      expect(blockedOnly.cards.map((card) => card.id), [blockedId]);
+      expect(snapshot.suggestedNextItems.first.id, readyId);
+      expect(
+        snapshot.suggestedNextItems.map((card) => card.id),
+        isNot(contains(reviewId)),
+      );
+    });
+
+    test('bulk planning updates and creates linked queue items', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+      final stage = (await db.getStagesForProject('atlas')).single;
+      final workItemId = await db.addWorkItem(
+        stageId: stage.id,
+        title: 'Implement board filter',
+        priority: 'high',
+      );
+
+      await state.updateWorkloadPlanning(
+        items: [
+          WorkloadItemRef(kind: WorkloadCard.workItemKind, id: workItemId),
+        ],
+        readiness: 'needs_decision',
+        size: 'small',
+        risk: 'medium_code',
+        suggestedActor: 'claude',
+        verificationNeeded: 'smoke',
+        nextAction: 'Decide UI copy.',
+        planningNotes: 'Keep proposal-first.',
+        lastReviewedAt: DateTime(2026, 7, 4),
+      );
+      final queueId = await state.createLlmTaskFromWorkItem(workItemId);
+
+      final item = await db.getWorkItem(workItemId);
+      final task = await db.getLlmTask(queueId);
+
+      expect(item!.readiness, 'needs_decision');
+      expect(item.size, 'small');
+      expect(item.risk, 'medium_code');
+      expect(item.suggestedActor, 'claude');
+      expect(item.verificationNeeded, 'smoke');
+      expect(item.nextAction, 'Decide UI copy.');
+      expect(item.planningNotes, 'Keep proposal-first.');
+      expect(item.lastReviewedAt, DateTime(2026, 7, 4));
+      expect(task!.workItemId, workItemId);
+      expect(task.readiness, 'needs_decision');
+      expect(task.size, 'small');
+      expect(task.risk, 'medium_code');
+      expect(task.suggestedActor, 'claude');
+      expect(task.verificationNeeded, 'smoke');
+    });
+  });
+}

@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../services/atlas_agent_service.dart';
 import '../services/local_git_visibility_service.dart';
 import '../services/local_project_refresh_service.dart';
+import '../services/workload_planning_service.dart';
 
 class AtlasMcpTool {
   final String name;
@@ -98,6 +99,71 @@ class AtlasMcpAdapter {
       description:
           'List projects needing attention because of status or blocked work.',
       inputSchema: {'type': 'object', 'properties': {}},
+    ),
+    AtlasMcpTool(
+      name: 'atlas.workload_snapshot',
+      description:
+          'Read the deterministic workload planning snapshot across projects. Does not mutate state.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'readiness': {'type': 'string'},
+          'actor': {'type': 'string'},
+          'risk': {'type': 'string'},
+          'size': {'type': 'string'},
+          'blockedOnly': {'type': 'boolean'},
+          'reviewNeededOnly': {'type': 'boolean'},
+          'staleOnly': {'type': 'boolean'},
+          'highPriorityOnly': {'type': 'boolean'},
+          'limit': {'type': 'integer'},
+        },
+      },
+    ),
+    AtlasMcpTool(
+      name: 'atlas.project_workload',
+      description:
+          'Read one project workload board, snapshot counts, and deterministic next-work suggestions.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'readiness': {'type': 'string'},
+          'actor': {'type': 'string'},
+          'risk': {'type': 'string'},
+          'size': {'type': 'string'},
+          'blockedOnly': {'type': 'boolean'},
+          'reviewNeededOnly': {'type': 'boolean'},
+          'staleOnly': {'type': 'boolean'},
+          'highPriorityOnly': {'type': 'boolean'},
+          'limit': {'type': 'integer'},
+        },
+        'required': ['projectId'],
+      },
+    ),
+    AtlasMcpTool(
+      name: 'atlas.suggest_next_work',
+      description:
+          'Return deterministic next work candidates, excluding review-needed items from execution candidates.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'projectId': {'type': 'string'},
+          'limit': {'type': 'integer'},
+        },
+      },
+    ),
+    AtlasMcpTool(
+      name: 'atlas.work_item_context_bundle',
+      description:
+          'Read one work item with project, stage, notes, documents, media, analyses, and linked LLM queue context.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'workItemId': {'type': 'string'},
+        },
+        'required': ['workItemId'],
+      },
     ),
     AtlasMcpTool(
       name: 'list_agent_proposals',
@@ -431,6 +497,22 @@ class AtlasMcpAdapter {
         (await agent.getStaleProjects())
             .map((project) => project.toJson())
             .toList(),
+      'atlas.workload_snapshot' => (await agent.workloadSnapshot(
+        filters: _workloadFilters(args),
+        suggestionLimit: _int(args, 'limit') ?? 5,
+      )).toJson(),
+      'atlas.project_workload' => (await agent.projectWorkload(
+        _requiredString(args, 'projectId'),
+        filters: _workloadFilters(args),
+        suggestionLimit: _int(args, 'limit') ?? 5,
+      )).toJson(),
+      'atlas.suggest_next_work' => await agent.suggestNextWork(
+        projectId: _string(args, 'projectId'),
+        limit: _int(args, 'limit') ?? 5,
+      ),
+      'atlas.work_item_context_bundle' => await agent.workItemContextBundle(
+        _requiredString(args, 'workItemId'),
+      ),
       'list_agent_proposals' => (await agent.listRecentAgentProposalReviews(
         limit: _int(args, 'limit') ?? 50,
       )).map((proposal) => proposal.toJson()).toList(),
@@ -660,6 +742,19 @@ class AtlasMcpAdapter {
     final single = _string(args, key);
     return single == null ? const [] : [single];
   }
+
+  WorkloadFilters _workloadFilters(Map<String, Object?> args) =>
+      WorkloadFilters(
+        projectId: _string(args, 'projectId'),
+        readiness: _string(args, 'readiness'),
+        actor: _string(args, 'actor'),
+        risk: _string(args, 'risk'),
+        size: _string(args, 'size'),
+        blockedOnly: _bool(args, 'blockedOnly') ?? false,
+        reviewNeededOnly: _bool(args, 'reviewNeededOnly') ?? false,
+        staleOnly: _bool(args, 'staleOnly') ?? false,
+        highPriorityOnly: _bool(args, 'highPriorityOnly') ?? false,
+      );
 
   Map<String, Object?> _objectMap(Object? value) {
     if (value is! Map) return const {};

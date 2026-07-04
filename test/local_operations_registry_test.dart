@@ -48,9 +48,9 @@ void main() {
   });
 
   test(
-    'schema v19 creates local operations, runtime, git remote, enrichment, and queue tables',
+    'schema v20 creates local operations, runtime, git remote, enrichment, and queue tables',
     () async {
-      expect(db.schemaVersion, 19);
+      expect(db.schemaVersion, 20);
 
       final tables = await db
           .customSelect(

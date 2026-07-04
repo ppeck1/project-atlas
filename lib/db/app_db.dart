@@ -535,6 +535,15 @@ class LlmTaskQueueItem {
   final String? error;
   final String? reviewDraftId;
   final DateTime? completedAt;
+  final String readiness;
+  final String size;
+  final String risk;
+  final String suggestedActor;
+  final String verificationNeeded;
+  final String? nextAction;
+  final String? blockerReason;
+  final String? planningNotes;
+  final DateTime? lastReviewedAt;
 
   const LlmTaskQueueItem({
     required this.id,
@@ -556,6 +565,15 @@ class LlmTaskQueueItem {
     this.error,
     this.reviewDraftId,
     this.completedAt,
+    this.readiness = 'ready',
+    this.size = 'medium',
+    this.risk = 'low_code',
+    this.suggestedActor = 'user',
+    this.verificationNeeded = 'none',
+    this.nextAction,
+    this.blockerReason,
+    this.planningNotes,
+    this.lastReviewedAt,
   });
 
   Map<String, Object?> get context => _decodeObjectMap(contextJson);
@@ -581,6 +599,15 @@ class LlmTaskQueueItem {
     'error': error,
     'reviewDraftId': reviewDraftId,
     'completedAt': completedAt?.toIso8601String(),
+    'readiness': readiness,
+    'size': size,
+    'risk': risk,
+    'suggestedActor': suggestedActor,
+    'verificationNeeded': verificationNeeded,
+    'nextAction': nextAction,
+    'blockerReason': blockerReason,
+    'planningNotes': planningNotes,
+    'lastReviewedAt': lastReviewedAt?.toIso8601String(),
   };
 }
 
@@ -677,7 +704,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 19;
+  int get schemaVersion => 20;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -830,6 +857,22 @@ class AppDb extends _$AppDb {
           } catch (_) {}
         }
       }
+      if (from < 20) {
+        for (final col in [
+          workItems.readiness,
+          workItems.size,
+          workItems.risk,
+          workItems.suggestedActor,
+          workItems.verificationNeeded,
+          workItems.nextAction,
+          workItems.planningNotes,
+          workItems.lastReviewedAt,
+        ]) {
+          try {
+            await m.addColumn(workItems, col);
+          } catch (_) {}
+        }
+      }
     },
     beforeOpen: (_) async {
       await _ensureProjectCompatibilityColumns();
@@ -867,6 +910,14 @@ class AppDb extends _$AppDb {
       // work_items columns that may be absent on very old schemas
       "ALTER TABLE work_items ADD COLUMN completed INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE work_items ADD COLUMN phone_queue INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE work_items ADD COLUMN readiness TEXT NOT NULL DEFAULT 'ready'",
+      "ALTER TABLE work_items ADD COLUMN size TEXT NOT NULL DEFAULT 'medium'",
+      "ALTER TABLE work_items ADD COLUMN risk TEXT NOT NULL DEFAULT 'low_code'",
+      "ALTER TABLE work_items ADD COLUMN suggested_actor TEXT NOT NULL DEFAULT 'user'",
+      "ALTER TABLE work_items ADD COLUMN verification_needed TEXT NOT NULL DEFAULT 'none'",
+      'ALTER TABLE work_items ADD COLUMN next_action TEXT NULL',
+      'ALTER TABLE work_items ADD COLUMN planning_notes TEXT NULL',
+      'ALTER TABLE work_items ADD COLUMN last_reviewed_at INTEGER NULL',
       // project_people compatibility columns (older local DBs may miss these)
       'ALTER TABLE project_people ADD COLUMN role TEXT NULL',
       'ALTER TABLE project_people ADD COLUMN authority TEXT NULL',
@@ -1480,6 +1531,14 @@ class AppDb extends _$AppDb {
     DateTime? dueAt,
     String? source,
     String? blockedReason,
+    String readiness = 'ready',
+    String size = 'medium',
+    String risk = 'low_code',
+    String suggestedActor = 'user',
+    String verificationNeeded = 'none',
+    String? nextAction,
+    String? planningNotes,
+    DateTime? lastReviewedAt,
   }) async {
     final id = _newMicrosId();
     final now = DateTime.now();
@@ -1497,6 +1556,14 @@ class AppDb extends _$AppDb {
         updatedAt: Value(now),
         source: Value(source),
         blockedReason: Value(blockedReason),
+        readiness: Value(readiness),
+        size: Value(size),
+        risk: Value(risk),
+        suggestedActor: Value(suggestedActor),
+        verificationNeeded: Value(verificationNeeded),
+        nextAction: Value(nextAction),
+        planningNotes: Value(planningNotes),
+        lastReviewedAt: Value(lastReviewedAt),
       ),
     );
     return id;
@@ -1514,6 +1581,17 @@ class AppDb extends _$AppDb {
     String? blockedReason,
     bool clearBlockedReason = false,
     bool? phoneQueue,
+    String? readiness,
+    String? size,
+    String? risk,
+    String? suggestedActor,
+    String? verificationNeeded,
+    String? nextAction,
+    bool clearNextAction = false,
+    String? planningNotes,
+    bool clearPlanningNotes = false,
+    DateTime? lastReviewedAt,
+    bool clearLastReviewedAt = false,
   }) async {
     await (update(workItems)..where((t) => t.id.equals(id))).write(
       WorkItemsCompanion(
@@ -1536,6 +1614,30 @@ class AppDb extends _$AppDb {
             : const Value.absent(),
         phoneQueue: phoneQueue != null
             ? Value(phoneQueue)
+            : const Value.absent(),
+        readiness: readiness != null ? Value(readiness) : const Value.absent(),
+        size: size != null ? Value(size) : const Value.absent(),
+        risk: risk != null ? Value(risk) : const Value.absent(),
+        suggestedActor: suggestedActor != null
+            ? Value(suggestedActor)
+            : const Value.absent(),
+        verificationNeeded: verificationNeeded != null
+            ? Value(verificationNeeded)
+            : const Value.absent(),
+        nextAction: clearNextAction
+            ? const Value(null)
+            : nextAction != null
+            ? Value(nextAction)
+            : const Value.absent(),
+        planningNotes: clearPlanningNotes
+            ? const Value(null)
+            : planningNotes != null
+            ? Value(planningNotes)
+            : const Value.absent(),
+        lastReviewedAt: clearLastReviewedAt
+            ? const Value(null)
+            : lastReviewedAt != null
+            ? Value(lastReviewedAt)
             : const Value.absent(),
         updatedAt: Value(DateTime.now()),
       ),
@@ -3078,8 +3180,32 @@ class AppDb extends _$AppDb {
       result_json TEXT NULL,
       error TEXT NULL,
       review_draft_id TEXT NULL,
-      completed_at INTEGER NULL
+      completed_at INTEGER NULL,
+      readiness TEXT NOT NULL DEFAULT 'ready',
+      size TEXT NOT NULL DEFAULT 'medium',
+      risk TEXT NOT NULL DEFAULT 'low_code',
+      suggested_actor TEXT NOT NULL DEFAULT 'user',
+      verification_needed TEXT NOT NULL DEFAULT 'none',
+      next_action TEXT NULL,
+      blocker_reason TEXT NULL,
+      planning_notes TEXT NULL,
+      last_reviewed_at INTEGER NULL
     )''');
+    for (final stmt in <String>[
+      "ALTER TABLE llm_task_queue ADD COLUMN readiness TEXT NOT NULL DEFAULT 'ready'",
+      "ALTER TABLE llm_task_queue ADD COLUMN size TEXT NOT NULL DEFAULT 'medium'",
+      "ALTER TABLE llm_task_queue ADD COLUMN risk TEXT NOT NULL DEFAULT 'low_code'",
+      "ALTER TABLE llm_task_queue ADD COLUMN suggested_actor TEXT NOT NULL DEFAULT 'user'",
+      "ALTER TABLE llm_task_queue ADD COLUMN verification_needed TEXT NOT NULL DEFAULT 'none'",
+      'ALTER TABLE llm_task_queue ADD COLUMN next_action TEXT NULL',
+      'ALTER TABLE llm_task_queue ADD COLUMN blocker_reason TEXT NULL',
+      'ALTER TABLE llm_task_queue ADD COLUMN planning_notes TEXT NULL',
+      'ALTER TABLE llm_task_queue ADD COLUMN last_reviewed_at INTEGER NULL',
+    ]) {
+      try {
+        await customStatement(stmt);
+      } catch (_) {}
+    }
     await customStatement(
       'CREATE INDEX IF NOT EXISTS idx_llm_task_queue_project_status '
       'ON llm_task_queue(project_id, status, updated_at DESC)',
@@ -4542,6 +4668,15 @@ class AppDb extends _$AppDb {
     error: row.data['error'] as String?,
     reviewDraftId: row.data['review_draft_id'] as String?,
     completedAt: _nullableDateFromSqlValue(row.data['completed_at']),
+    readiness: row.data['readiness'] as String? ?? 'ready',
+    size: row.data['size'] as String? ?? 'medium',
+    risk: row.data['risk'] as String? ?? 'low_code',
+    suggestedActor: row.data['suggested_actor'] as String? ?? 'user',
+    verificationNeeded: row.data['verification_needed'] as String? ?? 'none',
+    nextAction: row.data['next_action'] as String?,
+    blockerReason: row.data['blocker_reason'] as String?,
+    planningNotes: row.data['planning_notes'] as String?,
+    lastReviewedAt: _nullableDateFromSqlValue(row.data['last_reviewed_at']),
   );
 
   Future<String> enqueueLlmTask({
@@ -4553,6 +4688,15 @@ class AppDb extends _$AppDb {
     String priority = 'normal',
     String createdBy = 'ui',
     DateTime? createdAt,
+    String readiness = 'ready',
+    String size = 'medium',
+    String risk = 'low_code',
+    String suggestedActor = 'user',
+    String verificationNeeded = 'none',
+    String? nextAction,
+    String? blockerReason,
+    String? planningNotes,
+    DateTime? lastReviewedAt,
   }) async {
     await _ensureLlmTaskQueueTable();
     final now = createdAt ?? DateTime.now();
@@ -4560,8 +4704,10 @@ class AppDb extends _$AppDb {
     await customStatement(
       '''INSERT INTO llm_task_queue (
         id, project_id, work_item_id, title, objective, context_json, priority,
-        status, created_by, created_at, updated_at, attempts
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        status, created_by, created_at, updated_at, attempts, readiness, size,
+        risk, suggested_actor, verification_needed, next_action,
+        blocker_reason, planning_notes, last_reviewed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
       [
         id,
         projectId,
@@ -4575,6 +4721,15 @@ class AppDb extends _$AppDb {
         now.millisecondsSinceEpoch,
         now.millisecondsSinceEpoch,
         0,
+        readiness,
+        size,
+        risk,
+        suggestedActor,
+        verificationNeeded,
+        nextAction,
+        blockerReason,
+        planningNotes,
+        lastReviewedAt?.millisecondsSinceEpoch,
       ],
     );
     return id;
@@ -4658,6 +4813,69 @@ class AppDb extends _$AppDb {
             : existing.leaseExpiresAt?.millisecondsSinceEpoch,
         id,
       ],
+    );
+    return getLlmTask(id);
+  }
+
+  Future<LlmTaskQueueItem?> updateLlmTaskPlanning({
+    required String id,
+    String? readiness,
+    String? size,
+    String? risk,
+    String? suggestedActor,
+    String? verificationNeeded,
+    String? nextAction,
+    bool clearNextAction = false,
+    String? blockerReason,
+    bool clearBlockerReason = false,
+    String? planningNotes,
+    bool clearPlanningNotes = false,
+    DateTime? lastReviewedAt,
+    bool clearLastReviewedAt = false,
+    DateTime? updatedAt,
+  }) async {
+    await _ensureLlmTaskQueueTable();
+    final existing = await getLlmTask(id);
+    if (existing == null) return null;
+    final now = updatedAt ?? DateTime.now();
+    await customStatement(
+      '''UPDATE llm_task_queue
+         SET readiness = ?, size = ?, risk = ?, suggested_actor = ?,
+             verification_needed = ?, next_action = ?, blocker_reason = ?,
+             planning_notes = ?, last_reviewed_at = ?, updated_at = ?
+         WHERE id = ?''',
+      [
+        readiness ?? existing.readiness,
+        size ?? existing.size,
+        risk ?? existing.risk,
+        suggestedActor ?? existing.suggestedActor,
+        verificationNeeded ?? existing.verificationNeeded,
+        clearNextAction ? null : nextAction ?? existing.nextAction,
+        clearBlockerReason ? null : blockerReason ?? existing.blockerReason,
+        clearPlanningNotes ? null : planningNotes ?? existing.planningNotes,
+        clearLastReviewedAt
+            ? null
+            : lastReviewedAt?.millisecondsSinceEpoch ??
+                  existing.lastReviewedAt?.millisecondsSinceEpoch,
+        now.millisecondsSinceEpoch,
+        id,
+      ],
+    );
+    return getLlmTask(id);
+  }
+
+  Future<LlmTaskQueueItem?> linkLlmTaskToWorkItem({
+    required String id,
+    required String? workItemId,
+    DateTime? updatedAt,
+  }) async {
+    await _ensureLlmTaskQueueTable();
+    final existing = await getLlmTask(id);
+    if (existing == null) return null;
+    final now = updatedAt ?? DateTime.now();
+    await customStatement(
+      'UPDATE llm_task_queue SET work_item_id = ?, updated_at = ? WHERE id = ?',
+      [workItemId, now.millisecondsSinceEpoch, id],
     );
     return getLlmTask(id);
   }

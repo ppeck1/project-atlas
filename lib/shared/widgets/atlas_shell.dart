@@ -17,6 +17,7 @@ class AtlasShell extends StatelessWidget {
         Icons.folder_open,
         '/projects',
       ),
+      _NavDest('Work', Icons.view_kanban_outlined, Icons.view_kanban, '/work'),
       _NavDest('Ops', Icons.radar_outlined, Icons.radar, '/operations'),
       _NavDest(
         'Library',

@@ -6,6 +6,7 @@ import '../shared/models/project_metadata.dart' as project_meta;
 import 'local_git_visibility_service.dart';
 import 'local_project_refresh_service.dart';
 import 'project_identity_resolver.dart';
+import 'workload_planning_service.dart';
 
 class AtlasProjectStatus {
   final String id;
@@ -594,6 +595,54 @@ class AtlasAgentService {
       (await listProjects())
           .where((project) => project.needsAttention)
           .toList();
+
+  Future<WorkloadSnapshot> workloadSnapshot({
+    WorkloadFilters filters = const WorkloadFilters(),
+    int suggestionLimit = 5,
+  }) => state.getWorkloadSnapshot(
+    filters: filters,
+    suggestionLimit: suggestionLimit,
+  );
+
+  Future<WorkloadSnapshot> projectWorkload(
+    String projectId, {
+    WorkloadFilters filters = const WorkloadFilters(),
+    int suggestionLimit = 5,
+  }) async {
+    final project = await _visibleProject(projectId);
+    if (project == null) {
+      throw StateError('Project not found or not visible: $projectId.');
+    }
+    return state.getWorkloadSnapshot(
+      filters: filters.copyWith(projectId: project.id),
+      suggestionLimit: suggestionLimit,
+    );
+  }
+
+  Future<List<Map<String, Object?>>> suggestNextWork({
+    String? projectId,
+    int limit = 5,
+  }) async {
+    final cleanProjectId = _clean(projectId);
+    final filters = cleanProjectId == null
+        ? const WorkloadFilters()
+        : WorkloadFilters(projectId: cleanProjectId);
+    if (cleanProjectId != null &&
+        await _visibleProject(cleanProjectId) == null) {
+      throw StateError('Project not found or not visible: $cleanProjectId.');
+    }
+    final snapshot = await state.getWorkloadSnapshot(
+      filters: filters,
+      suggestionLimit: limit <= 0 ? 5 : limit,
+    );
+    return snapshot.suggestedNextItems
+        .take(limit <= 0 ? 5 : limit)
+        .map((card) => card.toJson(now: snapshot.generatedAt))
+        .toList(growable: false);
+  }
+
+  Future<Map<String, Object?>> workItemContextBundle(String workItemId) =>
+      state.getWorkItemContextBundle(workItemId);
 
   Future<LocalProjectBatchRefreshResult> refreshLinkedLocalProjects({
     bool includeSourceDocuments = true,

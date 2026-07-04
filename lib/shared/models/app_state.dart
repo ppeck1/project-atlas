@@ -17,6 +17,7 @@ import '../../services/ollama_service.dart';
 import '../../services/project_runtime_service.dart';
 import '../../services/project_summary_models.dart';
 import '../../services/telegram_service.dart';
+import '../../services/workload_planning_service.dart';
 
 class ProjectLocalRepoSummary {
   final ProjectRegistryEntry? registry;
@@ -878,6 +879,14 @@ class AppState extends ChangeNotifier {
     DateTime? dueAt,
     String? source,
     String? blockedReason,
+    String readiness = 'ready',
+    String size = 'medium',
+    String risk = 'low_code',
+    String suggestedActor = 'user',
+    String verificationNeeded = 'none',
+    String? nextAction,
+    String? planningNotes,
+    DateTime? lastReviewedAt,
   }) async {
     await db.logEvent(
       area: 'ui',
@@ -896,6 +905,14 @@ class AppState extends ChangeNotifier {
       dueAt: dueAt,
       source: source,
       blockedReason: blockedReason,
+      readiness: normalizeWorkloadReadiness(readiness),
+      size: normalizeWorkloadSize(size),
+      risk: normalizeWorkloadRisk(risk),
+      suggestedActor: normalizeWorkloadActor(suggestedActor),
+      verificationNeeded: normalizeWorkloadVerification(verificationNeeded),
+      nextAction: cleanWorkloadText(nextAction),
+      planningNotes: cleanWorkloadText(planningNotes),
+      lastReviewedAt: lastReviewedAt,
     );
     await db.logEvent(
       area: 'ui',
@@ -918,6 +935,14 @@ class AppState extends ChangeNotifier {
     String? source,
     String? blockedReason,
     Iterable<String> tagIds = const [],
+    String readiness = 'ready',
+    String size = 'medium',
+    String risk = 'low_code',
+    String suggestedActor = 'user',
+    String verificationNeeded = 'none',
+    String? nextAction,
+    String? planningNotes,
+    DateTime? lastReviewedAt,
   }) async {
     var stages = await db.getStagesForProject(projectId);
     if (stages.isEmpty) {
@@ -944,6 +969,14 @@ class AppState extends ChangeNotifier {
       dueAt: dueAt,
       source: source,
       blockedReason: blockedReason,
+      readiness: normalizeWorkloadReadiness(readiness),
+      size: normalizeWorkloadSize(size),
+      risk: normalizeWorkloadRisk(risk),
+      suggestedActor: normalizeWorkloadActor(suggestedActor),
+      verificationNeeded: normalizeWorkloadVerification(verificationNeeded),
+      nextAction: cleanWorkloadText(nextAction),
+      planningNotes: cleanWorkloadText(planningNotes),
+      lastReviewedAt: lastReviewedAt,
     );
     await db.setWorkItemTags(workItemId, tagIds);
     await db.logEvent(
@@ -967,6 +1000,14 @@ class AppState extends ChangeNotifier {
     String? source,
     String? blockedReason,
     Iterable<String> tagIds = const [],
+    String readiness = 'ready',
+    String size = 'medium',
+    String risk = 'low_code',
+    String suggestedActor = 'user',
+    String verificationNeeded = 'none',
+    String? nextAction,
+    String? planningNotes,
+    DateTime? lastReviewedAt,
   }) async {
     final stageId = await db.ensureGeneralTaskStage();
     await db.logEvent(
@@ -986,6 +1027,14 @@ class AppState extends ChangeNotifier {
       dueAt: dueAt,
       source: source,
       blockedReason: blockedReason,
+      readiness: normalizeWorkloadReadiness(readiness),
+      size: normalizeWorkloadSize(size),
+      risk: normalizeWorkloadRisk(risk),
+      suggestedActor: normalizeWorkloadActor(suggestedActor),
+      verificationNeeded: normalizeWorkloadVerification(verificationNeeded),
+      nextAction: cleanWorkloadText(nextAction),
+      planningNotes: cleanWorkloadText(planningNotes),
+      lastReviewedAt: lastReviewedAt,
     );
     await db.setWorkItemTags(workItemId, tagIds);
     await db.logEvent(
@@ -1011,6 +1060,17 @@ class AppState extends ChangeNotifier {
     String? blockedReason,
     bool clearBlockedReason = false,
     bool? phoneQueue,
+    String? readiness,
+    String? size,
+    String? risk,
+    String? suggestedActor,
+    String? verificationNeeded,
+    String? nextAction,
+    bool clearNextAction = false,
+    String? planningNotes,
+    bool clearPlanningNotes = false,
+    DateTime? lastReviewedAt,
+    bool clearLastReviewedAt = false,
   }) async {
     await db.logEvent(
       area: 'ui',
@@ -1030,6 +1090,23 @@ class AppState extends ChangeNotifier {
       blockedReason: blockedReason,
       clearBlockedReason: clearBlockedReason,
       phoneQueue: phoneQueue,
+      readiness: readiness == null
+          ? null
+          : normalizeWorkloadReadiness(readiness),
+      size: size == null ? null : normalizeWorkloadSize(size),
+      risk: risk == null ? null : normalizeWorkloadRisk(risk),
+      suggestedActor: suggestedActor == null
+          ? null
+          : normalizeWorkloadActor(suggestedActor),
+      verificationNeeded: verificationNeeded == null
+          ? null
+          : normalizeWorkloadVerification(verificationNeeded),
+      nextAction: cleanWorkloadText(nextAction),
+      clearNextAction: clearNextAction,
+      planningNotes: cleanWorkloadText(planningNotes),
+      clearPlanningNotes: clearPlanningNotes,
+      lastReviewedAt: lastReviewedAt,
+      clearLastReviewedAt: clearLastReviewedAt,
     );
     await db.logEvent(
       area: 'ui',
@@ -1056,6 +1133,240 @@ class AppState extends ChangeNotifier {
   Future<List<WorkItem>> getAllActiveWorkItems() => db.getAllActiveWorkItems();
   Future<List<WorkItem>> getTodayItems() => db.getTodayItems();
   Future<List<WorkItem>> getBlockedItems() => db.getBlockedItems();
+
+  Future<List<WorkloadCard>> getWorkloadCards() async {
+    final visibleProjects = await db.getProjectsFull();
+    final generalProject = await db.getGeneralTasksProject();
+    final projects = [
+      ...visibleProjects,
+      if (generalProject != null &&
+          !visibleProjects.any((project) => project.id == generalProject.id))
+        generalProject,
+    ];
+    final stages = <Stage>[];
+    final workItems = <WorkItem>[];
+    for (final project in projects) {
+      final projectStages = await db.getStagesForProject(project.id);
+      stages.addAll(projectStages);
+      workItems.addAll(await db.getWorkItemsForProject(project.id));
+    }
+    final llmTasks = await db.getLlmTasks(limit: 1000);
+    return WorkloadPlanner.buildCards(
+      projects: projects,
+      stages: stages,
+      workItems: workItems,
+      llmTasks: llmTasks,
+    );
+  }
+
+  Future<WorkloadSnapshot> getWorkloadSnapshot({
+    WorkloadFilters filters = const WorkloadFilters(),
+    DateTime? now,
+    int suggestionLimit = 5,
+  }) async {
+    final cards = await getWorkloadCards();
+    return WorkloadPlanner.snapshot(
+      cards: cards,
+      filters: filters,
+      now: now,
+      suggestionLimit: suggestionLimit,
+    );
+  }
+
+  Future<void> updateWorkloadPlanning({
+    required Iterable<WorkloadItemRef> items,
+    String? readiness,
+    String? size,
+    String? risk,
+    String? suggestedActor,
+    String? verificationNeeded,
+    String? nextAction,
+    bool clearNextAction = false,
+    String? blockerReason,
+    bool clearBlockerReason = false,
+    String? planningNotes,
+    bool clearPlanningNotes = false,
+    DateTime? lastReviewedAt,
+    bool clearLastReviewedAt = false,
+  }) async {
+    final refs = items.toList(growable: false);
+    for (final ref in refs) {
+      switch (ref.kind) {
+        case WorkloadCard.workItemKind:
+          await db.updateWorkItem(
+            id: ref.id,
+            readiness: readiness == null
+                ? null
+                : normalizeWorkloadReadiness(readiness),
+            size: size == null ? null : normalizeWorkloadSize(size),
+            risk: risk == null ? null : normalizeWorkloadRisk(risk),
+            suggestedActor: suggestedActor == null
+                ? null
+                : normalizeWorkloadActor(suggestedActor),
+            verificationNeeded: verificationNeeded == null
+                ? null
+                : normalizeWorkloadVerification(verificationNeeded),
+            nextAction: cleanWorkloadText(nextAction),
+            clearNextAction: clearNextAction,
+            blockedReason: cleanWorkloadText(blockerReason),
+            clearBlockedReason: clearBlockerReason,
+            planningNotes: cleanWorkloadText(planningNotes),
+            clearPlanningNotes: clearPlanningNotes,
+            lastReviewedAt: lastReviewedAt,
+            clearLastReviewedAt: clearLastReviewedAt,
+          );
+          break;
+        case WorkloadCard.llmQueueKind:
+          await db.updateLlmTaskPlanning(
+            id: ref.id,
+            readiness: readiness == null
+                ? null
+                : normalizeWorkloadReadiness(readiness),
+            size: size == null ? null : normalizeWorkloadSize(size),
+            risk: risk == null ? null : normalizeWorkloadRisk(risk),
+            suggestedActor: suggestedActor == null
+                ? null
+                : normalizeWorkloadActor(suggestedActor),
+            verificationNeeded: verificationNeeded == null
+                ? null
+                : normalizeWorkloadVerification(verificationNeeded),
+            nextAction: cleanWorkloadText(nextAction),
+            clearNextAction: clearNextAction,
+            blockerReason: cleanWorkloadText(blockerReason),
+            clearBlockerReason: clearBlockerReason,
+            planningNotes: cleanWorkloadText(planningNotes),
+            clearPlanningNotes: clearPlanningNotes,
+            lastReviewedAt: lastReviewedAt,
+            clearLastReviewedAt: clearLastReviewedAt,
+          );
+          break;
+      }
+    }
+    if (refs.isNotEmpty) {
+      await db.logEvent(
+        area: 'workload',
+        action: 'planning_metadata_updated',
+        outputJson: jsonEncode({
+          'count': refs.length,
+          'items': refs.map((ref) => ref.toJson()).toList(),
+        }),
+      );
+      notifyListeners();
+    }
+  }
+
+  Future<void> markWorkloadReviewedToday(
+    Iterable<WorkloadItemRef> items, {
+    DateTime? reviewedAt,
+  }) => updateWorkloadPlanning(
+    items: items,
+    lastReviewedAt: reviewedAt ?? DateTime.now(),
+  );
+
+  Future<String> createLlmTaskFromWorkItem(String workItemId) async {
+    final item = await db.getWorkItem(workItemId);
+    if (item == null) throw StateError('Work item not found: $workItemId');
+    final project = await db.getProjectForWorkItem(workItemId);
+    if (project == null) {
+      throw StateError('Work item has no visible project: $workItemId');
+    }
+    final taskId = await enqueueLlmTask(
+      projectId: project.id,
+      workItemId: item.id,
+      title: item.title,
+      objective:
+          cleanWorkloadText(item.nextAction) ??
+          cleanWorkloadText(item.description) ??
+          item.title,
+      priority: item.priority,
+      createdBy: 'ui_planning',
+      readiness: item.readiness,
+      size: item.size,
+      risk: item.risk,
+      suggestedActor: item.suggestedActor,
+      verificationNeeded: item.verificationNeeded,
+      nextAction: item.nextAction,
+      blockerReason: item.blockedReason,
+      planningNotes: item.planningNotes,
+      context: {
+        'source': 'workboard_bulk_action',
+        'workItemId': item.id,
+        'projectId': project.id,
+        'readiness': item.readiness,
+        'size': item.size,
+        'risk': item.risk,
+        'suggestedActor': item.suggestedActor,
+        'verificationNeeded': item.verificationNeeded,
+      },
+    );
+    return taskId;
+  }
+
+  Future<void> linkExistingLlmTaskToWorkItem({
+    required String taskId,
+    required String workItemId,
+  }) async {
+    final item = await db.getWorkItem(workItemId);
+    final task = await db.getLlmTask(taskId);
+    if (item == null) throw StateError('Work item not found: $workItemId');
+    if (task == null) throw StateError('LLM queue item not found: $taskId');
+    final project = await db.getProjectForWorkItem(workItemId);
+    if (project == null || project.id != task.projectId) {
+      throw StateError(
+        'LLM queue item and work item must belong to the same project.',
+      );
+    }
+    await db.linkLlmTaskToWorkItem(id: taskId, workItemId: workItemId);
+    await db.logEvent(
+      area: 'workload',
+      action: 'llm_task_linked_to_work_item',
+      entityType: 'work_item',
+      entityId: workItemId,
+      outputJson: jsonEncode({'taskId': taskId, 'projectId': project.id}),
+    );
+    notifyListeners();
+  }
+
+  Future<Map<String, Object?>> getWorkItemContextBundle(
+    String workItemId,
+  ) async {
+    final item = await db.getWorkItem(workItemId);
+    if (item == null) throw StateError('Work item not found: $workItemId');
+    final stage = await (db.select(
+      db.stages,
+    )..where((t) => t.id.equals(item.stageId))).getSingleOrNull();
+    final project = stage == null
+        ? null
+        : await db.getProjectFull(stage.projectId);
+    final llmTasks = project == null
+        ? const <LlmTaskQueueItem>[]
+        : (await db.getLlmTasksForProject(project.id, limit: 200))
+              .where((task) => task.workItemId == item.id)
+              .toList(growable: false);
+    final notes = await (db.select(
+      db.workItemNotes,
+    )..where((t) => t.workItemId.equals(item.id))).get();
+    final analyses = await (db.select(
+      db.workItemAnalyses,
+    )..where((t) => t.workItemId.equals(item.id))).get();
+    final documents = await db.getDocumentsForWorkItem(item.id);
+    final media = await db.getProjectMediaForEntity(
+      entityType: 'work_item',
+      entityId: item.id,
+    );
+    return {
+      'schema': 'atlas.work_item_context_bundle.v1',
+      'generatedAt': DateTime.now().toIso8601String(),
+      'project': project?.toJson(),
+      'stage': stage?.toJson(),
+      'workItem': {...item.toJson(), 'blockerReason': item.blockedReason},
+      'linkedLlmTasks': llmTasks.map((task) => task.toJson()).toList(),
+      'notes': notes.map((note) => note.toJson()).toList(),
+      'documents': documents.map((document) => document.toJson()).toList(),
+      'media': media.map((item) => item.toJson()).toList(),
+      'analyses': analyses.map((analysis) => analysis.toJson()).toList(),
+    };
+  }
 
   // ---------------------------------------------------------------------------
   // Governance
@@ -4721,6 +5032,15 @@ class AppState extends ChangeNotifier {
     Map<String, Object?> context = const {},
     String priority = 'normal',
     String createdBy = 'ui',
+    String readiness = 'ready',
+    String size = 'medium',
+    String risk = 'low_code',
+    String suggestedActor = 'user',
+    String verificationNeeded = 'none',
+    String? nextAction,
+    String? blockerReason,
+    String? planningNotes,
+    DateTime? lastReviewedAt,
   }) async {
     final id = await db.enqueueLlmTask(
       projectId: projectId,
@@ -4730,6 +5050,15 @@ class AppState extends ChangeNotifier {
       contextJson: jsonEncode(context),
       priority: priority,
       createdBy: createdBy,
+      readiness: normalizeWorkloadReadiness(readiness),
+      size: normalizeWorkloadSize(size),
+      risk: normalizeWorkloadRisk(risk),
+      suggestedActor: normalizeWorkloadActor(suggestedActor),
+      verificationNeeded: normalizeWorkloadVerification(verificationNeeded),
+      nextAction: cleanWorkloadText(nextAction),
+      blockerReason: cleanWorkloadText(blockerReason),
+      planningNotes: cleanWorkloadText(planningNotes),
+      lastReviewedAt: lastReviewedAt,
     );
     await db.logEvent(
       area: 'llm_queue',

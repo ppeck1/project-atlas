@@ -34,6 +34,10 @@ void main() {
       expect(names, contains('get_project_identity'));
       expect(names, contains('get_project_capsule_status'));
       expect(names, contains('get_project_bootstrap_context'));
+      expect(names, contains('atlas.workload_snapshot'));
+      expect(names, contains('atlas.project_workload'));
+      expect(names, contains('atlas.suggest_next_work'));
+      expect(names, contains('atlas.work_item_context_bundle'));
       expect(names, contains('get_github_remote_status'));
       expect(names, contains('refresh_github_remote_status'));
       expect(names, contains('list_project_enrichment_runs'));
@@ -198,6 +202,63 @@ void main() {
       expect(result.isError, isFalse);
       expect((result.data as Map)['fullName'], 'ppeck1/project-atlas');
       expect((result.data as Map)['visibility'], 'public');
+    });
+
+    test('dispatches read-only workload planning tools', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+      final stage = (await db.getStagesForProject('atlas')).single;
+      final workItemId = await db.addWorkItem(
+        stageId: stage.id,
+        title: 'Plan workboard slice',
+        priority: 'high',
+      );
+      await db.updateWorkItem(
+        id: workItemId,
+        readiness: 'ready',
+        size: 'tiny',
+        risk: 'docs_only',
+        suggestedActor: 'codex',
+        verificationNeeded: 'tests',
+        nextAction: 'Run workload tests.',
+      );
+      await db.enqueueLlmTask(
+        projectId: 'atlas',
+        workItemId: workItemId,
+        title: 'Review plan',
+        objective: 'Summarize the selected task for review.',
+        contextJson: '{}',
+        readiness: 'needs_context',
+      );
+
+      final snapshot = await adapter.callTool('atlas.workload_snapshot', {
+        'actor': 'codex',
+      });
+      final projectWorkload = await adapter.callTool('atlas.project_workload', {
+        'projectId': 'atlas',
+      });
+      final suggestions = await adapter.callTool('atlas.suggest_next_work', {
+        'projectId': 'atlas',
+        'limit': 3,
+      });
+      final bundle = await adapter.callTool('atlas.work_item_context_bundle', {
+        'workItemId': workItemId,
+      });
+
+      expect(snapshot.isError, isFalse);
+      expect((snapshot.data as Map)['schema'], 'atlas.workload_snapshot.v1');
+      expect(
+        ((((snapshot.data as Map)['counts'] as Map)['byActor']
+            as Map)['codex']),
+        1,
+      );
+      expect(projectWorkload.isError, isFalse);
+      expect(((projectWorkload.data as Map)['cards'] as List), hasLength(2));
+      expect(suggestions.isError, isFalse);
+      expect(((suggestions.data as List).first as Map)['id'], workItemId);
+      expect(bundle.isError, isFalse);
+      final context = bundle.data as Map;
+      expect((context['workItem'] as Map)['id'], workItemId);
+      expect((context['linkedLlmTasks'] as List), hasLength(1));
     });
 
     test('dispatches Atlas-only project enrichment tools', () async {
