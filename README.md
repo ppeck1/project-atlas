@@ -49,7 +49,7 @@ Library-backed AI draft review, and opt-in AI summary settings.
 
 ![Settings AI Summaries setup with Library evidence and bulk refresh gates](docs/screenshots/settings.png)
 
-The checked-in PNGs should be recaptured from the desktop app for release docs.
+The checked-in PNGs were refreshed for the v1.4/schema 20 release docs.
 For fallback public-safe mockups only, run:
 
 ```powershell
@@ -278,7 +278,6 @@ Generated files and build products are intentionally ignored:
 - Drafts screen as a first-class route
 - Inbound Telegram commands such as `/done`, `/snooze`, and `/add`
 - Atlas MCP wrapper over `AtlasAgentService`
-- Restore/import flow for project bundles and operational backups
-- Restore/import flow for operational backup (ZIP)
+- Restore/import flow for project bundles and operational backups before deeper agent autonomy
 - SQLCipher encrypted storage path before broader distribution
 - Review history browser — `watchRecentDailyReviews()` exists in the DB layer; no history screen yet

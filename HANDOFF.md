@@ -1,6 +1,6 @@
 # Project Atlas — Handoff Document
 
-> Current as of v1.3.0+1, schema v19. Updated alongside each release.
+> Current as of v1.4.0+1, schema v20. Updated alongside each release.
 
 ---
 
@@ -50,9 +50,11 @@ The extraction helpers live in `lib/db/document_extractor.dart` as standalone pu
 
 **Project status/category metadata.** Project statuses and category helpers are centralized in `lib/shared/models/project_metadata.dart`. The shared status list drives Projects filtering, Project Detail editing, attention detection in `AtlasAgentService`, and summary eligibility. Status options also carry lifecycle descriptors (`Open`, `Review`, `Inactive`, `Closed`) and short descriptions so "active" project lifecycle state is not confused with open task counts. `projects.category` is editable free text; Projects groups by category and uses `Uncategorized` for empty values. The Projects tab also stores operator ordering preferences in `app_meta`: category sort, project sort, pinned category labels, and pinned project IDs.
 
+**Workboard planning is operator-owned.** The Work screen is the primary planning board. Work items and LLM queue rows carry readiness, size, risk, suggested actor, verification needed, next action, planning notes, and last reviewed timestamps. Bulk planning actions are explicit UI actions. Deterministic suggestions are advisory and ready-only; needs-context, needs-decision, blocked, and review-needed items stay in planning/review buckets.
+
 **Legacy Database Compatibility Repair.** `_ensureProjectCompatibilityColumns()` in `AppDb` runs in `beforeOpen` and issues `ALTER TABLE … ADD COLUMN` statements for columns added to the Drift schema after some databases were already created: `project_risks.severity TEXT NOT NULL DEFAULT 'medium'`, `project_risks.desc TEXT`, and `project_risks.ctx TEXT`. These ALTER TABLE calls are wrapped in try/catch so duplicate-column errors are silently ignored. Additionally, `addProjectRisk()` and `addProjectDecision()` catch `SqliteException` containing `'updated_at'` and fall back to a raw `customStatement` INSERT with an explicit timestamp — handling the case where legacy databases have `updated_at NOT NULL` but the newer Drift schema omits it from the generated INSERT.
 
-**Agent boundary is proposal-first, with an explicit LLM queue.** `AtlasAgentService` in `lib/services/atlas_agent_service.dart` is the desktop-side adapter for the future Atlas MCP and the local LLM harness. It exposes read-heavy project operations (`listProjects`, `getProjectStatus`, `getProjectBrief`, stale/attention projects, local refresh preview, git visibility inspection, enrichment run history), persisted LLM queue lifecycle methods, operator-owned queue edit/cancel/requeue methods, and proposal-first write requests saved as drafts with `kind='atlas_agent_proposal'`. `lib/mcp/atlas_mcp_server.dart` maps MCP-style tool calls to that service for reads, Atlas-only enrichment runs, queue enqueue/list/get/claim/complete/fail, and proposal creation; approval/rejection and queue edit/cancel controls are intentionally not exposed to agents. LLM queue tasks can carry linked project media; MCP `get_llm_task` returns the task plus attached media metadata for harness context. Library has an Agent Proposals filter where pending proposals can be approved or rejected. Approval applies supported status, task, and manifest metadata/tag changes through `AppState`; validation approvals are logged; handoff approvals create `project_handoff` drafts. Queue completion can attach a `handoff_record` proposal draft via `proposalBody`, but it does not directly mutate project state. The service does not delete projects, overwrite manifests, push/fetch Git, or mutate discovered repositories; human review remains the approval boundary.
+**Agent boundary is proposal-first, with an explicit LLM queue.** `AtlasAgentService` in `lib/services/atlas_agent_service.dart` is the desktop-side adapter for the future Atlas MCP and the local LLM harness. It exposes read-heavy project operations (`listProjects`, `getProjectStatus`, `getProjectBrief`, stale/attention projects, local refresh preview, git visibility inspection, enrichment run history), persisted LLM queue lifecycle methods, operator-owned queue edit/cancel/requeue methods, and proposal-first write requests saved as drafts with `kind='atlas_agent_proposal'`. `lib/mcp/atlas_mcp_server.dart` maps MCP-style tool calls to that service for reads, Atlas-only enrichment runs, queue enqueue/list/get/claim/complete/fail, read-only Workboard planning views, and proposal creation; approval/rejection and queue edit/cancel controls are intentionally not exposed to agents. LLM queue tasks can carry linked project media; MCP `get_llm_task` returns the task plus attached media metadata for harness context. Library has an Agent Proposals filter where pending proposals can be approved or rejected. Approval applies supported status, task, and manifest metadata/tag changes through `AppState`; validation approvals are logged; handoff approvals create `project_handoff` drafts. Queue completion can attach a `handoff_record` proposal draft via `proposalBody`, but it does not directly mutate project state. The Workboard MCP tools (`atlas.workload_snapshot`, `atlas.project_workload`, `atlas.suggest_next_work`, and `atlas.work_item_context_bundle`) do not claim tasks, complete work, enqueue work, run harness jobs, or mutate queue/project state. The service does not delete projects, overwrite manifests, push/fetch Git, or mutate discovered repositories; human review remains the approval boundary.
 
 **Local Operations Registry is observation-first.** Operations scans are manual only, default to the current working directory, and can include additional operator-selected folders. The scanner defaults to shallow root-first discovery (`maxDepth=2`) and stops descending once it sees a strong project root, which keeps nested folders from flooding the review queue. The scanner records append-only observations and scan-run metadata; reviewed registry rows are created only when the user accepts, links, ignores, or marks a candidate needs-review. Review Candidates defaults to a Needs action queue, hides handled rows, exposes Known/Ignored/All filters, and supports bulk accept, ignore, needs-review, and ignore-descendants actions. Repeat scans attach prior `project_registry` rows to new observations, so known paths stay known and linked paths become refresh work rather than re-triage. Accepted registry rows can create a new Atlas Project or update an existing Atlas Project from the Operations Registered Projects tab. The create-new path now reuses a single exact-title Atlas Project match instead of creating a duplicate; ambiguous matches require the operator to choose Update existing. First import links `project_registry.atlas_project_id`, imports safe root marker docs, and applies the local refresh profile into native Atlas documents, media, source files, card documents, decisions, risks, work items, and project metadata through the refresh ledger. Operations > Enrichment runs the Atlas-owned refresh/audit loop for linked projects, records completeness coverage, and writes open findings for missing or ambiguous details without mutating source repositories. Project Detail can preview/apply the same manual local refresh profile. Project Detail and the Projects list both preview/apply project bundle ZIP export, including Atlas record counts, optional copied file counts, registry/observation/refresh-ledger rows, missing-file warnings, optional bootstrap context, and optional change-log/change-summary artifacts. Scan artifacts can be saved under the app support directory at `operations_scans\` (`runs`, `warnings`, `logs`). The scanner, refresh profile, and enrichment loop do not call BOH, push/fetch Git, run tests, or mutate discovered repositories.
 
@@ -133,14 +135,14 @@ flutter test
 
 ---
 
-## Schema Overview (v19)
+## Schema Overview (v20)
 
 | Table | Purpose |
 |-------|---------|
 | `projects` | Core project records with lifecycle metadata (v5/v6 fields) and category metadata (v18) |
 | `app_meta` | Key-value store for settings and active-state flags |
 | `stages` | Project stages (default 6 per project) |
-| `work_items` | Tasks linked to stages |
+| `work_items` | Tasks linked to stages with Workboard planning metadata (v20) |
 | `work_item_tags` | Tag <-> work item assignments (v13) |
 | `work_item_notes` | Persistent notes on a work item (v7) |
 | `work_item_analyses` | Read-only Ollama analyses on work items (v7) |
@@ -167,7 +169,7 @@ flutter test
 | `project_enrichment_findings` | Open exception/completeness findings from enrichment runs (v15, raw SQL compatibility table) |
 | `project_enrichment_steps` | Worker-level enrichment step ledger (v16, raw SQL compatibility table) |
 | `project_enrichment_proposals` | Worker-level enrichment proposal ledger (v16, raw SQL compatibility table) |
-| `llm_task_queue` | Persisted MCP/local harness queue with claim/complete/fail plus operator edit/cancel/requeue lifecycle (v17, raw SQL compatibility table) |
+| `llm_task_queue` | Persisted MCP/local harness queue with claim/complete/fail, operator edit/cancel/requeue lifecycle, media links, and Workboard planning metadata (v17/v20, raw SQL compatibility table) |
 | `project_runtime_profiles` | Per-project software runtime configuration: launch/stop/test commands, ports, URLs, health checks, capsule settings (v19) |
 | `project_runtime_runs` | Runtime action history with status, exit code, and captured output (v19) |
 
@@ -188,6 +190,8 @@ flutter test
 **v17 addition:** LLM task queue. `llm_task_queue` stores project-scoped pending/leased/completed/failed/cancelled jobs for MCP and the future local harness. The Project Detail screen opens with a collapsible Tasks panel containing normal project tasks and an editable LLM queue subsection; operators can open, move, edit, cancel, and requeue tasks. Editing a leased task clears the lease and returns it to pending so stale worker output cannot complete the corrected task. Queue completion may link to a reviewable agent proposal draft; it does not bypass human approval.
 
 **v19 addition:** Project runtime profiles. `project_runtime_profiles` stores one opt-in runtime configuration per project (working directory, launch/stop/test commands, ports, URLs, health URLs, capsule settings, Dev Launchpad import provenance), and `project_runtime_runs` records each Launch/Test/Capsule action with status, exit code, and output. Project Detail shows a Runtime section with run history; the Projects list shows runtime quick actions colored by the latest run status. Both tables are also created via `CREATE TABLE IF NOT EXISTS` in the startup repair path.
+
+**v20 addition:** Workboard planning metadata. `work_items` gained readiness, size, risk, suggested actor, verification needed, next action, planning notes, and last reviewed timestamp. `llm_task_queue` gained the same planning metadata plus `blocker_reason`. `/work` is now the primary Workboard planning surface, with read-only MCP planning tools for snapshots, project-scoped workloads, ready-only suggestions, and context bundles. Schema 20 is a migration checkpoint for v1.4.0 and should be verified against a real v1.3/schema 19 database before release tagging.
 
 **v18 addition:** Project categories and media links. `projects.category` stores free-text grouping metadata used by Projects and Project Detail. `media_links` attaches existing project media to work items or LLM queue tasks without duplicating the file record. Work Item Detail can attach/unlink media for task context, Project Detail can attach/unlink media on queued LLM tasks, and MCP `get_llm_task` includes attached media metadata for local harness workers.
 
@@ -244,6 +248,9 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 ---
 
 ## Next Steps / Roadmap
+
+Release ordering after v1.4.0: finish project bundle restore/import and
+operational backup restore/import before expanding deeper agent autonomy.
 
 1. **In-app PDF rendering** — integrate `pdfx` (PDFium) for Windows
 2. **Drafts screen** — first-class `/drafts` route in primary nav

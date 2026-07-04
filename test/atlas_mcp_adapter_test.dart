@@ -235,6 +235,9 @@ void main() {
         priority: 'urgent',
         readiness: 'needs_decision',
       );
+      final workItemBefore = await db.getWorkItem(workItemId);
+      final queueRowsBefore = await db.getLlmTasks(projectId: 'atlas');
+      final draftCountBefore = await _rowCount(db, 'drafts');
 
       final snapshot = await adapter.callTool('atlas.workload_snapshot', {
         'actor': 'codex',
@@ -274,6 +277,22 @@ void main() {
       final context = bundle.data as Map;
       expect((context['workItem'] as Map)['id'], workItemId);
       expect((context['linkedLlmTasks'] as List), hasLength(1));
+
+      final workItemAfter = await db.getWorkItem(workItemId);
+      final queueRowsAfter = await db.getLlmTasks(projectId: 'atlas');
+      final draftCountAfter = await _rowCount(db, 'drafts');
+      expect(workItemAfter!.status, workItemBefore!.status);
+      expect(workItemAfter.updatedAt, workItemBefore.updatedAt);
+      expect(
+        queueRowsAfter.map((task) => task.id),
+        queueRowsBefore.map((task) => task.id),
+      );
+      expect(
+        queueRowsAfter.map((task) => task.status),
+        queueRowsBefore.map((task) => task.status),
+      );
+      expect(queueRowsAfter.map((task) => task.leasedBy), everyElement(isNull));
+      expect(draftCountAfter, draftCountBefore);
     });
 
     test('dispatches Atlas-only project enrichment tools', () async {
@@ -456,6 +475,13 @@ void main() {
       expect((result.data as Map)['tool'], 'delete_project');
     });
   });
+}
+
+Future<int> _rowCount(AppDb db, String table) async {
+  final row = await db
+      .customSelect('SELECT COUNT(*) AS count FROM "$table"')
+      .getSingle();
+  return row.data['count'] as int;
 }
 
 Future<void> _insertProjectRegistry(

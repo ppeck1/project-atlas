@@ -20,20 +20,24 @@ This v1.4 slice adds the Workboard Planning Layer:
 
 | Field | Value |
 |---|---|
-| Run ID | `20260704-workboard-planning-layer-v1.4-hardening` |
-| Run State | uncommitted hardening diff in current worktree for review |
+| Run ID | `20260704-v1.4.0-release-stabilization` |
+| Run State | v1.4.0 release stabilization evidence recorded |
 | Last Verified At | 2026-07-04 |
-| Validation State | complete: format, analyze, focused tests, full suite, and diff whitespace checks passed |
-| Git Head Before Hardening | `410c8f8 Add v1.4 Workboard planning layer` |
+| Validation State | complete locally: docs refresh, schema 20 migration checkpoint, screenshot file audit, format, analyze, focused tests, full suite, release build, and Windows ZIP asset |
+| Release Commit | this release stabilization commit |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
 ## Validation Evidence
 
-- `dart format --output=none --set-exit-if-changed lib test`: pass, 69 files checked, 0 changed.
+- Real v1.3/schema 19 DB migration checkpoint: `flutter test --dart-define=ATLAS_SCHEMA20_SOURCE_DB=... --dart-define=ATLAS_SCHEMA20_EVIDENCE_PATH=... test\schema20_real_migration_test.dart --concurrency=1 --reporter expanded` passed. Evidence shows `userVersion` 19 -> 20, Workboard columns present on `work_items` and `llm_task_queue`, and existing row counts preserved. Source DB SHA-256: `5524F901414BC67A68BFE4E5C08B1904673C9FDAD7EAACA9BCF4F7CA3EEAE732`. Private evidence JSON SHA-256: `AE73D9F8AF20180F981960559BA2489B1865E4926038184A3B28C636BB6FD96E`.
+- Screenshot file audit and visual spot-check: all README screenshots present under `docs/screenshots/` with July 3, 2026 timestamps (`today.png`, `projects.png`, `operations.png`, `library.png`, `settings.png`); Today and Projects captures show the current v1.4 navigation, Workboard/project detail actions, LLM queue, runtime controls, and Library evidence surfaces.
+- `dart format --output=none --set-exit-if-changed lib test`: pass, 70 files checked, 0 changed.
 - `flutter analyze`: pass, no issues found.
-- `flutter test test\workload_planning_test.dart test\atlas_mcp_adapter_test.dart test\create_work_item_dialog_test.dart --concurrency=1`: pass, 16 tests passed.
-- `flutter test --concurrency=1`: pass, 215 tests passed.
+- Focused release tests: `flutter test test\workload_planning_test.dart test\atlas_mcp_adapter_test.dart test\create_work_item_dialog_test.dart test\schema20_real_migration_test.dart --concurrency=1 --reporter expanded`: pass, 16 tests passed and the real-DB checkpoint skipped in normal mode.
+- Full suite: `flutter test --concurrency=1 --reporter expanded`: pass, 215 tests passed and 1 skipped env-gated migration checkpoint.
 - `git diff --check`: pass.
+- `flutter build windows --release`: pass, built `build\windows\x64\runner\Release\project_atlas.exe`.
+- Windows release asset: `atlas-windows-v1.4.0.zip`, 15,901,566 bytes, SHA-256 `F365A9EC9B9E6D910E2D946D46AA6FD34C6960497E07F685C981C9F934A4A334`.
 
 ## Implemented Slice
 
@@ -56,7 +60,8 @@ Create flows now expose the workload fields consistently from Workboard, Project
 - Generated Drift output is intentionally ignored by this repo. It was regenerated locally with `dart run build_runner build`; future checkouts must regenerate after schema changes.
 - The Workboard is operator-driven only. There is no LLM Harness execution integration in this slice.
 - The deterministic scoring is intentionally simple and may need tuning after live planning use.
+- Restore/import is not implemented yet and should be the next feature lane before deeper agent autonomy.
 
 ## Next Best Action
 
-Review the v1.4 hardening diff, then commit it separately from the initial Workboard planning layer.
+After v1.4.0 publication, start restore/import: project bundle ZIP restore first, then operational backup ZIP restore, before deeper agent autonomy.
