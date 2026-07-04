@@ -123,7 +123,7 @@ class AtlasMcpAdapter {
     AtlasMcpTool(
       name: 'atlas.project_workload',
       description:
-          'Read one project workload board, snapshot counts, and deterministic next-work suggestions.',
+          'Read one project workload board, snapshot counts, ready execution candidates, and separate planning candidates.',
       inputSchema: {
         'type': 'object',
         'properties': {
@@ -144,7 +144,7 @@ class AtlasMcpAdapter {
     AtlasMcpTool(
       name: 'atlas.suggest_next_work',
       description:
-          'Return deterministic next work candidates, excluding review-needed items from execution candidates.',
+          'Return deterministic ready execution candidates only. Blocked, decision, context, review, in-progress, and closed items are excluded.',
       inputSchema: {
         'type': 'object',
         'properties': {

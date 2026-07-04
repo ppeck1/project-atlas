@@ -100,7 +100,7 @@ Key-value store for all runtime settings and active-state flags.
 | `phone_queue` | BOOLEAN | `false` | Sends item to Today → Phone Queue section. |
 | `completed` | BOOLEAN | `false` | Legacy bool; `status='done'` is canonical. Both are updated together for backwards compat. |
 | `readiness` | TEXT | `'ready'` | Added v20. Planning value: `ready\|blocked\|needs_decision\|needs_context\|review_needed`. Board grouping derives from this plus status/blocker state. |
-| `size` | TEXT | `'medium'` | Added v20. Planning estimate: `tiny\|small\|medium\|large`. Used by deterministic next-work scoring. |
+| `size` | TEXT | `'medium'` | Added v20. Planning estimate: `tiny\|small\|medium\|large`. Used by deterministic execution/planning candidate scoring. |
 | `risk` | TEXT | `'low_code'` | Added v20. Planning risk: `docs_only\|low_code\|medium_code\|db_schema\|release\|external_facing`. |
 | `suggested_actor` | TEXT | `'user'` | Added v20. Suggested handler: `user\|codex\|claude\|local_llm\|manual_review`. Advisory only. |
 | `verification_needed` | TEXT | `'none'` | Added v20. Expected verification: `none\|tests\|smoke\|build\|manual_ui`. |
@@ -658,7 +658,7 @@ Persisted queue for MCP/local harness LLM jobs attached to Atlas projects and op
 
 ### `project_runtime_profiles`
 
-Per-project software runtime configuration (v19). One row per project (`UNIQUE(project_id)`). Also created via `CREATE TABLE IF NOT EXISTS` in the startup repair path.
+Per-project software runtime configuration. Added v19; current database schema is v20. One row per project (`UNIQUE(project_id)`). Also created via `CREATE TABLE IF NOT EXISTS` in the startup repair path.
 
 | Column | Type | Default | Notes / Quirks |
 |--------|------|---------|----------------|
@@ -690,7 +690,7 @@ Per-project software runtime configuration (v19). One row per project (`UNIQUE(p
 
 ### `project_runtime_runs`
 
-Append-style history of runtime actions (v19). Indexed by `(project_id, started_at DESC)`.
+Append-style history of runtime actions. Added v19; current database schema is v20. Indexed by `(project_id, started_at DESC)`.
 
 | Column | Type | Default | Notes / Quirks |
 |--------|------|---------|----------------|
@@ -762,7 +762,7 @@ Located at `lib/shared/models/app_state.dart`. Wraps `AppDb` and adds reactive s
 | Method | Returns | Notes |
 |--------|---------|-------|
 | `getWorkloadCards()` | `Future<List<WorkloadCard>>` | Builds a combined planning card list from visible projects, stages, work items, and LLM queue rows. |
-| `getWorkloadSnapshot({filters, now, suggestionLimit})` | `Future<WorkloadSnapshot>` | Applies Workboard filters and returns counts, actor/risk breakdowns, stale count, review-needed items, and deterministic next-work suggestions. Read-only. |
+| `getWorkloadSnapshot({filters, now, suggestionLimit})` | `Future<WorkloadSnapshot>` | Applies Workboard filters and returns counts, actor/risk breakdowns, stale count, ready-only execution candidates, separate planning candidates, and review-needed items. Read-only. |
 | `updateWorkloadPlanning({items, ...})` | `Future<void>` | Bulk metadata update for selected work items and queue rows. Does not change queue lease/result fields. |
 | `markWorkloadReviewedToday(items, {reviewedAt})` | `Future<void>` | Sets `last_reviewed_at` for selected work items/queue rows. |
 | `createLlmTaskFromWorkItem(workItemId)` | `Future<String>` | Operator action that creates a pending queue row linked to a work item, carrying planning metadata into the queue item. |
@@ -891,8 +891,8 @@ Pure Dart planning model and deterministic scoring helpers used by Workboard, `A
 | `workloadVerificationValues` | `List<String>` | `none`, `tests`, `smoke`, `build`, `manual_ui`. |
 | `WorkloadFilters` | DTO | Project/readiness/actor/risk/size filters plus blocked/review/stale/high-priority booleans. |
 | `WorkloadCard` | DTO | Normalized card for work items and LLM queue rows. Includes project, status, planning metadata, queue linkage, stale state, and score. |
-| `WorkloadSnapshot` | DTO | Filtered cards, grouped counts, actor/risk breakdowns, stale count, review-needed cards, and suggested next cards. |
-| `WorkloadPlanner.scoreCard()` | deterministic scoring | Ready before needs-context/needs-decision before blocked; then priority, size, risk, due date, and stale review state. Review-needed/done/in-progress cards are not execution candidates. |
+| `WorkloadSnapshot` | DTO | Filtered cards, grouped counts, actor/risk breakdowns, stale count, ready-only execution candidates, separate planning candidates, and review-needed cards. |
+| `WorkloadPlanner.scoreCard()` | deterministic scoring | Used to sort ready execution candidates and separate planning candidates. Blocked, review-needed, done/closed, and in-progress cards are not execution candidates. |
 
 ### AtlasAgentService (`lib/services/atlas_agent_service.dart`)
 
@@ -907,9 +907,9 @@ Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `A
 | `getProjectCapsuleStatus(projectId)` | `Future<AtlasCapsuleStatus?>` | Reads linked repo `.project/project_manifest.json`, `.project/ops_capsule.json`, local run-ledger/outbox evidence counts, and availability states through the read-only resolver. |
 | `getProjectBootstrapContext(projectId)` | `Future<AtlasProjectBootstrapContext?>` | Versioned agent startup packet (`atlas.project_bootstrap_context.v1`) combining identity, brief, capsule status, pending LLM tasks, pending proposals, recommended next action, confidence, and gaps. |
 | `getStaleProjects()` | `Future<List<AtlasProjectStatus>>` | Returns projects whose status or blocked work indicates attention. |
-| `workloadSnapshot({filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only Workboard snapshot across projects. Returns cards, counts, actor/risk breakdowns, stale count, review-needed list, and deterministic next-work candidates. |
+| `workloadSnapshot({filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only Workboard snapshot across projects. Returns cards, counts, actor/risk breakdowns, stale count, ready-only execution candidates, separate planning candidates, and review-needed list. |
 | `projectWorkload(projectId, {filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only project-scoped Workboard snapshot. Validates visible project. |
-| `suggestNextWork({projectId, limit})` | `Future<List<Map<String,Object?>>>` | Deterministic next-work card list. Excludes review-needed cards from execution candidates. |
+| `suggestNextWork({projectId, limit})` | `Future<List<Map<String,Object?>>>` | Deterministic ready-only execution candidate list. Excludes blocked, needs-decision, needs-context, review-needed, in-progress, and done/closed cards. |
 | `workItemContextBundle(workItemId)` | `Future<Map<String,Object?>>` | Read-only work item context bundle for MCP. Includes linked LLM queue rows and local attachments/notes/analyses. |
 | `refreshLinkedLocalProjects({includeSourceDocuments})` | `Future<LocalProjectBatchRefreshResult>` | Delegates to the existing linked-local refresh workflow. |
 | `runProjectEnrichment({refreshLinkedProjects, includeSourceDocuments})` | `Future<ProjectEnrichmentRunResult>` | Delegates to the Atlas-only enrichment workflow. Refreshes Atlas records and records findings; source repositories are not mutated. |
@@ -1180,7 +1180,8 @@ WorkScreen
     -> WorkloadPlanner.snapshot()
       -> filters by project/readiness/actor/risk/size/blocked/review/stale/high-priority
       -> counts Ready/Blocked/Review/Stale and breakdowns by actor/risk
-      -> deterministic suggested next work
+      -> deterministic ready execution candidates
+      -> separate planning candidates
 ```
 
 ### Workboard Bulk Planning

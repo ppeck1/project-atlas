@@ -191,6 +191,14 @@ class _WorkScreenState extends State<WorkScreen> {
       status: normalizeStatusValue(draft['status']),
       priority: normalizePriorityValue(draft['priority']),
       dueAt: dueAt,
+      blockedReason: draft['blockedReason'],
+      readiness: draft['readiness'] ?? 'ready',
+      size: draft['size'] ?? 'medium',
+      risk: draft['risk'] ?? 'low_code',
+      suggestedActor: draft['suggestedActor'] ?? 'user',
+      verificationNeeded: draft['verificationNeeded'] ?? 'none',
+      nextAction: draft['nextAction'],
+      planningNotes: draft['planningNotes'],
     );
     if (mounted) _reload(clearSelection: true);
   }
@@ -668,12 +676,12 @@ class _SnapshotPanel extends StatelessWidget {
           _Breakdown(label: 'Actor', values: snapshot.tasksByActor),
           _Breakdown(label: 'Risk', values: snapshot.tasksByRisk),
           SizedBox(
-            width: 420,
+            width: 360,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Suggested next',
+                  'Execution candidates',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
                 ),
                 const SizedBox(height: 4),
@@ -684,6 +692,35 @@ class _SnapshotPanel extends StatelessWidget {
                   )
                 else
                   ...snapshot.suggestedNextItems
+                      .take(5)
+                      .map(
+                        (card) => Text(
+                          '${card.projectTitle}: ${card.title}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: 360,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Planning candidates',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                ),
+                const SizedBox(height: 4),
+                if (snapshot.planningCandidateItems.isEmpty)
+                  const Text(
+                    'No decision/context candidates match the filters.',
+                    style: TextStyle(fontSize: 12, color: Colors.white54),
+                  )
+                else
+                  ...snapshot.planningCandidateItems
                       .take(5)
                       .map(
                         (card) => Text(
@@ -813,7 +850,7 @@ class _BoardColumn extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = _groupColor(group);
     return SizedBox(
-      width: 310,
+      width: 336,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -923,6 +960,7 @@ class _WorkloadCardTile extends StatelessWidget {
                   ),
                 ],
               ),
+              const SizedBox(height: 2),
               Text(
                 card.title,
                 maxLines: 2,
@@ -1126,16 +1164,21 @@ class _ChipText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.white.withAlpha(18),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Text(
-        workloadLabel(label),
-        style: const TextStyle(fontSize: 10, color: Colors.white70),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 132),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.white.withAlpha(18),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Text(
+          workloadLabel(label),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 10, color: Colors.white70),
+        ),
       ),
     );
   }

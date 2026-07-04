@@ -49,21 +49,33 @@ class _ContactOwnerFieldState extends State<ContactOwnerField> {
         final items = <DropdownMenuItem<String>>[
           const DropdownMenuItem(value: null, child: Text('No owner')),
           ...contacts.map(
-            (c) => DropdownMenuItem(value: c.name, child: Text(c.name)),
+            (c) => DropdownMenuItem(
+              value: c.name,
+              child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
           ),
           if (selected != null && !names.contains(selected))
             DropdownMenuItem(
               value: '__manual__$selected',
-              child: Text('$selected (manual)'),
+              child: Text(
+                '$selected (manual)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           const DropdownMenuItem(
             value: '__create__',
-            child: Text('Create contact...'),
+            child: Text(
+              'Create contact...',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ];
 
         return DropdownButtonFormField<String>(
           value: dropdownValue,
+          isExpanded: true,
           decoration: InputDecoration(
             labelText: widget.label,
             border: const OutlineInputBorder(),

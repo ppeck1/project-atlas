@@ -56,7 +56,7 @@ void main() {
       expect(task.lastReviewedAt, isNull);
     });
 
-    test('filters and scores deterministic next work', () async {
+    test('filters and scores ready-only deterministic next work', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
       final stage = (await db.getStagesForProject('atlas')).single;
       final readyId = await db.addWorkItem(
@@ -86,13 +86,25 @@ void main() {
         risk: 'db_schema',
         suggestedActor: 'user',
       );
+      final decisionId = await db.addWorkItem(
+        stageId: stage.id,
+        title: 'Pick release owner',
+        priority: 'urgent',
+      );
+      await db.updateWorkItem(
+        id: decisionId,
+        readiness: 'needs_decision',
+        size: 'tiny',
+        risk: 'docs_only',
+        suggestedActor: 'user',
+      );
       final reviewId = await db.addWorkItem(
         stageId: stage.id,
         title: 'Review generated handoff',
         priority: 'normal',
       );
       await db.updateWorkItem(id: reviewId, readiness: 'review_needed');
-      await db.enqueueLlmTask(
+      final queueId = await db.enqueueLlmTask(
         projectId: 'atlas',
         workItemId: readyId,
         title: 'Queue context draft',
@@ -118,13 +130,37 @@ void main() {
       expect(snapshot.readyTasks, 1);
       expect(snapshot.blockedTasks, 1);
       expect(snapshot.reviewNeededTasks, 1);
-      expect(snapshot.staleTasks, 4);
+      expect(snapshot.staleTasks, 5);
       expect(codexOnly.cards.map((card) => card.id), [readyId]);
       expect(blockedOnly.cards.map((card) => card.id), [blockedId]);
       expect(snapshot.suggestedNextItems.first.id, readyId);
+      expect(snapshot.suggestedNextItems.map((card) => card.id), [readyId]);
+      expect(
+        snapshot.planningCandidateItems.map((card) => card.id),
+        containsAll([decisionId, queueId]),
+      );
+      final json = snapshot.toJson();
+      expect(
+        ((json['executionCandidates'] as List).first as Map)['id'],
+        readyId,
+      );
+      expect(
+        (json['planningCandidateItems'] as List).map(
+          (item) => (item as Map)['id'],
+        ),
+        containsAll([decisionId, queueId]),
+      );
       expect(
         snapshot.suggestedNextItems.map((card) => card.id),
         isNot(contains(reviewId)),
+      );
+      expect(
+        snapshot.suggestedNextItems.map((card) => card.id),
+        isNot(contains(blockedId)),
+      );
+      expect(
+        snapshot.suggestedNextItems.map((card) => card.id),
+        isNot(contains(decisionId)),
       );
     });
 

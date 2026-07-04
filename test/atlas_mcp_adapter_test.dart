@@ -229,6 +229,12 @@ void main() {
         contextJson: '{}',
         readiness: 'needs_context',
       );
+      final decisionItemId = await db.addWorkItem(
+        stageId: stage.id,
+        title: 'Choose reviewer',
+        priority: 'urgent',
+        readiness: 'needs_decision',
+      );
 
       final snapshot = await adapter.callTool('atlas.workload_snapshot', {
         'actor': 'codex',
@@ -252,9 +258,18 @@ void main() {
         1,
       );
       expect(projectWorkload.isError, isFalse);
-      expect(((projectWorkload.data as Map)['cards'] as List), hasLength(2));
+      expect(((projectWorkload.data as Map)['cards'] as List), hasLength(3));
       expect(suggestions.isError, isFalse);
-      expect(((suggestions.data as List).first as Map)['id'], workItemId);
+      final suggestedIds = (suggestions.data as List)
+          .map((item) => (item as Map)['id'])
+          .toList(growable: false);
+      expect(suggestedIds, [workItemId]);
+      expect(suggestedIds, isNot(contains(decisionItemId)));
+      final planningIds =
+          ((projectWorkload.data as Map)['planningCandidateItems'] as List)
+              .map((item) => (item as Map)['id'])
+              .toList(growable: false);
+      expect(planningIds, contains(decisionItemId));
       expect(bundle.isError, isFalse);
       final context = bundle.data as Map;
       expect((context['workItem'] as Map)['id'], workItemId);

@@ -287,6 +287,14 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       status: normalizeStatusValue(draft['status']),
       priority: normalizePriorityValue(draft['priority']),
       dueAt: dueAt,
+      blockedReason: draft['blockedReason'],
+      readiness: draft['readiness'] ?? 'ready',
+      size: draft['size'] ?? 'medium',
+      risk: draft['risk'] ?? 'low_code',
+      suggestedActor: draft['suggestedActor'] ?? 'user',
+      verificationNeeded: draft['verificationNeeded'] ?? 'none',
+      nextAction: draft['nextAction'],
+      planningNotes: draft['planningNotes'],
     );
     await _loadAll();
   }

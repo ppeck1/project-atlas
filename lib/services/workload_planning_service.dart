@@ -265,6 +265,7 @@ class WorkloadSnapshot {
   final WorkloadFilters filters;
   final List<WorkloadCard> cards;
   final List<WorkloadCard> suggestedNextItems;
+  final List<WorkloadCard> planningCandidateItems;
   final List<WorkloadCard> reviewNeededItems;
   final Map<String, int> countsByGroup;
   final Map<String, int> tasksByActor;
@@ -276,6 +277,7 @@ class WorkloadSnapshot {
     required this.filters,
     required this.cards,
     required this.suggestedNextItems,
+    required this.planningCandidateItems,
     required this.reviewNeededItems,
     required this.countsByGroup,
     required this.tasksByActor,
@@ -302,6 +304,12 @@ class WorkloadSnapshot {
       'byRisk': tasksByRisk,
     },
     'suggestedNextItems': suggestedNextItems
+        .map((card) => card.toJson(now: generatedAt))
+        .toList(growable: false),
+    'executionCandidates': suggestedNextItems
+        .map((card) => card.toJson(now: generatedAt))
+        .toList(growable: false),
+    'planningCandidateItems': planningCandidateItems
         .map((card) => card.toJson(now: generatedAt))
         .toList(growable: false),
     'reviewNeededItems': reviewNeededItems
@@ -455,8 +463,15 @@ class WorkloadPlanner {
       byRisk[card.risk] = (byRisk[card.risk] ?? 0) + 1;
       if (card.isStale(generatedAt)) stale++;
     }
-    final candidates =
+    final executionCandidates =
         filtered.where(_isExecutionCandidate).toList(growable: false)
+          ..sort((a, b) {
+            final score = a.score(generatedAt).compareTo(b.score(generatedAt));
+            if (score != 0) return score;
+            return b.updatedAt.compareTo(a.updatedAt);
+          });
+    final planningCandidates =
+        filtered.where(_isPlanningCandidate).toList(growable: false)
           ..sort((a, b) {
             final score = a.score(generatedAt).compareTo(b.score(generatedAt));
             if (score != 0) return score;
@@ -471,7 +486,12 @@ class WorkloadPlanner {
       generatedAt: generatedAt,
       filters: filters,
       cards: List.unmodifiable(filtered),
-      suggestedNextItems: List.unmodifiable(candidates.take(suggestionLimit)),
+      suggestedNextItems: List.unmodifiable(
+        executionCandidates.take(suggestionLimit),
+      ),
+      planningCandidateItems: List.unmodifiable(
+        planningCandidates.take(suggestionLimit),
+      ),
       reviewNeededItems: List.unmodifiable(reviewNeeded.take(suggestionLimit)),
       countsByGroup: Map.unmodifiable(countsByGroup),
       tasksByActor: Map.unmodifiable(byActor),
@@ -598,9 +618,11 @@ class WorkloadPlanner {
   }
 
   static bool _isExecutionCandidate(WorkloadCard card) =>
-      card.boardGroup == 'ready' ||
-      card.boardGroup == 'needs_decision' ||
-      card.boardGroup == 'blocked';
+      card.boardGroup == 'ready';
+
+  static bool _isPlanningCandidate(WorkloadCard card) =>
+      card.boardGroup == 'needs_decision' &&
+      (card.readiness == 'needs_decision' || card.readiness == 'needs_context');
 
   static int _groupRank(String group) => switch (group) {
     'ready' => 0,

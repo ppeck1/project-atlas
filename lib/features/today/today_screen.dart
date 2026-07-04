@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../db/app_db.dart';
+import '../../services/workload_planning_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/widgets/contact_picker.dart';
@@ -232,7 +233,15 @@ class _TodayScreenState extends State<TodayScreen> {
         priority: draft.priority,
         dueAt: draft.dueAt,
         source: 'today_quick_add',
+        blockedReason: draft.blockedReason,
         tagIds: tagIds,
+        readiness: draft.readiness,
+        size: draft.size,
+        risk: draft.risk,
+        suggestedActor: draft.suggestedActor,
+        verificationNeeded: draft.verificationNeeded,
+        nextAction: draft.nextAction,
+        planningNotes: draft.planningNotes,
       );
     } else {
       await state.addWorkItemToProject(
@@ -244,7 +253,15 @@ class _TodayScreenState extends State<TodayScreen> {
         priority: draft.priority,
         dueAt: draft.dueAt,
         source: 'today_quick_add',
+        blockedReason: draft.blockedReason,
         tagIds: tagIds,
+        readiness: draft.readiness,
+        size: draft.size,
+        risk: draft.risk,
+        suggestedActor: draft.suggestedActor,
+        verificationNeeded: draft.verificationNeeded,
+        nextAction: draft.nextAction,
+        planningNotes: draft.planningNotes,
       );
     }
     if (!mounted) return;
@@ -837,8 +854,16 @@ class _TodayTaskDraft {
   final String status;
   final String priority;
   final DateTime? dueAt;
+  final String? blockedReason;
   final Set<String> tagIds;
   final List<String> newTagNames;
+  final String readiness;
+  final String size;
+  final String risk;
+  final String suggestedActor;
+  final String verificationNeeded;
+  final String? nextAction;
+  final String? planningNotes;
 
   const _TodayTaskDraft({
     required this.projectId,
@@ -848,8 +873,16 @@ class _TodayTaskDraft {
     required this.status,
     required this.priority,
     required this.dueAt,
+    required this.blockedReason,
     required this.tagIds,
     required this.newTagNames,
+    required this.readiness,
+    required this.size,
+    required this.risk,
+    required this.suggestedActor,
+    required this.verificationNeeded,
+    required this.nextAction,
+    required this.planningNotes,
   });
 }
 
@@ -868,9 +901,17 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
   final _description = TextEditingController();
   final _owner = TextEditingController();
   final _newTags = TextEditingController();
+  final _blockedReason = TextEditingController();
+  final _nextAction = TextEditingController();
+  final _planningNotes = TextEditingController();
   String? _projectId;
   String _status = 'next';
   String _priority = 'normal';
+  String _readiness = 'ready';
+  String _size = 'medium';
+  String _risk = 'low_code';
+  String _suggestedActor = 'user';
+  String _verificationNeeded = 'none';
   DateTime? _dueAt;
   final _tagIds = <String>{};
 
@@ -880,6 +921,9 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
     _description.dispose();
     _owner.dispose();
     _newTags.dispose();
+    _blockedReason.dispose();
+    _nextAction.dispose();
+    _planningNotes.dispose();
     super.dispose();
   }
 
@@ -895,6 +939,7 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
             children: [
               DropdownButtonFormField<String>(
                 value: _projectId ?? '',
+                isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Project',
                   border: OutlineInputBorder(),
@@ -907,7 +952,11 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
                   for (final project in widget.projects)
                     DropdownMenuItem(
                       value: project.id,
-                      child: Text(project.title),
+                      child: Text(
+                        project.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                 ],
                 onChanged: (value) => setState(
@@ -941,6 +990,7 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       value: _status,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: 'Status',
                         border: OutlineInputBorder(),
@@ -952,7 +1002,11 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
                         ))
                           DropdownMenuItem(
                             value: option.value,
-                            child: Text(option.label),
+                            child: Text(
+                              option.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                       ],
                       onChanged: (value) {
@@ -964,6 +1018,7 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       value: _priority,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         labelText: 'Priority',
                         border: OutlineInputBorder(),
@@ -972,7 +1027,11 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
                         for (final option in priorityOptions)
                           DropdownMenuItem(
                             value: option.value,
-                            child: Text(option.label),
+                            child: Text(
+                              option.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                       ],
                       onChanged: (value) {
@@ -1017,6 +1076,88 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _blockedReason,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Blocker reason',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _PlanningDropdown(
+                      label: 'Readiness',
+                      value: _readiness,
+                      values: workloadReadinessValues,
+                      onChanged: (value) => setState(() => _readiness = value),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _PlanningDropdown(
+                      label: 'Size',
+                      value: _size,
+                      values: workloadSizeValues,
+                      onChanged: (value) => setState(() => _size = value),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _PlanningDropdown(
+                      label: 'Risk',
+                      value: _risk,
+                      values: workloadRiskValues,
+                      onChanged: (value) => setState(() => _risk = value),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _PlanningDropdown(
+                      label: 'Actor',
+                      value: _suggestedActor,
+                      values: workloadActorValues,
+                      onChanged: (value) =>
+                          setState(() => _suggestedActor = value),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              _PlanningDropdown(
+                label: 'Verification needed',
+                value: _verificationNeeded,
+                values: workloadVerificationValues,
+                onChanged: (value) =>
+                    setState(() => _verificationNeeded = value),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _nextAction,
+                minLines: 2,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Next action',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _planningNotes,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Planning notes',
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
               Align(
@@ -1085,8 +1226,16 @@ class _TodayTaskDialogState extends State<_TodayTaskDialog> {
         status: normalizeStatusValue(_status),
         priority: normalizePriorityValue(_priority),
         dueAt: _dueAt,
+        blockedReason: _blankToNull(_blockedReason.text),
         tagIds: Set.unmodifiable(_tagIds),
         newTagNames: _splitTagNames(_newTags.text),
+        readiness: normalizeWorkloadReadiness(_readiness),
+        size: normalizeWorkloadSize(_size),
+        risk: normalizeWorkloadRisk(_risk),
+        suggestedActor: normalizeWorkloadActor(_suggestedActor),
+        verificationNeeded: normalizeWorkloadVerification(_verificationNeeded),
+        nextAction: _blankToNull(_nextAction.text),
+        planningNotes: _blankToNull(_planningNotes.text),
       ),
     );
   }
@@ -1097,6 +1246,47 @@ class _TaskTagSelection {
   final List<String> newTagNames;
 
   const _TaskTagSelection({required this.tagIds, required this.newTagNames});
+}
+
+class _PlanningDropdown extends StatelessWidget {
+  final String label;
+  final String value;
+  final List<String> values;
+  final ValueChanged<String> onChanged;
+
+  const _PlanningDropdown({
+    required this.label,
+    required this.value,
+    required this.values,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+      items: values
+          .map(
+            (value) => DropdownMenuItem(
+              value: value,
+              child: Text(
+                workloadLabel(value),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
+      onChanged: (value) {
+        if (value != null) onChanged(value);
+      },
+    );
+  }
 }
 
 class _TaskTagDialog extends StatefulWidget {
