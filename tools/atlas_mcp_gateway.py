@@ -35,6 +35,8 @@ DEFAULT_ALLOWED_TOOLS = {
 AUTH_MODE_STATIC = "static"
 AUTH_MODE_OAUTH = "oauth"
 DEFAULT_OAUTH_SCOPE = "atlas.read"
+DEFAULT_UNSAFE_BIND_HOSTS = {"0.0.0.0"}
+LOCALHOST_NAMES = {"localhost"}
 
 SENSITIVE_READ_TOOLS = {
     "get_project_brief",
@@ -350,12 +352,14 @@ class GatewayState:
         token: str | None,
         timeout: int,
         auth_mode: str,
+        allowed_origins: set[str],
         oauth_config: OAuthConfig | None = None,
     ) -> None:
         self.client = StdioMcpClient(exe, timeout)
         self.token = token
         self.auth_mode = auth_mode
         self.oauth_config = oauth_config
+        self.allowed_origins = allowed_origins
         if auth_mode == AUTH_MODE_OAUTH:
             if oauth_config is None:
                 raise ValueError("oauth_config is required for oauth mode")
@@ -407,6 +411,70 @@ def _split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    normalized = host.strip("[]").lower()
+    if normalized in LOCALHOST_NAMES:
+        return True
+    try:
+        import ipaddress
+
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_loopback_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    return parsed.scheme == "http" and _is_loopback_host(parsed.hostname)
+
+
+def _normalize_origin(origin: str) -> str:
+    parsed = urllib.parse.urlparse(origin.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"invalid origin: {origin}")
+    hostname = parsed.hostname.lower()
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    default_port = 443 if parsed.scheme == "https" else 80
+    port = "" if parsed.port in {None, default_port} else f":{parsed.port}"
+    return f"{parsed.scheme}://{hostname}{port}"
+
+
+def validate_bind_host(host: str, unsafe_bind_all: bool) -> None:
+    if host in DEFAULT_UNSAFE_BIND_HOSTS and not unsafe_bind_all:
+        raise ValueError(
+            "Refusing to bind MCP gateway to 0.0.0.0 without "
+            "--unsafe-bind-all. Use 127.0.0.1 behind a tunnel."
+        )
+
+
+def validate_oauth_resource_url(resource_url: str) -> None:
+    parsed = urllib.parse.urlparse(resource_url)
+    if parsed.scheme == "https" and parsed.hostname:
+        return
+    if _is_loopback_url(resource_url):
+        return
+    raise ValueError(
+        "Refusing OAuth --resource-url that is not HTTPS. "
+        "Only localhost HTTP is allowed for smoke tests."
+    )
+
+
+def build_allowed_origins(
+    host: str,
+    port: int,
+    explicit_origins: list[str],
+    oauth_config: OAuthConfig | None,
+) -> set[str]:
+    origins = {_normalize_origin(f"http://{host}:{port}")}
+    if oauth_config is not None:
+        origins.add(_normalize_origin(oauth_config.resource_url))
+    origins.update(_normalize_origin(origin) for origin in explicit_origins)
+    return origins
 
 
 def redact_gateway_payload(value: Any) -> Any:
@@ -540,6 +608,9 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             )
             return
         if self.path == "/mcp":
+            if not self._origin_allowed():
+                self._send_forbidden_origin()
+                return
             if not self._authorized():
                 self._send_unauthorized()
                 return
@@ -558,6 +629,9 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path != "/mcp":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        if not self._origin_allowed():
+            self._send_forbidden_origin()
             return
         if not self._authorized():
             self._send_unauthorized()
@@ -644,6 +718,20 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             logging.warning("MCP gateway auth rejected: %s", reason)
         return ok
 
+    def _origin_allowed(self) -> bool:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        try:
+            normalized_origin = _normalize_origin(origin)
+        except ValueError:
+            logging.warning("MCP gateway rejected invalid Origin: %s", origin)
+            return False
+        if normalized_origin not in self.state.allowed_origins:
+            logging.warning("MCP gateway rejected Origin: %s", normalized_origin)
+            return False
+        return True
+
     def _auth_metadata(self) -> dict[str, Any]:
         if self.state.oauth_config is None:
             return {"type": "bearer", "mode": "static-dev"}
@@ -678,6 +766,12 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             HTTPStatus.UNAUTHORIZED,
             {"error": "unauthorized"},
             headers=headers,
+        )
+
+    def _send_forbidden_origin(self) -> None:
+        self._send_json(
+            HTTPStatus.FORBIDDEN,
+            {"error": "forbidden_origin"},
         )
 
     def _www_authenticate_value(self) -> str:
@@ -723,6 +817,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4874)
+    parser.add_argument(
+        "--unsafe-bind-all",
+        action="store_true",
+        help="Allow binding the gateway to 0.0.0.0 for explicit local dev only.",
+    )
     parser.add_argument("--exe", type=Path, default=Path(os.environ.get("PROJECT_ATLAS_EXE", default_exe_path())))
     parser.add_argument(
         "--auth-mode",
@@ -734,6 +833,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--resource-url",
         default=os.environ.get("ATLAS_MCP_RESOURCE_URL"),
         help="Canonical public HTTPS origin for OAuth protected-resource metadata.",
+    )
+    parser.add_argument(
+        "--allowed-origin",
+        action="append",
+        default=[],
+        help="Additional allowed Origin for /mcp requests. May be passed multiple times.",
     )
     parser.add_argument(
         "--authorization-server",
@@ -769,6 +874,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     oauth_config = None
+    explicit_allowed_origins = [
+        *(_split_csv(os.environ.get("ATLAS_MCP_ALLOWED_ORIGINS"))),
+        *[item.rstrip("/") for item in args.allowed_origin if item],
+    ]
+    try:
+        validate_bind_host(args.host, args.unsafe_bind_all)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
     if args.auth_mode == AUTH_MODE_STATIC and not args.token:
         print(
             "Refusing to start: set ATLAS_MCP_GATEWAY_TOKEN or pass --token.",
@@ -787,6 +901,11 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        try:
+            validate_oauth_resource_url(args.resource_url)
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return 2
         oauth_config = OAuthConfig(
             resource_url=args.resource_url,
             authorization_servers=authorization_servers,
@@ -796,11 +915,22 @@ def main(argv: list[str] | None = None) -> int:
             introspection_client_id=args.introspection_client_id,
             introspection_client_secret=args.introspection_client_secret,
         )
+    try:
+        allowed_origins = build_allowed_origins(
+            args.host,
+            args.port,
+            explicit_allowed_origins,
+            oauth_config,
+        )
+    except ValueError as error:
+        print(f"Refusing to start: {error}", file=sys.stderr)
+        return 2
     state = GatewayState(
         args.exe,
         args.token,
         args.timeout,
         args.auth_mode,
+        allowed_origins,
         oauth_config,
     )
     server = GatewayServer((args.host, args.port), McpGatewayHandler, state)

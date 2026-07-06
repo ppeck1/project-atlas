@@ -125,8 +125,9 @@ def request_json(
     url: str,
     payload: dict[str, Any] | None = None,
     token: str | None = None,
+    origin: str | None = None,
 ) -> tuple[int, Any]:
-    status, body, _headers = request_json_with_headers(url, payload, token)
+    status, body, _headers = request_json_with_headers(url, payload, token, origin)
     return status, body
 
 
@@ -134,11 +135,14 @@ def request_json_with_headers(
     url: str,
     payload: dict[str, Any] | None = None,
     token: str | None = None,
+    origin: str | None = None,
 ) -> tuple[int, Any, dict[str, str]]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if origin:
+        headers["Origin"] = origin
     request = urllib.request.Request(url, data=data, headers=headers, method="POST" if payload is not None else "GET")
     try:
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
@@ -154,10 +158,13 @@ def request_json_with_headers(
 def request_raw(
     url: str,
     token: str | None = None,
+    origin: str | None = None,
 ) -> tuple[int, str, dict[str, str]]:
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if origin:
+        headers["Origin"] = origin
     request = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
@@ -254,6 +261,67 @@ def assert_gateway_redaction_self_test(gateway_module: ModuleType) -> None:
         raise AssertionError(f"redaction fixture missing masks: {missing}")
     if "[redacted:" not in encoded:
         raise AssertionError(f"redaction self-test did not redact payload: {redacted}")
+
+
+def assert_gateway_transport_hardening_self_test(gateway_module: ModuleType) -> None:
+    try:
+        gateway_module.validate_bind_host("0.0.0.0", unsafe_bind_all=False)
+    except ValueError as error:
+        if "--unsafe-bind-all" not in str(error):
+            raise AssertionError(f"unexpected unsafe bind error: {error}") from error
+    else:
+        raise AssertionError("0.0.0.0 bind was allowed without --unsafe-bind-all")
+    gateway_module.validate_bind_host("0.0.0.0", unsafe_bind_all=True)
+    gateway_module.validate_bind_host("127.0.0.1", unsafe_bind_all=False)
+
+    gateway_module.validate_oauth_resource_url("https://atlas.example.test")
+    gateway_module.validate_oauth_resource_url("http://127.0.0.1:4874")
+    gateway_module.validate_oauth_resource_url("http://localhost:4874")
+    try:
+        gateway_module.validate_oauth_resource_url("http://atlas.example.test")
+    except ValueError as error:
+        if "not HTTPS" not in str(error):
+            raise AssertionError(f"unexpected resource-url error: {error}") from error
+    else:
+        raise AssertionError("non-HTTPS non-localhost resource URL was allowed")
+
+    origins = gateway_module.build_allowed_origins(
+        "127.0.0.1",
+        4874,
+        ["https://atlas.example.test"],
+        None,
+    )
+    if origins != {"http://127.0.0.1:4874", "https://atlas.example.test"}:
+        raise AssertionError(f"unexpected allowed origins: {origins}")
+
+
+def assert_gateway_startup_failure(
+    args: argparse.Namespace,
+    extra_args: list[str],
+    expected_fragment: str,
+) -> None:
+    proc = subprocess.Popen(
+        [sys.executable, str(args.gateway), *extra_args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired as error:
+        proc.kill()
+        raise AssertionError(f"gateway did not fail fast for {extra_args}") from error
+    output = f"{stdout}\n{stderr}"
+    if proc.returncode != 2:
+        raise AssertionError(
+            f"expected startup failure code 2 for {extra_args}, "
+            f"got {proc.returncode}: {output[:1200]}"
+        )
+    if expected_fragment not in output:
+        raise AssertionError(
+            f"expected startup failure containing {expected_fragment!r}, "
+            f"got: {output[:1200]}"
+        )
 
 
 def assert_denied_tool(
@@ -404,11 +472,20 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
             "oauth wrong audience",
             token=OAUTH_WRONG_AUDIENCE_TOKEN,
         )
+        status, body = request_json(
+            f"{base_url}/mcp",
+            rpc("initialize", 209),
+            token=OAUTH_SMOKE_TOKEN,
+            origin="https://evil.example",
+        )
+        if status != 403 or body != {"error": "forbidden_origin"}:
+            raise AssertionError(f"oauth bad Origin was not rejected: {status} {body}")
 
         status, initialize = request_json(
             f"{base_url}/mcp",
             rpc("initialize", 205),
             token=OAUTH_SMOKE_TOKEN,
+            origin=base_url,
         )
         if status != 200 or initialize.get("result", {}).get("instructions") is None:
             raise AssertionError(f"bad oauth initialize: {status} {initialize}")
@@ -455,6 +532,7 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
             "challenge": True,
             "protectedResource": True,
             "negativePaths": 4,
+            "originValidated": True,
         }
     finally:
         proc.terminate()
@@ -486,6 +564,31 @@ def main(argv: list[str] | None = None) -> int:
         raise AssertionError(f"allowed tools missing from stdio server: {missing_allowed}")
     gateway_module = load_gateway_module(args.gateway)
     assert_gateway_redaction_self_test(gateway_module)
+    assert_gateway_transport_hardening_self_test(gateway_module)
+    assert_gateway_startup_failure(
+        args,
+        [
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(free_port()),
+            "--token",
+            args.token,
+        ],
+        "--unsafe-bind-all",
+    )
+    assert_gateway_startup_failure(
+        args,
+        [
+            "--auth-mode",
+            "oauth",
+            "--resource-url",
+            "http://atlas.example.test",
+            "--authorization-server",
+            "https://auth.example.test",
+        ],
+        "not HTTPS",
+    )
 
     port = args.port or free_port()
     base_url = f"http://{args.host}:{port}"
@@ -526,16 +629,32 @@ def main(argv: list[str] | None = None) -> int:
         )
         if status != 401:
             raise AssertionError(f"expected invalid auth failure, got {status} {body}")
+        status, body = request_json(
+            f"{base_url}/mcp",
+            rpc("initialize", 102),
+            token=args.token,
+            origin="https://evil.example",
+        )
+        if status != 403 or body != {"error": "forbidden_origin"}:
+            raise AssertionError(f"bad Origin was not rejected: {status} {body}")
         status, body, headers = request_raw(f"{base_url}/mcp", token=args.token)
         if status != 200 or "text/event-stream" not in headers.get("content-type", ""):
             raise AssertionError(f"bad GET /mcp response: {status} {headers} {body}")
         if "project-atlas gateway ready" not in body:
             raise AssertionError(f"GET /mcp did not return readiness event: {body}")
+        status, body, headers = request_raw(
+            f"{base_url}/mcp",
+            token=args.token,
+            origin="https://evil.example",
+        )
+        if status != 403:
+            raise AssertionError(f"bad GET /mcp Origin response: {status} {headers} {body}")
 
         status, initialize = request_json(
             f"{base_url}/mcp",
             rpc("initialize", 2),
             token=args.token,
+            origin=base_url,
         )
         if status != 200 or initialize.get("result", {}).get("instructions") is None:
             raise AssertionError(f"bad initialize: {status} {initialize}")
