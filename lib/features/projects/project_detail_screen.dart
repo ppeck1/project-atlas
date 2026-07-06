@@ -14,6 +14,7 @@ import '../../services/local_git_visibility_service.dart';
 import '../../services/local_project_refresh_service.dart';
 import '../../services/project_runtime_service.dart' as runtime;
 import '../../services/project_summary_models.dart';
+import '../../services/shopify_seo_analyzer.dart';
 import '../../services/shopify_seo_review_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
@@ -2482,6 +2483,8 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
   bool _loading = true;
   bool _busy = false;
   String? _error;
+  String _filter = 'all';
+  String _sort = 'lowest_score';
 
   @override
   void initState() {
@@ -2592,6 +2595,31 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
     }
   }
 
+  Future<void> _export(String format) async {
+    final snapshot = _snapshot;
+    if (snapshot == null) return;
+    final export = ShopifySeoAnalyzer.buildExport(snapshot);
+    final extension = switch (format) {
+      'json' => 'json',
+      'csv' => 'csv',
+      _ => 'md',
+    };
+    final text = switch (format) {
+      'json' => export.json,
+      'csv' => export.csv,
+      _ => export.markdown,
+    };
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export Shopify SEO review',
+      fileName: 'shopify-seo-review-${snapshot.shopDomain}.$extension',
+      type: FileType.custom,
+      allowedExtensions: [extension],
+    );
+    if (path == null) return;
+    await File(path).writeAsString(text);
+    _showSnack('Exported Shopify SEO review $extension.');
+  }
+
   void _showSnack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -2628,12 +2656,42 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
       );
     }
 
+    final analyses = ShopifySeoAnalyzer.analyzeSnapshot(snapshot);
+    final products = _filteredProducts(snapshot.products, analyses);
     final selectableIds = snapshot.products
         .where((product) => product.status != 'queued')
         .map((product) => product.id)
         .toSet();
     final allSelected =
         selectableIds.isNotEmpty && selectableIds.every(_selected.contains);
+    final avgScore = analyses.isEmpty
+        ? 0
+        : (analyses.values.map((a) => a.score).reduce((a, b) => a + b) /
+                  analyses.length)
+              .round();
+    final critical = analyses.values.fold<int>(
+      0,
+      (sum, analysis) => sum + analysis.criticalCount,
+    );
+    final warnings = analyses.values.fold<int>(
+      0,
+      (sum, analysis) => sum + analysis.warningCount,
+    );
+    final missingMeta = analyses.values
+        .where(
+          (analysis) => analysis.issues.any(
+            (issue) => issue.id == 'missing_meta_description',
+          ),
+        )
+        .length;
+    final missingAlt = snapshot.products.fold<int>(
+      0,
+      (sum, product) =>
+          sum +
+          product.images
+              .where((image) => (image.alt ?? '').trim().isEmpty)
+              .length,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2645,7 +2703,11 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
           children: [
             _MiniPill('Shop', snapshot.shopDomain),
             _MiniPill('Products', '${snapshot.products.length}'),
-            _MiniPill('Needs review', '${snapshot.needsReviewCount}'),
+            _MiniPill('Avg score', '$avgScore'),
+            _MiniPill('Critical', '$critical'),
+            _MiniPill('Warnings', '$warnings'),
+            _MiniPill('Missing meta', '$missingMeta'),
+            _MiniPill('Missing alt', '$missingAlt'),
             _MiniPill('Queued', '${snapshot.queuedCount}'),
             _MiniPill('Synced', _compactDateTime(snapshot.syncedAt)),
           ],
@@ -2664,6 +2726,23 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
               onPressed: _busy ? null : _importJson,
               icon: const Icon(Icons.upload_file, size: 16),
               label: const Text('Import JSON'),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Export review',
+              onSelected: _busy ? null : _export,
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'json', child: Text('Export JSON')),
+                PopupMenuItem(value: 'csv', child: Text('Export CSV')),
+                PopupMenuItem(
+                  value: 'markdown',
+                  child: Text('Export Markdown'),
+                ),
+              ],
+              child: OutlinedButton.icon(
+                onPressed: null,
+                icon: const Icon(Icons.download_outlined, size: 16),
+                label: const Text('Export'),
+              ),
             ),
             OutlinedButton.icon(
               onPressed: _busy || selectableIds.isEmpty
@@ -2690,10 +2769,112 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
             ),
           ],
         ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            DropdownButton<String>(
+              value: _filter,
+              items: const [
+                DropdownMenuItem(value: 'all', child: Text('All')),
+                DropdownMenuItem(value: 'critical', child: Text('Critical')),
+                DropdownMenuItem(
+                  value: 'missing_meta',
+                  child: Text('Missing title/meta'),
+                ),
+                DropdownMenuItem(
+                  value: 'missing_alt',
+                  child: Text('Missing alt text'),
+                ),
+                DropdownMenuItem(
+                  value: 'thin',
+                  child: Text('Thin description'),
+                ),
+                DropdownMenuItem(value: 'low_score', child: Text('Low score')),
+                DropdownMenuItem(
+                  value: 'not_queued',
+                  child: Text('Not queued'),
+                ),
+                DropdownMenuItem(value: 'queued', child: Text('Queued')),
+              ],
+              onChanged: (value) => setState(() => _filter = value ?? 'all'),
+            ),
+            DropdownButton<String>(
+              value: _sort,
+              items: const [
+                DropdownMenuItem(
+                  value: 'lowest_score',
+                  child: Text('Lowest score'),
+                ),
+                DropdownMenuItem(
+                  value: 'critical_first',
+                  child: Text('Most critical'),
+                ),
+                DropdownMenuItem(value: 'title', child: Text('Product title')),
+                DropdownMenuItem(
+                  value: 'updated',
+                  child: Text('Recently updated'),
+                ),
+              ],
+              onChanged: (value) =>
+                  setState(() => _sort = value ?? 'lowest_score'),
+            ),
+            TextButton(
+              onPressed: () => _selectMatching(
+                snapshot.products,
+                analyses,
+                (product, analysis) => analysis.criticalCount > 0,
+              ),
+              child: const Text('Select critical'),
+            ),
+            TextButton(
+              onPressed: () => _selectMatching(
+                snapshot.products,
+                analyses,
+                (product, analysis) => analysis.issues.any(
+                  (issue) =>
+                      issue.id == 'missing_meta_description' ||
+                      issue.id == 'missing_seo_title',
+                ),
+              ),
+              child: const Text('Select missing meta'),
+            ),
+            TextButton(
+              onPressed: () => _selectMatching(
+                snapshot.products,
+                analyses,
+                (product, analysis) => product.images.any(
+                  (image) => (image.alt ?? '').trim().isEmpty,
+                ),
+              ),
+              child: const Text('Select missing alt'),
+            ),
+            TextButton(
+              onPressed: () => _selectMatching(
+                snapshot.products,
+                analyses,
+                (product, analysis) => analysis.score < 70,
+              ),
+              child: const Text('Select low score'),
+            ),
+            TextButton(
+              onPressed: () => setState(_selected.clear),
+              child: const Text('Clear'),
+            ),
+          ],
+        ),
         const SizedBox(height: 12),
-        for (final product in snapshot.products) ...[
+        for (final product in products) ...[
           _ShopifySeoProductCard(
             product: product,
+            analysis: analyses[product.id]!,
+            proposalSeed: ShopifySeoAnalyzer.generateProposalSeed(
+              product,
+              analysis: analyses[product.id],
+              shopDomain: snapshot.shopDomain,
+            ),
             selected: _selected.contains(product.id),
             selectable: product.status != 'queued',
             onSelected: (value) {
@@ -2710,6 +2891,61 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
         ],
       ],
     );
+  }
+
+  void _selectMatching(
+    List<ShopifySeoProduct> products,
+    Map<String, ShopifySeoAnalysis> analyses,
+    bool Function(ShopifySeoProduct product, ShopifySeoAnalysis analysis) match,
+  ) {
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(
+          products
+              .where((product) => product.status != 'queued')
+              .where((product) => match(product, analyses[product.id]!))
+              .map((product) => product.id),
+        );
+    });
+  }
+
+  List<ShopifySeoProduct> _filteredProducts(
+    List<ShopifySeoProduct> products,
+    Map<String, ShopifySeoAnalysis> analyses,
+  ) {
+    final filtered = products.where((product) {
+      final analysis = analyses[product.id]!;
+      return switch (_filter) {
+        'critical' => analysis.criticalCount > 0,
+        'missing_meta' => analysis.issues.any(
+          (issue) =>
+              issue.id == 'missing_meta_description' ||
+              issue.id == 'missing_seo_title',
+        ),
+        'missing_alt' => product.images.any(
+          (image) => (image.alt ?? '').trim().isEmpty,
+        ),
+        'thin' => analysis.issues.any(
+          (issue) => issue.id == 'thin_description',
+        ),
+        'low_score' => analysis.score < 70,
+        'not_queued' => product.status != 'queued',
+        'queued' => product.status == 'queued',
+        _ => true,
+      };
+    }).toList();
+    filtered.sort((a, b) {
+      final aa = analyses[a.id]!;
+      final bb = analyses[b.id]!;
+      return switch (_sort) {
+        'critical_first' => bb.criticalCount.compareTo(aa.criticalCount),
+        'title' => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        'updated' => (b.updatedAt ?? '').compareTo(a.updatedAt ?? ''),
+        _ => aa.score.compareTo(bb.score),
+      };
+    });
+    return filtered;
   }
 }
 
@@ -2774,12 +3010,16 @@ class _ShopifySeoEmptyState extends StatelessWidget {
 
 class _ShopifySeoProductCard extends StatelessWidget {
   final ShopifySeoProduct product;
+  final ShopifySeoAnalysis analysis;
+  final ShopifySeoProposalSeed proposalSeed;
   final bool selected;
   final bool selectable;
   final ValueChanged<bool> onSelected;
 
   const _ShopifySeoProductCard({
     required this.product,
+    required this.analysis,
+    required this.proposalSeed,
     required this.selected,
     required this.selectable,
     required this.onSelected,
@@ -2787,9 +3027,6 @@ class _ShopifySeoProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final missingSeo =
-        (product.currentSeoTitle ?? '').trim().isEmpty ||
-        (product.currentMetaDescription ?? '').trim().isEmpty;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -2824,7 +3061,9 @@ class _ShopifySeoProductCard extends StatelessWidget {
                       ),
                     ),
                     _MiniPill('Status', product.status.replaceAll('_', ' ')),
-                    if (missingSeo) const _MiniPill('SEO', 'missing fields'),
+                    _MiniPill('Score', '${analysis.score}/100'),
+                    _MiniPill('Critical', '${analysis.criticalCount}'),
+                    _MiniPill('Warnings', '${analysis.warningCount}'),
                     if ((product.productType ?? '').isNotEmpty)
                       _MiniPill('Type', product.productType!),
                   ],
@@ -2839,33 +3078,103 @@ class _ShopifySeoProductCard extends StatelessWidget {
                   label: 'Current title',
                   value: product.currentSeoTitle,
                   fallback: 'Missing',
+                  showCount: true,
                 ),
                 _SeoFieldRow(
                   label: 'Current meta',
                   value: product.currentMetaDescription,
                   fallback: 'Missing',
+                  showCount: true,
                 ),
                 _SeoFieldRow(
                   label: 'Proposed title',
-                  value: product.proposedSeoTitle,
+                  value:
+                      product.proposedSeoTitle ?? proposalSeed.proposedSeoTitle,
                   fallback: 'Not staged yet',
+                  showCount: true,
                 ),
                 _SeoFieldRow(
                   label: 'Proposed meta',
-                  value: product.proposedMetaDescription,
+                  value:
+                      product.proposedMetaDescription ??
+                      proposalSeed.proposedMetaDescription,
                   fallback: 'Not staged yet',
+                  showCount: true,
                 ),
-                if (product.issueNotes.isNotEmpty) ...[
+                if (analysis.issues.isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
+                  for (final issue in analysis.issues.take(3))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: Text(
+                        '${issue.severity}: ${issue.message}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white70,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                ],
+                Theme(
+                  data: Theme.of(context).copyWith(
+                    dividerColor: Colors.transparent,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    title: const Text(
+                      'Details',
+                      style: TextStyle(fontSize: 13),
+                    ),
                     children: [
-                      for (final issue in product.issueNotes)
-                        _MiniPill('Issue', issue),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            _MiniPill(
+                              'Snippet',
+                              '${analysis.breakdown.searchSnippet}/35',
+                            ),
+                            _MiniPill(
+                              'Content',
+                              '${analysis.breakdown.content}/25',
+                            ),
+                            _MiniPill(
+                              'Images',
+                              '${analysis.breakdown.imageAltText}/15',
+                            ),
+                            _MiniPill(
+                              'URL/tax',
+                              '${analysis.breakdown.urlAndTaxonomy}/10',
+                            ),
+                            _MiniPill(
+                              'Merchant',
+                              '${analysis.breakdown.merchantDataReadiness}/15',
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      for (final issue in analysis.issues)
+                        _ShopifyIssueRow(issue: issue),
+                      if (proposalSeed.warnings.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        for (final warning in proposalSeed.warnings)
+                          Text(
+                            'Risk note: $warning',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFFFCC80),
+                            ),
+                          ),
+                      ],
                     ],
                   ),
-                ],
+                ),
               ],
             ),
           ),
@@ -2879,17 +3188,21 @@ class _SeoFieldRow extends StatelessWidget {
   final String label;
   final String? value;
   final String fallback;
+  final bool showCount;
 
   const _SeoFieldRow({
     required this.label,
     required this.value,
     required this.fallback,
+    this.showCount = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final text = value?.trim().isNotEmpty == true ? value!.trim() : fallback;
+    final raw = value?.trim();
+    final text = raw?.isNotEmpty == true ? raw! : fallback;
     final muted = value?.trim().isNotEmpty != true;
+    final display = showCount && !muted ? '$text (${text.length})' : text;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
@@ -2904,13 +3217,48 @@ class _SeoFieldRow extends StatelessWidget {
           ),
           Expanded(
             child: Text(
-              text,
+              display,
               style: TextStyle(
                 fontSize: 12,
                 color: muted ? const Color(0x99FFFFFF) : Colors.white70,
                 height: 1.35,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShopifyIssueRow extends StatelessWidget {
+  final ShopifySeoIssue issue;
+
+  const _ShopifyIssueRow({required this.issue});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (issue.severity) {
+      'critical' => const Color(0xFFFF8A80),
+      'warning' => const Color(0xFFFFCC80),
+      _ => Colors.white60,
+    };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${issue.severity.toUpperCase()} · ${issue.field}',
+            style: TextStyle(fontSize: 11, color: color),
+          ),
+          Text(
+            issue.message,
+            style: const TextStyle(fontSize: 12, color: Colors.white70),
+          ),
+          Text(
+            issue.suggestedAction,
+            style: const TextStyle(fontSize: 12, color: Colors.white54),
           ),
         ],
       ),

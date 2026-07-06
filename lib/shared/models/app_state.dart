@@ -1622,7 +1622,7 @@ class AppState extends ChangeNotifier {
         projectId: projectId,
         title: 'Review Shopify SEO: ${product.title}',
         objective:
-            'Review and stage SEO updates for one Shopify product. Do not apply live Shopify changes; produce an approved-fields proposal only.',
+            'Review one Shopify product and produce a staged SEO update proposal only. Use the provided SEO analysis and proposal seed. Do not apply live Shopify changes. Do not invent unsupported product claims. Return only approved-field suggestions with evidence and risk notes.',
         context: product.toBatchContext(shopDomain: snapshot.shopDomain),
         priority: 'normal',
         createdBy: 'shopify_seo_review',

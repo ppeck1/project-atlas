@@ -48,6 +48,55 @@ void main() {
       expect(product.issueNotes, ['Missing meta description']);
     });
 
+    test('decodes v2 images variants collections and timestamps', () {
+      final snapshot = ShopifySeoReviewSnapshot.decode(
+        jsonEncode({
+          'shopDomain': 'sinternetcult.com',
+          'products': [
+            {
+              'id': 'gid://shopify/Product/2',
+              'handle': 'signal-hoodie',
+              'title': 'Signal Hoodie',
+              'images': [
+                {
+                  'id': 'img1',
+                  'src': 'https://example.test/img.png',
+                  'altText': 'Signal Hoodie front',
+                  'width': 1200,
+                  'height': 1200,
+                  'position': 1,
+                },
+              ],
+              'variants': {
+                'edges': [
+                  {
+                    'node': {
+                      'id': 'var1',
+                      'title': 'Large',
+                      'sku': 'SIG-L',
+                      'price': {'amount': '54.99'},
+                      'availableForSale': true,
+                    },
+                  },
+                ],
+              },
+              'collection_handles': 'hoodies, signal',
+              'onlineStoreUrl':
+                  'https://sinternetcult.com/products/signal-hoodie',
+              'updatedAt': '2026-07-06T12:00:00Z',
+            },
+          ],
+        }),
+      );
+
+      final product = snapshot.products.single;
+      expect(product.images.single.alt, 'Signal Hoodie front');
+      expect(product.variants.single.price, '54.99');
+      expect(product.variants.single.availableForSale, isTrue);
+      expect(product.collections, ['hoodies', 'signal']);
+      expect(product.updatedAt, '2026-07-06T12:00:00Z');
+    });
+
     test('marks selected products queued without changing others', () {
       final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
       final queued = snapshot.markQueued({snapshot.products.first.id});
