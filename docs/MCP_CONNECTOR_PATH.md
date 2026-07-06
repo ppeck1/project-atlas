@@ -31,7 +31,8 @@ repositories.
 ChatGPT needs a reachable HTTPS MCP endpoint. Do not expose the desktop app,
 SQLite database, Flutter VM service, or app-data directory directly.
 
-The tracked gateway script provides a small sidecar endpoint:
+The tracked gateway script provides a small sidecar endpoint. Static bearer
+mode is for private localhost smoke only:
 
 ```powershell
 $env:ATLAS_MCP_GATEWAY_TOKEN = "<long random token>"
@@ -41,14 +42,31 @@ python tools\atlas_mcp_gateway.py `
   --port 4874
 ```
 
-For private development, expose that local gateway with an HTTPS tunnel such as
-Secure MCP Tunnel, Cloudflare Tunnel, or ngrok. The connector URL should point
-at the tunneled `/mcp` endpoint.
+For ChatGPT connector work, use OAuth mode with protected-resource metadata and
+token introspection. The public resource URL should be the HTTPS tunnel or
+hosted origin, not the `/mcp` path:
 
-The current gateway token is a private smoke-test layer. Treat it as temporary
-for local development tunnels only. ChatGPT connector readiness requires the
-OAuth/protected-resource metadata flow described in the Apps SDK MCP auth
-guidance; do not treat a hand-entered static bearer token as production auth.
+```powershell
+python tools\atlas_mcp_gateway.py `
+  --auth-mode oauth `
+  --resource-url "https://your-tunnel.example" `
+  --authorization-server "https://your-auth.example" `
+  --introspection-url "https://your-auth.example/oauth/introspect" `
+  --scope atlas.read `
+  --exe "B:\dev\Project_Atlas\project-atlas-main\build\windows\x64\runner\Release\project_atlas.exe" `
+  --host 127.0.0.1 `
+  --port 4874
+```
+
+OAuth mode exposes `GET /.well-known/oauth-protected-resource`, returns a
+`WWW-Authenticate` challenge on unauthenticated `/mcp` requests, annotates the
+three remote tools with `securitySchemes: [{ type: "oauth2", scopes:
+["atlas.read"] }]`, and validates bearer tokens through the configured
+introspection endpoint before forwarding calls to stdio.
+
+For private development, expose the local OAuth-mode gateway with an HTTPS
+tunnel such as Secure MCP Tunnel, Cloudflare Tunnel, or ngrok. The ChatGPT
+connector URL should point at the tunneled `/mcp` endpoint.
 
 ## Current Remote Security Boundary
 
@@ -96,6 +114,10 @@ The smoke verifies:
 
 - metadata at `/.well-known/project-atlas-mcp`
 - bearer-token failure behavior
+- OAuth protected-resource metadata at `/.well-known/oauth-protected-resource`
+- OAuth `WWW-Authenticate` challenge behavior
+- OAuth introspection, scope, audience/resource checks, and per-tool
+  `securitySchemes`
 - `GET /mcp` SSE readiness behavior
 - `initialize`
 - `tools/list`

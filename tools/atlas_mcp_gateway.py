@@ -16,6 +16,9 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +31,10 @@ DEFAULT_ALLOWED_TOOLS = {
     "get_project_status",
     "atlas.workload_snapshot",
 }
+
+AUTH_MODE_STATIC = "static"
+AUTH_MODE_OAUTH = "oauth"
+DEFAULT_OAUTH_SCOPE = "atlas.read"
 
 SENSITIVE_READ_TOOLS = {
     "get_project_brief",
@@ -247,10 +254,118 @@ class StdioMcpClient:
         return responses[0] if responses else None
 
 
+class OAuthConfig:
+    def __init__(
+        self,
+        resource_url: str,
+        authorization_servers: list[str],
+        scope: str,
+        resource_documentation: str | None = None,
+        introspection_url: str | None = None,
+        introspection_client_id: str | None = None,
+        introspection_client_secret: str | None = None,
+    ) -> None:
+        self.resource_url = resource_url.rstrip("/")
+        self.authorization_servers = authorization_servers
+        self.scope = scope
+        self.resource_documentation = resource_documentation
+        self.introspection_url = introspection_url
+        self.introspection_client_id = introspection_client_id
+        self.introspection_client_secret = introspection_client_secret
+
+    @property
+    def metadata_url(self) -> str:
+        return f"{self.resource_url}/.well-known/oauth-protected-resource"
+
+    @property
+    def security_schemes(self) -> list[dict[str, Any]]:
+        return [{"type": "oauth2", "scopes": [self.scope]}]
+
+
+class TokenVerifier:
+    def verify(self, token: str) -> tuple[bool, str]:
+        raise NotImplementedError
+
+
+class StaticTokenVerifier(TokenVerifier):
+    def __init__(self, token: str) -> None:
+        self.token = token
+
+    def verify(self, token: str) -> tuple[bool, str]:
+        if token == self.token:
+            return True, ""
+        return False, "invalid static bearer token"
+
+
+class OAuthIntrospectionVerifier(TokenVerifier):
+    def __init__(self, config: OAuthConfig, timeout: int) -> None:
+        self.config = config
+        self.timeout = timeout
+
+    def verify(self, token: str) -> tuple[bool, str]:
+        if not self.config.introspection_url:
+            return False, "oauth introspection is not configured"
+
+        body = urllib.parse.urlencode({"token": token}).encode("utf-8")
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        if self.config.introspection_client_id is not None:
+            credentials = (
+                f"{self.config.introspection_client_id}:"
+                f"{self.config.introspection_client_secret or ''}"
+            )
+            import base64
+
+            encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode(
+                "ascii"
+            )
+            headers["Authorization"] = f"Basic {encoded_credentials}"
+        request = urllib.request.Request(
+            self.config.introspection_url,
+            data=body,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as error:
+            return False, f"oauth introspection failed: {error}"
+
+        if not isinstance(payload, dict) or payload.get("active") is not True:
+            return False, "oauth token is inactive"
+        if not _scope_contains(payload.get("scope"), self.config.scope):
+            return False, "oauth token is missing required scope"
+        if not _audience_matches(payload, self.config.resource_url):
+            return False, "oauth token audience does not match resource"
+        return True, ""
+
+
 class GatewayState:
-    def __init__(self, exe: Path, token: str, timeout: int) -> None:
+    def __init__(
+        self,
+        exe: Path,
+        token: str | None,
+        timeout: int,
+        auth_mode: str,
+        oauth_config: OAuthConfig | None = None,
+    ) -> None:
         self.client = StdioMcpClient(exe, timeout)
         self.token = token
+        self.auth_mode = auth_mode
+        self.oauth_config = oauth_config
+        if auth_mode == AUTH_MODE_OAUTH:
+            if oauth_config is None:
+                raise ValueError("oauth_config is required for oauth mode")
+            self.token_verifier: TokenVerifier = OAuthIntrospectionVerifier(
+                oauth_config, timeout
+            )
+        elif token:
+            self.token_verifier = StaticTokenVerifier(token)
+        else:
+            raise ValueError("token is required for static mode")
         self.allowed_tools = set(DEFAULT_ALLOWED_TOOLS)
 
 
@@ -269,6 +384,29 @@ def json_rpc_error(
 
 def is_write_or_worker_tool(name: str) -> bool:
     return name in DENIED_REMOTE_TOOLS or name not in DEFAULT_ALLOWED_TOOLS
+
+
+def _scope_contains(scope_value: Any, required_scope: str) -> bool:
+    if isinstance(scope_value, str):
+        return required_scope in scope_value.split()
+    if isinstance(scope_value, list):
+        return required_scope in {str(scope) for scope in scope_value}
+    return False
+
+
+def _audience_matches(payload: dict[str, Any], resource_url: str) -> bool:
+    audience = payload.get("aud", payload.get("resource"))
+    if isinstance(audience, str):
+        return audience.rstrip("/") == resource_url.rstrip("/")
+    if isinstance(audience, list):
+        return resource_url.rstrip("/") in {str(item).rstrip("/") for item in audience}
+    return False
+
+
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
 
 
 def redact_gateway_payload(value: Any) -> Any:
@@ -315,7 +453,11 @@ def _contains_sensitive_text(value: Any) -> bool:
     return False
 
 
-def filter_tools(response: dict[str, Any], allowed_tools: set[str]) -> dict[str, Any]:
+def filter_tools(
+    response: dict[str, Any],
+    allowed_tools: set[str],
+    security_schemes: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     result = response.get("result")
     if not isinstance(result, dict):
         return response
@@ -328,7 +470,7 @@ def filter_tools(response: dict[str, Any], allowed_tools: set[str]) -> dict[str,
             continue
         name = tool.get("name")
         if name in allowed_tools:
-            filtered.append(_remote_tool_metadata(tool))
+            filtered.append(_remote_tool_metadata(tool, security_schemes))
     next_result = dict(result)
     next_result["tools"] = filtered
     response = dict(response)
@@ -336,7 +478,10 @@ def filter_tools(response: dict[str, Any], allowed_tools: set[str]) -> dict[str,
     return response
 
 
-def _remote_tool_metadata(tool: dict[str, Any]) -> dict[str, Any]:
+def _remote_tool_metadata(
+    tool: dict[str, Any],
+    security_schemes: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     annotated = dict(tool)
     annotated.setdefault("annotations", {})
     annotations = dict(annotated["annotations"])
@@ -357,6 +502,9 @@ def _remote_tool_metadata(tool: dict[str, Any]) -> dict[str, Any]:
             "remoteWritesEnabled": False,
         }
     )
+    if security_schemes:
+        annotated["securitySchemes"] = security_schemes
+        meta["securitySchemes"] = security_schemes
     annotated["_meta"] = meta
     return annotated
 
@@ -372,6 +520,12 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         if self.path in {"/healthz", "/health"}:
             self._send_json(HTTPStatus.OK, {"status": "ok"})
             return
+        if self.path == "/.well-known/oauth-protected-resource":
+            if self.state.oauth_config is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
+            self._send_json(HTTPStatus.OK, self._oauth_protected_resource_metadata())
+            return
         if self.path == "/.well-known/project-atlas-mcp":
             self._send_json(
                 HTTPStatus.OK,
@@ -379,7 +533,7 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
                     "name": "Project Atlas MCP Gateway",
                     "transport": "streamable-http",
                     "mcpEndpoint": "/mcp",
-                    "auth": {"type": "bearer"},
+                    "auth": self._auth_metadata(),
                     "profile": "remote_readonly",
                     "allowedTools": sorted(self.state.allowed_tools),
                 },
@@ -387,7 +541,7 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/mcp":
             if not self._authorized():
-                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                self._send_unauthorized()
                 return
             body = b": project-atlas gateway ready\n\n"
             self.send_response(HTTPStatus.OK)
@@ -406,7 +560,7 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
         if not self._authorized():
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+            self._send_unauthorized()
             return
 
         length = int(self.headers.get("Content-Length") or "0")
@@ -468,18 +622,85 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         if response is None:
             return None
         if method == "tools/list":
-            response = filter_tools(response, self.state.allowed_tools)
+            security_schemes = (
+                self.state.oauth_config.security_schemes
+                if self.state.oauth_config is not None
+                else None
+            )
+            response = filter_tools(
+                response,
+                self.state.allowed_tools,
+                security_schemes,
+            )
         return redact_gateway_payload(response)
 
     def _authorized(self) -> bool:
-        expected = f"Bearer {self.state.token}"
-        return self.headers.get("Authorization") == expected
+        auth_header = self.headers.get("Authorization") or ""
+        if not auth_header.startswith("Bearer "):
+            return False
+        token = auth_header.removeprefix("Bearer ").strip()
+        ok, reason = self.state.token_verifier.verify(token)
+        if not ok:
+            logging.warning("MCP gateway auth rejected: %s", reason)
+        return ok
 
-    def _send_json(self, status: int, body: Any) -> None:
+    def _auth_metadata(self) -> dict[str, Any]:
+        if self.state.oauth_config is None:
+            return {"type": "bearer", "mode": "static-dev"}
+        return {
+            "type": "oauth2",
+            "mode": "oauth",
+            "scope": self.state.oauth_config.scope,
+            "protectedResource": "/.well-known/oauth-protected-resource",
+        }
+
+    def _oauth_protected_resource_metadata(self) -> dict[str, Any]:
+        config = self.state.oauth_config
+        if config is None:
+            return {}
+        metadata: dict[str, Any] = {
+            "resource": config.resource_url,
+            "authorization_servers": config.authorization_servers,
+            "scopes_supported": [config.scope],
+            "bearer_methods_supported": ["header"],
+        }
+        if config.resource_documentation:
+            metadata["resource_documentation"] = config.resource_documentation
+        if config.introspection_url:
+            metadata["introspection_endpoint"] = config.introspection_url
+        return metadata
+
+    def _send_unauthorized(self) -> None:
+        headers = {}
+        if self.state.oauth_config is not None:
+            headers["WWW-Authenticate"] = self._www_authenticate_value()
+        self._send_json(
+            HTTPStatus.UNAUTHORIZED,
+            {"error": "unauthorized"},
+            headers=headers,
+        )
+
+    def _www_authenticate_value(self) -> str:
+        config = self.state.oauth_config
+        if config is None:
+            return "Bearer"
+        return (
+            f'Bearer resource_metadata="{config.metadata_url}", '
+            f'scope="{config.scope}"'
+        )
+
+    def _send_json(
+        self,
+        status: int,
+        body: Any,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         encoded = json.dumps(body, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(encoded)
 
@@ -503,7 +724,43 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4874)
     parser.add_argument("--exe", type=Path, default=Path(os.environ.get("PROJECT_ATLAS_EXE", default_exe_path())))
+    parser.add_argument(
+        "--auth-mode",
+        choices=[AUTH_MODE_STATIC, AUTH_MODE_OAUTH],
+        default=os.environ.get("ATLAS_MCP_AUTH_MODE", AUTH_MODE_STATIC),
+    )
     parser.add_argument("--token", default=os.environ.get("ATLAS_MCP_GATEWAY_TOKEN"))
+    parser.add_argument(
+        "--resource-url",
+        default=os.environ.get("ATLAS_MCP_RESOURCE_URL"),
+        help="Canonical public HTTPS origin for OAuth protected-resource metadata.",
+    )
+    parser.add_argument(
+        "--authorization-server",
+        action="append",
+        default=[],
+        help="OAuth authorization server issuer URL. May be passed multiple times.",
+    )
+    parser.add_argument(
+        "--scope",
+        default=os.environ.get("ATLAS_MCP_OAUTH_SCOPE", DEFAULT_OAUTH_SCOPE),
+    )
+    parser.add_argument(
+        "--resource-documentation",
+        default=os.environ.get("ATLAS_MCP_RESOURCE_DOCUMENTATION"),
+    )
+    parser.add_argument(
+        "--introspection-url",
+        default=os.environ.get("ATLAS_MCP_INTROSPECTION_URL"),
+    )
+    parser.add_argument(
+        "--introspection-client-id",
+        default=os.environ.get("ATLAS_MCP_INTROSPECTION_CLIENT_ID"),
+    )
+    parser.add_argument(
+        "--introspection-client-secret",
+        default=os.environ.get("ATLAS_MCP_INTROSPECTION_CLIENT_SECRET"),
+    )
     parser.add_argument("--timeout", type=int, default=45)
     return parser.parse_args(argv)
 
@@ -511,16 +768,45 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    if not args.token:
+    oauth_config = None
+    if args.auth_mode == AUTH_MODE_STATIC and not args.token:
         print(
             "Refusing to start: set ATLAS_MCP_GATEWAY_TOKEN or pass --token.",
             file=sys.stderr,
         )
         return 2
-    state = GatewayState(args.exe, args.token, args.timeout)
+    if args.auth_mode == AUTH_MODE_OAUTH:
+        authorization_servers = [
+            *(_split_csv(os.environ.get("ATLAS_MCP_AUTHORIZATION_SERVERS"))),
+            *[item.rstrip("/") for item in args.authorization_server if item],
+        ]
+        if not args.resource_url or not authorization_servers:
+            print(
+                "Refusing to start OAuth mode: pass --resource-url and at least "
+                "one --authorization-server.",
+                file=sys.stderr,
+            )
+            return 2
+        oauth_config = OAuthConfig(
+            resource_url=args.resource_url,
+            authorization_servers=authorization_servers,
+            scope=args.scope,
+            resource_documentation=args.resource_documentation,
+            introspection_url=args.introspection_url,
+            introspection_client_id=args.introspection_client_id,
+            introspection_client_secret=args.introspection_client_secret,
+        )
+    state = GatewayState(
+        args.exe,
+        args.token,
+        args.timeout,
+        args.auth_mode,
+        oauth_config,
+    )
     server = GatewayServer((args.host, args.port), McpGatewayHandler, state)
     logging.info("Project Atlas MCP gateway listening on http://%s:%s/mcp", args.host, args.port)
     logging.info("Proxying read-only MCP calls to %s", args.exe)
+    logging.info("Gateway auth mode: %s", args.auth_mode)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -81,6 +81,12 @@ The tracked gateway prototype narrows that first profile to `list_projects`,
 project briefs, work item bundles, proposals, queue reads, and task context
 remain blocked until their outputs have explicit disclosure review.
 
+For ChatGPT connector work, the gateway should run in OAuth mode. OAuth mode
+publishes protected-resource metadata, challenges unauthenticated MCP requests,
+adds per-tool `oauth2` security schemes, and verifies bearer tokens through the
+configured introspection endpoint before forwarding any call. This does not
+expand the tool allowlist.
+
 No client role should be treated as permission to delete projects, push or
 fetch Git repositories, overwrite manifests, bypass Library proposal review, or
 mutate Capsule control-plane metadata.
