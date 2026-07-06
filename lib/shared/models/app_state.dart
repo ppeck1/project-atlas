@@ -16,6 +16,7 @@ import '../../services/local_operations_scanner.dart';
 import '../../services/ollama_service.dart';
 import '../../services/project_runtime_service.dart';
 import '../../services/project_summary_models.dart';
+import '../../services/shopify_seo_review_service.dart';
 import '../../services/telegram_service.dart';
 import '../../services/workload_planning_service.dart';
 
@@ -1555,6 +1556,94 @@ class AppState extends ChangeNotifier {
   Future<void> deleteDraft(String id) async {
     await db.deleteDraft(id);
     notifyListeners();
+  }
+
+  Future<Draft?> getLatestShopifySeoReviewDraft(String projectId) =>
+      db.getLatestProjectDraftByKind(projectId, shopifySeoReviewDraftKind);
+
+  Future<ShopifySeoReviewSnapshot?> getLatestShopifySeoReview(
+    String projectId,
+  ) async {
+    final draft = await getLatestShopifySeoReviewDraft(projectId);
+    if (draft == null) return null;
+    final raw = draft.inputJson?.trim().isNotEmpty == true
+        ? draft.inputJson!
+        : draft.body;
+    return ShopifySeoReviewSnapshot.decode(raw);
+  }
+
+  Future<String> saveShopifySeoReviewSnapshot({
+    required String projectId,
+    required ShopifySeoReviewSnapshot snapshot,
+  }) async {
+    final id = await saveDraft(
+      kind: shopifySeoReviewDraftKind,
+      title: 'Shopify SEO review - ${snapshot.shopDomain}',
+      body: snapshot.summaryMarkdown(),
+      inputJson: snapshot.encode(),
+      projectId: projectId,
+    );
+    await db.logEvent(
+      area: 'shopify_seo',
+      action: 'review_snapshot_saved',
+      entityType: 'project',
+      entityId: projectId,
+      outputJson: jsonEncode({
+        'draftId': id,
+        'shopDomain': snapshot.shopDomain,
+        'products': snapshot.products.length,
+        'source': snapshot.source,
+      }),
+    );
+    notifyListeners();
+    return id;
+  }
+
+  Future<ShopifySeoReviewSnapshot> seedSinternetCultShopifySeoReview(
+    String projectId,
+  ) async {
+    final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
+    await saveShopifySeoReviewSnapshot(
+      projectId: projectId,
+      snapshot: snapshot,
+    );
+    return snapshot;
+  }
+
+  Future<int> queueShopifySeoProductBatches({
+    required String projectId,
+    required ShopifySeoReviewSnapshot snapshot,
+    required Set<String> productIds,
+  }) async {
+    var count = 0;
+    for (final product in snapshot.products) {
+      if (!productIds.contains(product.id)) continue;
+      await enqueueLlmTask(
+        projectId: projectId,
+        title: 'Review Shopify SEO: ${product.title}',
+        objective:
+            'Review and stage SEO updates for one Shopify product. Do not apply live Shopify changes; produce an approved-fields proposal only.',
+        context: product.toBatchContext(shopDomain: snapshot.shopDomain),
+        priority: 'normal',
+        createdBy: 'shopify_seo_review',
+        readiness: 'ready',
+        size: 'small',
+        risk: 'external_facing',
+        suggestedActor: 'codex',
+        verificationNeeded: 'manual_ui',
+        nextAction: 'Draft product-level SEO update for approval.',
+        planningNotes:
+            'Product-level Shopify SEO batch. Live Admin API writes remain disabled until explicit approval wiring exists.',
+      );
+      count++;
+    }
+    if (count > 0) {
+      await saveShopifySeoReviewSnapshot(
+        projectId: projectId,
+        snapshot: snapshot.markQueued(productIds),
+      );
+    }
+    return count;
   }
 
   // ---------------------------------------------------------------------------

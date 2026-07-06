@@ -1763,6 +1763,13 @@ class AppDb extends _$AppDb {
             ..limit(1))
           .getSingleOrNull();
 
+  Future<Draft?> getLatestProjectDraftByKind(String projectId, String kind) =>
+      (select(drafts)
+            ..where((t) => t.projectId.equals(projectId) & t.kind.equals(kind))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])
+            ..limit(1))
+          .getSingleOrNull();
+
   /// True if a project_summary draft for [projectId] was saved today.
   Future<bool> hasTodayProjectSummaryDraft(String projectId) async {
     final today = DateTime.now();

@@ -14,6 +14,7 @@ import '../../services/local_git_visibility_service.dart';
 import '../../services/local_project_refresh_service.dart';
 import '../../services/project_runtime_service.dart' as runtime;
 import '../../services/project_summary_models.dart';
+import '../../services/shopify_seo_review_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/models/project_metadata.dart';
@@ -1132,6 +1133,14 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   onReplaceGithub: () => _replaceGithubMetadata(context),
                   onForgetGithub: () => _forgetGithubMetadata(context),
                 ),
+              ),
+              _Section(
+                id: 'shopify_seo',
+                title: 'Shopify SEO',
+                subtitle: 'Product review table and product-level batches',
+                expanded: _expandedSection == 'shopify_seo',
+                onTap: () => _toggleSection('shopify_seo'),
+                child: _ShopifySeoSection(projectId: widget.projectId),
               ),
               _Section(
                 id: 'local_repo',
@@ -2454,6 +2463,457 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           onClose: () => Navigator.of(ctx).pop(),
         );
       },
+    );
+  }
+}
+
+class _ShopifySeoSection extends StatefulWidget {
+  final String projectId;
+
+  const _ShopifySeoSection({required this.projectId});
+
+  @override
+  State<_ShopifySeoSection> createState() => _ShopifySeoSectionState();
+}
+
+class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
+  ShopifySeoReviewSnapshot? _snapshot;
+  final Set<String> _selected = {};
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final snapshot = await AppStateScope.of(
+        context,
+      ).getLatestShopifySeoReview(widget.projectId);
+      if (!mounted) return;
+      setState(() {
+        _snapshot = snapshot;
+        _selected
+          ..clear()
+          ..addAll(
+            snapshot?.products
+                    .where((product) => product.status != 'queued')
+                    .map((product) => product.id) ??
+                const <String>[],
+          );
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = '$error';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _seed() async {
+    setState(() => _busy = true);
+    try {
+      final snapshot = await AppStateScope.of(
+        context,
+      ).seedSinternetCultShopifySeoReview(widget.projectId);
+      if (!mounted) return;
+      setState(() {
+        _snapshot = snapshot;
+        _selected
+          ..clear()
+          ..addAll(snapshot.products.map((product) => product.id));
+      });
+    } catch (error) {
+      _showSnack('Shopify SEO seed failed: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _importJson() async {
+    final state = AppStateScope.of(context);
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    final path = result?.files.single.path;
+    if (path == null) return;
+    setState(() => _busy = true);
+    try {
+      final raw = await File(path).readAsString();
+      final snapshot = ShopifySeoReviewSnapshot.decode(raw);
+      await state.saveShopifySeoReviewSnapshot(
+        projectId: widget.projectId,
+        snapshot: snapshot,
+      );
+      if (!mounted) return;
+      setState(() {
+        _snapshot = snapshot;
+        _selected
+          ..clear()
+          ..addAll(snapshot.products.map((product) => product.id));
+      });
+    } catch (error) {
+      _showSnack('Shopify SEO import failed: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _queueSelected() async {
+    final snapshot = _snapshot;
+    if (snapshot == null || _selected.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final count = await AppStateScope.of(context)
+          .queueShopifySeoProductBatches(
+            projectId: widget.projectId,
+            snapshot: snapshot,
+            productIds: Set<String>.of(_selected),
+          );
+      await _load();
+      _showSnack(
+        'Queued $count Shopify SEO product batch${count == 1 ? '' : 'es'}.',
+      );
+    } catch (error) {
+      _showSnack('Queue failed: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = _snapshot;
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return _ShopifySeoEmptyState(
+        message: 'Could not load Shopify SEO review data.',
+        detail: _error!,
+        busy: _busy,
+        onSeed: _seed,
+        onImport: _importJson,
+      );
+    }
+    if (snapshot == null) {
+      return _ShopifySeoEmptyState(
+        message: 'No Shopify SEO review snapshot yet.',
+        detail:
+            'Seed a plug-and-play Sinternet Cult snapshot or import a JSON product export. Admin API sync can feed this same review table later.',
+        busy: _busy,
+        onSeed: _seed,
+        onImport: _importJson,
+      );
+    }
+
+    final selectableIds = snapshot.products
+        .where((product) => product.status != 'queued')
+        .map((product) => product.id)
+        .toSet();
+    final allSelected =
+        selectableIds.isNotEmpty && selectableIds.every(_selected.contains);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            _MiniPill('Shop', snapshot.shopDomain),
+            _MiniPill('Products', '${snapshot.products.length}'),
+            _MiniPill('Needs review', '${snapshot.needsReviewCount}'),
+            _MiniPill('Queued', '${snapshot.queuedCount}'),
+            _MiniPill('Synced', _compactDateTime(snapshot.syncedAt)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _seed,
+              icon: const Icon(Icons.inventory_2_outlined, size: 16),
+              label: const Text('Seed sample'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _importJson,
+              icon: const Icon(Icons.upload_file, size: 16),
+              label: const Text('Import JSON'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy || selectableIds.isEmpty
+                  ? null
+                  : () {
+                      setState(() {
+                        if (allSelected) {
+                          _selected.removeAll(selectableIds);
+                        } else {
+                          _selected.addAll(selectableIds);
+                        }
+                      });
+                    },
+              icon: Icon(
+                allSelected ? Icons.check_box : Icons.check_box_outline_blank,
+                size: 16,
+              ),
+              label: Text(allSelected ? 'Clear products' : 'Select products'),
+            ),
+            FilledButton.icon(
+              onPressed: _busy || _selected.isEmpty ? null : _queueSelected,
+              icon: const Icon(Icons.playlist_add_check, size: 16),
+              label: Text('Queue ${_selected.length} product batches'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        for (final product in snapshot.products) ...[
+          _ShopifySeoProductCard(
+            product: product,
+            selected: _selected.contains(product.id),
+            selectable: product.status != 'queued',
+            onSelected: (value) {
+              setState(() {
+                if (value) {
+                  _selected.add(product.id);
+                } else {
+                  _selected.remove(product.id);
+                }
+              });
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+class _ShopifySeoEmptyState extends StatelessWidget {
+  final String message;
+  final String detail;
+  final bool busy;
+  final VoidCallback onSeed;
+  final VoidCallback onImport;
+
+  const _ShopifySeoEmptyState({
+    required this.message,
+    required this.detail,
+    required this.busy,
+    required this.onSeed,
+    required this.onImport,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: _kLine),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(message, style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text(
+            detail,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                onPressed: busy ? null : onSeed,
+                icon: const Icon(Icons.inventory_2_outlined, size: 16),
+                label: const Text('Seed sample'),
+              ),
+              OutlinedButton.icon(
+                onPressed: busy ? null : onImport,
+                icon: const Icon(Icons.upload_file, size: 16),
+                label: const Text('Import JSON'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShopifySeoProductCard extends StatelessWidget {
+  final ShopifySeoProduct product;
+  final bool selected;
+  final bool selectable;
+  final ValueChanged<bool> onSelected;
+
+  const _ShopifySeoProductCard({
+    required this.product,
+    required this.selected,
+    required this.selectable,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final missingSeo =
+        (product.currentSeoTitle ?? '').trim().isEmpty ||
+        (product.currentMetaDescription ?? '').trim().isEmpty;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0x33151A22),
+        border: Border.all(color: _kLine),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(
+            value: selected,
+            onChanged: selectable
+                ? (value) => onSelected(value ?? false)
+                : null,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      product.title,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    _MiniPill('Status', product.status.replaceAll('_', ' ')),
+                    if (missingSeo) const _MiniPill('SEO', 'missing fields'),
+                    if ((product.productType ?? '').isNotEmpty)
+                      _MiniPill('Type', product.productType!),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '/products/${product.handle}',
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+                const SizedBox(height: 10),
+                _SeoFieldRow(
+                  label: 'Current title',
+                  value: product.currentSeoTitle,
+                  fallback: 'Missing',
+                ),
+                _SeoFieldRow(
+                  label: 'Current meta',
+                  value: product.currentMetaDescription,
+                  fallback: 'Missing',
+                ),
+                _SeoFieldRow(
+                  label: 'Proposed title',
+                  value: product.proposedSeoTitle,
+                  fallback: 'Not staged yet',
+                ),
+                _SeoFieldRow(
+                  label: 'Proposed meta',
+                  value: product.proposedMetaDescription,
+                  fallback: 'Not staged yet',
+                ),
+                if (product.issueNotes.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final issue in product.issueNotes)
+                        _MiniPill('Issue', issue),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeoFieldRow extends StatelessWidget {
+  final String label;
+  final String? value;
+  final String fallback;
+
+  const _SeoFieldRow({
+    required this.label,
+    required this.value,
+    required this.fallback,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final text = value?.trim().isNotEmpty == true ? value!.trim() : fallback;
+    final muted = value?.trim().isNotEmpty != true;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 104,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: Colors.white54),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                color: muted ? const Color(0x99FFFFFF) : Colors.white70,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
