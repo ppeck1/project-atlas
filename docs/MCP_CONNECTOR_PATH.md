@@ -37,7 +37,7 @@ mode is for private localhost smoke only:
 ```powershell
 $env:ATLAS_MCP_GATEWAY_TOKEN = "<long random token>"
 python tools\atlas_mcp_gateway.py `
-  --exe "B:\dev\Project_Atlas\project-atlas-main\build\windows\x64\runner\Release\project_atlas.exe" `
+  --exe "<release-exe>" `
   --host 127.0.0.1 `
   --port 4874
 ```
@@ -53,7 +53,7 @@ python tools\atlas_mcp_gateway.py `
   --authorization-server "https://your-auth.example" `
   --introspection-url "https://your-auth.example/oauth/introspect" `
   --scope atlas.read `
-  --exe "B:\dev\Project_Atlas\project-atlas-main\build\windows\x64\runner\Release\project_atlas.exe" `
+  --exe "<release-exe>" `
   --host 127.0.0.1 `
   --port 4874
 ```
@@ -107,7 +107,7 @@ Run the tracked smoke test after building the Windows release executable:
 
 ```powershell
 python tools\smoke_mcp_gateway.py `
-  --exe "B:\dev\Project_Atlas\project-atlas-main\build\windows\x64\runner\Release\project_atlas.exe"
+  --exe "<release-exe>"
 ```
 
 The smoke verifies:
