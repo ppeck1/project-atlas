@@ -55,21 +55,28 @@ Smoke result:
 }
 ```
 
+- Installed OpenAI Secure MCP `tunnel-client` locally under the repo-ignored
+  `.local` directory.
+- Verified the downloaded `tunnel-client-v0.0.10-windows-amd64.zip` archive
+  against the official SHA-256 checksum.
+- Confirmed `tunnel-client.exe --version` reports `0.0.10`.
+
 ## Live Execution Blocker
 
 The live tunnel/OAuth portion was not executed because the required local
-prerequisites were not available:
+runtime credentials and OAuth provider configuration were not available:
 
 - no Auth0 CLI or configured Auth0/OAuth provider environment was detected
-- no OpenAI Secure MCP `tunnel-client` was detected
+- no OpenAI Secure MCP tunnel ID was provided
+- no OpenAI Secure MCP runtime API key was provided
 - no Cloudflare Tunnel client was detected
 - no ngrok client was detected
 - no relevant OpenAI/tunnel/Auth0/Okta/Cognito/Atlas MCP environment variable
   names were detected
 
 Because there is no real issuer, introspection endpoint, public HTTPS tunnel
-origin, or tunnel client, the gateway cannot yet be started in a real live
-OAuth+tunnel configuration without fabricating the validation path.
+origin, tunnel ID, or tunnel runtime key, the gateway cannot yet be started in a
+real live OAuth+tunnel configuration without fabricating the validation path.
 
 ## Not Executed
 
@@ -87,8 +94,7 @@ OAuth+tunnel configuration without fabricating the validation path.
 1. Provision an OAuth provider, preferably an Auth0 development tenant.
 2. Configure a single `atlas.read` scope.
 3. Configure token introspection or another trusted token validation path.
-4. Install and authenticate OpenAI Secure MCP `tunnel-client`, or choose a
-   fallback HTTPS tunnel client.
+4. Create or obtain an OpenAI Secure MCP tunnel ID and runtime API key.
 5. Start `tools\atlas_mcp_gateway.py` in OAuth mode with the real issuer,
    introspection endpoint, public HTTPS resource origin, and local release
    executable.
