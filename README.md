@@ -188,6 +188,12 @@ AI actions available:
 - **Task extract** — extracts tasks from free-form note text (Work Item Detail)
 - **Work item analysis** — read-only advisory analysis including linked documents (Work Item Detail)
 
+### Shopify Read-only Connection Plan
+
+Shopify Admin API sync is planned as a plug-and-play read-only catalog import path. Until that importer is enabled, Atlas uses a local JSON review snapshot and the same project-level Shopify SEO table.
+
+When enabled, the connection should load local credentials from environment variables or `.local/shopify_sinternetcult.env`: `SHOPIFY_SHOP`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION`, and `SHOPIFY_SYNC_MODE=read_only`. The client should keep access tokens in memory only, send `X-Shopify-Access-Token`, and reject GraphQL mutation strings locally. No live Shopify writes, write scopes, product mutation, order/customer access, broad MCP Shopify tools, or persisted secrets are part of this path.
+
 ## Agent / MCP Boundary
 
 `lib/services/atlas_agent_service.dart` is the desktop-side contract intended for the future Atlas MCP and for a local LLM harness.

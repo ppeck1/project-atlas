@@ -147,6 +147,7 @@ void main() {
       final seed = ShopifySeoAnalyzer.generateProposalSeed(
         _product(currentDescription: 'A graphic tee.'),
         shopDomain: 'sinternetcult.com',
+        brandName: 'Sinternet Cult',
       );
       final combined = [
         seed.proposedSeoTitle,
@@ -157,6 +158,29 @@ void main() {
       expect(combined, isNot(contains('guaranteed delivery')));
       expect(combined, isNot(contains('100% cotton')));
       expect(combined, isNot(contains('official')));
+    });
+
+    test('proposal seed meta is public-facing and uses supplied brand', () {
+      final seed = ShopifySeoAnalyzer.generateProposalSeed(
+        _product(
+          title: 'Signal Hoodie',
+          currentDescription: 'A graphic hoodie.',
+        ),
+        shopDomain: 'example-shop.com',
+        brandName: 'Signal Store',
+      );
+      final meta = seed.proposedMetaDescription.toLowerCase();
+
+      expect(seed.proposedSeoTitle, contains('Signal Store'));
+      for (final forbidden in [
+        'staged',
+        'review',
+        'seo',
+        'snippet',
+        'proposal',
+      ]) {
+        expect(meta, isNot(contains(forbidden)));
+      }
     });
   });
 }

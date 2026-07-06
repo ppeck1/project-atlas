@@ -97,6 +97,77 @@ void main() {
       expect(product.updatedAt, '2026-07-06T12:00:00Z');
     });
 
+    test('decodes nested GraphQL media preview image shapes', () {
+      final snapshot = ShopifySeoReviewSnapshot.decode(
+        jsonEncode({
+          'shopDomain': 'sinternetcult.com',
+          'products': [
+            {
+              'id': 'gid://shopify/Product/3',
+              'handle': 'front-view-tee',
+              'title': 'Front View Tee',
+              'media': {
+                'edges': [
+                  {
+                    'node': {
+                      'id': 'media1',
+                      'alt': 'Front view',
+                      'previewImage': {'url': 'https://example.test/front.png'},
+                      'image': {'url': 'https://example.test/fallback.png'},
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+
+      final image = snapshot.products.single.images.single;
+      expect(image.alt, 'Front view');
+      expect(image.src, 'https://example.test/front.png');
+    });
+
+    test('brandName falls back to most common vendor then domain', () {
+      final snapshot = ShopifySeoReviewSnapshot(
+        shopDomain: 'example-shop.com',
+        source: 'test',
+        syncedAt: DateTime(2026),
+        products: const [
+          ShopifySeoProduct(
+            id: '1',
+            handle: 'a',
+            title: 'A',
+            status: 'needs_review',
+            vendor: 'Vendor One',
+          ),
+          ShopifySeoProduct(
+            id: '2',
+            handle: 'b',
+            title: 'B',
+            status: 'needs_review',
+            vendor: 'Vendor One',
+          ),
+          ShopifySeoProduct(
+            id: '3',
+            handle: 'c',
+            title: 'C',
+            status: 'needs_review',
+            vendor: 'Vendor Two',
+          ),
+        ],
+      );
+      final domainOnly = ShopifySeoReviewSnapshot(
+        shopDomain: 'weird-store.example',
+        source: 'test',
+        syncedAt: DateTime(2026),
+        products: const [],
+      );
+
+      expect(snapshot.resolvedBrandName, 'Vendor One');
+      expect(domainOnly.resolvedBrandName, 'Weird Store');
+    });
+
     test('marks selected products queued without changing others', () {
       final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
       final queued = snapshot.markQueued({snapshot.products.first.id});
@@ -104,6 +175,12 @@ void main() {
       expect(queued.products.first.status, 'queued');
       expect(queued.products.last.status, 'needs_review');
       expect(queued.queuedCount, 1);
+    });
+
+    test('default product selection is empty for catalog safety', () {
+      final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
+
+      expect(defaultShopifySeoProductSelection(snapshot), isEmpty);
     });
 
     test('batch context is stage-only and product scoped', () {

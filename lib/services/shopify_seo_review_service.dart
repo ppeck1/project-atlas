@@ -4,14 +4,20 @@ import 'shopify_seo_analyzer.dart';
 
 const shopifySeoReviewDraftKind = 'shopify_seo_review';
 
+Set<String> defaultShopifySeoProductSelection(
+  ShopifySeoReviewSnapshot? snapshot,
+) => <String>{};
+
 class ShopifySeoReviewSnapshot {
   final String shopDomain;
+  final String? brandName;
   final String source;
   final DateTime syncedAt;
   final List<ShopifySeoProduct> products;
 
   const ShopifySeoReviewSnapshot({
     required this.shopDomain,
+    this.brandName,
     required this.source,
     required this.syncedAt,
     required this.products,
@@ -26,9 +32,16 @@ class ShopifySeoReviewSnapshot {
   int get approvedCount =>
       products.where((product) => product.status == 'approved').length;
 
+  String get resolvedBrandName =>
+      stringValue(brandName) ??
+      _mostCommonVendor(products) ??
+      _brandFromDomain(shopDomain) ??
+      'Sinternet Cult';
+
   Map<String, Object?> toJson() => {
     'schema': 'shopify_seo_review_snapshot_v2',
     'shopDomain': shopDomain,
+    'brandName': brandName,
     'source': source,
     'syncedAt': syncedAt.toIso8601String(),
     'products': products.map((product) => product.toJson()).toList(),
@@ -57,6 +70,7 @@ class ShopifySeoReviewSnapshot {
       'Shopify SEO review snapshot',
       '',
       '- shop: $shopDomain',
+      '- brand: $resolvedBrandName',
       '- source: $source',
       '- syncedAt: ${syncedAt.toIso8601String()}',
       '- products: ${products.length}',
@@ -74,6 +88,7 @@ class ShopifySeoReviewSnapshot {
     if (productIds.isEmpty) return this;
     return ShopifySeoReviewSnapshot(
       shopDomain: shopDomain,
+      brandName: brandName,
       source: source,
       syncedAt: DateTime.now(),
       products: products
@@ -109,6 +124,8 @@ class ShopifySeoReviewSnapshot {
     }
     return ShopifySeoReviewSnapshot(
       shopDomain: stringValue(json['shopDomain']) ?? 'sinternetcult.com',
+      brandName:
+          stringValue(json['brandName']) ?? stringValue(json['brand_name']),
       source: stringValue(json['source']) ?? 'shopify_admin_api_stub',
       syncedAt:
           DateTime.tryParse(stringValue(json['syncedAt']) ?? '') ??
@@ -128,6 +145,7 @@ class ShopifySeoReviewSnapshot {
     final now = DateTime.now();
     return ShopifySeoReviewSnapshot(
       shopDomain: 'sinternetcult.com',
+      brandName: 'Sinternet Cult',
       source: 'shopify_admin_api_stub',
       syncedAt: now,
       products: const [
@@ -294,17 +312,26 @@ class ShopifySeoProduct {
     'updatedAt': updatedAt,
   };
 
-  Map<String, Object?> toBatchContext({required String shopDomain}) {
+  Map<String, Object?> toBatchContext({
+    required String shopDomain,
+    String? brandName,
+  }) {
+    final resolvedBrandName =
+        stringValue(brandName) ??
+        _brandFromDomain(shopDomain) ??
+        'Sinternet Cult';
     final analysis = ShopifySeoAnalyzer.analyzeProduct(this);
     final proposalSeed = ShopifySeoAnalyzer.generateProposalSeed(
       this,
       analysis: analysis,
       shopDomain: shopDomain,
+      brandName: resolvedBrandName,
     );
     return {
       'source': 'shopify_seo_review',
       'approvalUnit': 'product',
       'shopDomain': shopDomain,
+      'brandName': resolvedBrandName,
       'product': toJson(),
       'seoAnalysis': analysis.toJson(),
       'proposalSeed': proposalSeed.toJson(),
@@ -455,6 +482,9 @@ class ShopifySeoImage {
   static ShopifySeoImage fromJson(Map<String, Object?> json) {
     final imageMap = _firstMap(json['image']);
     final mediaMap = _firstMap(json['media']);
+    final previewImageMap = _firstMap(json['previewImage']);
+    final mediaPreviewImageMap = _firstMap(mediaMap?['previewImage']);
+    final mediaImageMap = _firstMap(mediaMap?['image']);
     return ShopifySeoImage(
       id: stringValue(json['id']),
       src:
@@ -462,13 +492,23 @@ class ShopifySeoImage {
           stringValue(json['url']) ??
           stringValue(json['originalSrc']) ??
           stringValue(json['transformedSrc']) ??
-          stringValue(mediaMap?['previewImage']) ??
+          stringValue(previewImageMap?['url']) ??
+          stringValue(previewImageMap?['src']) ??
+          stringValue(mediaPreviewImageMap?['url']) ??
+          stringValue(mediaPreviewImageMap?['src']) ??
+          stringValue(mediaImageMap?['url']) ??
+          stringValue(mediaImageMap?['src']) ??
+          (mediaMap?['previewImage'] is Map
+              ? null
+              : stringValue(mediaMap?['previewImage'])) ??
           stringValue(imageMap?['src']),
       alt:
           stringValue(json['alt']) ??
           stringValue(json['altText']) ??
           stringValue(imageMap?['alt']) ??
           stringValue(imageMap?['altText']) ??
+          stringValue(mediaImageMap?['alt']) ??
+          stringValue(mediaPreviewImageMap?['alt']) ??
           stringValue(mediaMap?['alt']),
       width: intValue(json['width']),
       height: intValue(json['height']),
@@ -548,12 +588,18 @@ List<ShopifySeoVariant> _decodeVariants(Map<String, Object?> json) => _mapList(
 ).map(ShopifySeoVariant.fromJson).toList(growable: false);
 
 List<String> _decodeCollections(Map<String, Object?> json) {
+  final rawCollections = json['collections'];
   final merged = <String>[
-    ...stringList(json['collections']),
+    if (rawCollections is! Map) ...stringList(rawCollections),
     ...stringList(json['collectionTitles']),
     ...stringList(json['collection_handles']),
+    ..._mapList(rawCollections)
+        .map(
+          (item) => stringValue(item['title']) ?? stringValue(item['handle']),
+        )
+        .whereType<String>(),
   ];
-  return merged.toSet().toList(growable: false);
+  return merged.whereType<String>().toSet().toList(growable: false);
 }
 
 List<Map<String, Object?>> _mapList(Object? raw) {
@@ -638,3 +684,33 @@ String _slug(String value) => value
     .toLowerCase()
     .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
     .replaceAll(RegExp(r'^-+|-+$'), '');
+
+String? _mostCommonVendor(List<ShopifySeoProduct> products) {
+  final counts = <String, int>{};
+  for (final product in products) {
+    final vendor = stringValue(product.vendor);
+    if (vendor == null) continue;
+    counts[vendor] = (counts[vendor] ?? 0) + 1;
+  }
+  if (counts.isEmpty) return null;
+  return counts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+}
+
+String? _brandFromDomain(String domain) {
+  final host = domain
+      .toLowerCase()
+      .replaceFirst(RegExp(r'^https?://'), '')
+      .split('/')
+      .first
+      .replaceFirst(RegExp(r'^www\.'), '');
+  final stem = host.split('.').first;
+  if (stem == 'sinternetcult') return 'Sinternet Cult';
+  if (stem.isEmpty) return null;
+  return stem
+      .split(RegExp(r'[-_]+'))
+      .map(
+        (part) =>
+            part.isEmpty ? part : part[0].toUpperCase() + part.substring(1),
+      )
+      .join(' ');
+}

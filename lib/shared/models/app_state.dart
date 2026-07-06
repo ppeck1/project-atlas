@@ -1618,12 +1618,16 @@ class AppState extends ChangeNotifier {
     var count = 0;
     for (final product in snapshot.products) {
       if (!productIds.contains(product.id)) continue;
+      if (product.status == 'queued') continue;
       await enqueueLlmTask(
         projectId: projectId,
         title: 'Review Shopify SEO: ${product.title}',
         objective:
             'Review one Shopify product and produce a staged SEO update proposal only. Use the provided SEO analysis and proposal seed. Do not apply live Shopify changes. Do not invent unsupported product claims. Return only approved-field suggestions with evidence and risk notes.',
-        context: product.toBatchContext(shopDomain: snapshot.shopDomain),
+        context: product.toBatchContext(
+          shopDomain: snapshot.shopDomain,
+          brandName: snapshot.resolvedBrandName,
+        ),
         priority: 'normal',
         createdBy: 'shopify_seo_review',
         readiness: 'ready',

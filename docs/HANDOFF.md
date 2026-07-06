@@ -4,7 +4,7 @@
 
 Project Atlas is a public Flutter Windows desktop repo. The active app repo is this directory, not the outer wrapper folder.
 
-This v1.4 slice adds the Workboard Planning Layer:
+This v1.4 slice adds the Workboard Planning Layer. A later Shopify SEO hardening slice adds a draft-backed, stage-only Project Detail Shopify SEO review workflow; this document preserves the v1.4 release evidence below and should not be read as the newest feature inventory by itself.
 
 - Work items now carry planning metadata: readiness, size, risk, suggested actor, verification needed, next action, planning notes, and last reviewed timestamp.
 - Existing work-item `blocked_reason` remains the blocker source of truth for work items.
@@ -15,6 +15,7 @@ This v1.4 slice adds the Workboard Planning Layer:
 - Bulk planning actions are explicit operator actions: mark ready, mark blocked, assign suggested actor, set size/risk/verification, mark reviewed today, create LLM queue item from work item, and link existing LLM queue item.
 - Planning Snapshot shows ready/blocked/review/stale counts, actor/risk breakdowns, ready-only execution candidates, and separate planning/decision candidates.
 - MCP adds read-only planning tools: `atlas.workload_snapshot`, `atlas.project_workload`, `atlas.suggest_next_work`, and `atlas.work_item_context_bundle`.
+- Shopify SEO review now lives in Project Detail as a draft-backed import/analyze/export/queue surface. It has no live Shopify writes, no Admin API credential requirement, and no broad MCP Shopify tools.
 
 ## Last Run
 

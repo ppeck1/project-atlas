@@ -213,14 +213,17 @@ class ShopifySeoAnalyzer {
     ShopifySeoProduct product, {
     ShopifySeoAnalysis? analysis,
     required String shopDomain,
+    String? brandName,
   }) {
+    final brand =
+        _clean(brandName) ?? _brandFromDomain(shopDomain) ?? 'Sinternet Cult';
     final productType = _clean(product.productType);
     final titleBase = _dedupeWords(product.title);
     final seoTitle =
         productType == null ||
             product.title.toLowerCase().contains(productType.toLowerCase())
-        ? '$titleBase | Sinternet Cult'
-        : '$titleBase - $productType | Sinternet Cult';
+        ? '$titleBase | $brand'
+        : '$titleBase - $productType | $brand';
     final descriptionParts = <String>[
       titleBase,
       if (productType != null) productType.toLowerCase(),
@@ -230,8 +233,10 @@ class ShopifySeoAnalyzer {
             .where((tag) => !_genericTags.contains(tag))
             .join(', '),
     ].where((part) => part.trim().isNotEmpty).toList();
-    final meta =
-        '${descriptionParts.join(' - ')} from Sinternet Cult, staged for clear product search snippets and buyer review.';
+    final descriptor = descriptionParts.join(' - ');
+    final meta = descriptor.isEmpty
+        ? 'Shop ${product.title} from $brand.'
+        : 'Shop ${product.title} from $brand, a $descriptor for online-culture style.';
     final outline = [
       'Lead with what the product is: ${product.title}.',
       if (productType != null) 'Mention product type: $productType.',
@@ -255,7 +260,7 @@ class ShopifySeoAnalyzer {
     final tags = <String>{
       ...product.tags,
       if (productType != null) productType.toLowerCase(),
-      'sinternet cult',
+      brand.toLowerCase(),
     }.where((tag) => tag.trim().isNotEmpty).take(12).toList(growable: false);
     final warnings = <String>[
       if (_plainText(product.currentDescription).length < 80 ||
@@ -289,6 +294,7 @@ class ShopifySeoAnalyzer {
             product,
             analysis: analyses[product.id],
             shopDomain: snapshot.shopDomain,
+            brandName: snapshot.resolvedBrandName,
           ).toJson(),
       },
     });
@@ -1079,6 +1085,25 @@ String _dedupeWords(String value) {
 
 String _limit(String value, int max) =>
     value.length <= max ? value : value.substring(0, max).trimRight();
+
+String? _brandFromDomain(String domain) {
+  final host = domain
+      .toLowerCase()
+      .replaceFirst(RegExp(r'^https?://'), '')
+      .split('/')
+      .first
+      .replaceFirst(RegExp(r'^www\.'), '');
+  final stem = host.split('.').first;
+  if (stem == 'sinternetcult') return 'Sinternet Cult';
+  if (stem.isEmpty) return null;
+  return stem
+      .split(RegExp(r'[-_]+'))
+      .map(
+        (part) =>
+            part.isEmpty ? part : part[0].toUpperCase() + part.substring(1),
+      )
+      .join(' ');
+}
 
 const _stopWords = {'the', 'and', 'for', 'with', 'from', 'this', 'that'};
 

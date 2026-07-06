@@ -32,6 +32,11 @@ linux/flutter/ephemeral/
 
 # Local secrets — NEVER commit
 .env
+.env.*
+.local/
+*_secrets.json
+shopify_*_secret*
+shopify_*_token*
 secrets.yaml
 telegram_token.txt
 

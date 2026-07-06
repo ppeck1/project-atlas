@@ -2506,12 +2506,7 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
         _snapshot = snapshot;
         _selected
           ..clear()
-          ..addAll(
-            snapshot?.products
-                    .where((product) => product.status != 'queued')
-                    .map((product) => product.id) ??
-                const <String>[],
-          );
+          ..addAll(defaultShopifySeoProductSelection(snapshot));
         _loading = false;
       });
     } catch (error) {
@@ -2534,7 +2529,7 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
         _snapshot = snapshot;
         _selected
           ..clear()
-          ..addAll(snapshot.products.map((product) => product.id));
+          ..addAll(defaultShopifySeoProductSelection(snapshot));
       });
     } catch (error) {
       _showSnack('Shopify SEO seed failed: $error');
@@ -2564,7 +2559,7 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
         _snapshot = snapshot;
         _selected
           ..clear()
-          ..addAll(snapshot.products.map((product) => product.id));
+          ..addAll(defaultShopifySeoProductSelection(snapshot));
       });
     } catch (error) {
       _showSnack('Shopify SEO import failed: $error');
@@ -2874,6 +2869,7 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
               product,
               analysis: analyses[product.id],
               shopDomain: snapshot.shopDomain,
+              brandName: snapshot.resolvedBrandName,
             ),
             selected: _selected.contains(product.id),
             selectable: product.status != 'queued',
