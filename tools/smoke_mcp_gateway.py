@@ -57,6 +57,8 @@ SENSITIVE_TEXT_PATTERNS = {
 HTTP_TIMEOUT_SECONDS = 75
 OAUTH_SCOPE = "atlas.read"
 OAUTH_SMOKE_TOKEN = "atlas-oauth-smoke-token"
+OAUTH_MISSING_SCOPE_TOKEN = "atlas-oauth-missing-scope-token"
+OAUTH_WRONG_AUDIENCE_TOKEN = "atlas-oauth-wrong-audience-token"
 
 SENSITIVE_FIXTURE = {
     "result": {
@@ -272,20 +274,38 @@ def assert_denied_tool(
         raise AssertionError(f"denied tool {name} was not rejected: {status} {denied}")
 
 
+def assert_oauth_unauthorized(
+    base_url: str,
+    request_id: int,
+    label: str,
+    token: str | None = None,
+) -> None:
+    status, body, headers = request_json_with_headers(
+        f"{base_url}/mcp",
+        rpc("initialize", request_id),
+        token=token,
+    )
+    challenge = headers.get("www-authenticate", "")
+    expected_metadata = (
+        f'resource_metadata="{base_url}/.well-known/oauth-protected-resource"'
+    )
+    if status != 401 or body != {"error": "unauthorized"}:
+        raise AssertionError(f"{label}: expected 401 unauthorized, got {status} {body}")
+    if not challenge.startswith("Bearer "):
+        raise AssertionError(f"{label}: missing Bearer challenge: {headers}")
+    if expected_metadata not in challenge:
+        raise AssertionError(f"{label}: missing resource metadata: {challenge}")
+    if f'scope="{OAUTH_SCOPE}"' not in challenge:
+        raise AssertionError(f"{label}: missing {OAUTH_SCOPE} scope: {challenge}")
+
+
 class OAuthIntrospectionHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or "0")
         body = self.rfile.read(length).decode("utf-8")
         params = urllib.parse.parse_qs(body)
         token = params.get("token", [""])[0]
-        if token == self.server.expected_token:  # type: ignore[attr-defined]
-            payload = {
-                "active": True,
-                "scope": self.server.scope,  # type: ignore[attr-defined]
-                "aud": self.server.resource_url,  # type: ignore[attr-defined]
-            }
-        else:
-            payload = {"active": False}
+        payload = self.server.token_payloads.get(token, {"active": False})  # type: ignore[attr-defined]
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -298,15 +318,11 @@ class OAuthIntrospectionHandler(http.server.BaseHTTPRequestHandler):
 
 
 class OAuthIntrospectionServer(http.server.ThreadingHTTPServer):
-    expected_token: str
-    resource_url: str
-    scope: str
+    token_payloads: dict[str, dict[str, Any]]
 
 
 def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str]) -> dict[str, Any]:
     auth_server = OAuthIntrospectionServer(("127.0.0.1", 0), OAuthIntrospectionHandler)
-    auth_server.expected_token = OAUTH_SMOKE_TOKEN
-    auth_server.scope = OAUTH_SCOPE
     auth_port = int(auth_server.server_address[1])
     auth_base = f"http://127.0.0.1:{auth_port}"
     auth_thread = threading.Thread(target=auth_server.serve_forever, daemon=True)
@@ -314,7 +330,23 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
 
     port = free_port()
     base_url = f"http://{args.host}:{port}"
-    auth_server.resource_url = base_url
+    auth_server.token_payloads = {
+        OAUTH_SMOKE_TOKEN: {
+            "active": True,
+            "scope": OAUTH_SCOPE,
+            "aud": base_url,
+        },
+        OAUTH_MISSING_SCOPE_TOKEN: {
+            "active": True,
+            "scope": "profile",
+            "aud": base_url,
+        },
+        OAUTH_WRONG_AUDIENCE_TOKEN: {
+            "active": True,
+            "scope": OAUTH_SCOPE,
+            "aud": f"{base_url}/wrong-resource",
+        },
+    }
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -353,25 +385,29 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
         if metadata.get("scopes_supported") != [OAUTH_SCOPE]:
             raise AssertionError(f"bad scopes: {metadata}")
 
-        status, body, headers = request_json_with_headers(
-            f"{base_url}/mcp",
-            rpc("initialize", 201),
-        )
-        challenge = headers.get("www-authenticate", "")
-        if status != 401 or "resource_metadata=" not in challenge or OAUTH_SCOPE not in challenge:
-            raise AssertionError(f"bad oauth auth challenge: {status} {headers} {body}")
-
-        status, body, headers = request_json_with_headers(
-            f"{base_url}/mcp",
-            rpc("initialize", 202),
+        assert_oauth_unauthorized(base_url, 201, "oauth missing token")
+        assert_oauth_unauthorized(
+            base_url,
+            202,
+            "oauth invalid token",
             token="wrong-oauth-token",
         )
-        if status != 401 or "www-authenticate" not in headers:
-            raise AssertionError(f"bad invalid-token challenge: {status} {headers} {body}")
+        assert_oauth_unauthorized(
+            base_url,
+            203,
+            "oauth missing atlas.read scope",
+            token=OAUTH_MISSING_SCOPE_TOKEN,
+        )
+        assert_oauth_unauthorized(
+            base_url,
+            204,
+            "oauth wrong audience",
+            token=OAUTH_WRONG_AUDIENCE_TOKEN,
+        )
 
         status, initialize = request_json(
             f"{base_url}/mcp",
-            rpc("initialize", 203),
+            rpc("initialize", 205),
             token=OAUTH_SMOKE_TOKEN,
         )
         if status != 200 or initialize.get("result", {}).get("instructions") is None:
@@ -380,7 +416,7 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
 
         status, tools_list = request_json(
             f"{base_url}/mcp",
-            rpc("tools/list", 204, {}),
+            rpc("tools/list", 206, {}),
             token=OAUTH_SMOKE_TOKEN,
         )
         tool_names = {
@@ -398,7 +434,7 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
             f"{base_url}/mcp",
             rpc(
                 "tools/call",
-                205,
+                207,
                 {"name": "list_projects", "arguments": {"includeArchived": False}},
             ),
             token=OAUTH_SMOKE_TOKEN,
@@ -411,13 +447,14 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
         assert_denied_tool(
             base_url,
             OAUTH_SMOKE_TOKEN,
-            206,
+            208,
             hidden_tools[0],
         )
         return {
             "tools": len(tool_names),
             "challenge": True,
             "protectedResource": True,
+            "negativePaths": 4,
         }
     finally:
         proc.terminate()
