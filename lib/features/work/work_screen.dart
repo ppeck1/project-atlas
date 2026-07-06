@@ -8,14 +8,21 @@ import '../today/work_item_detail_sheet.dart';
 import 'status_priority_helpers.dart';
 
 class WorkScreen extends StatefulWidget {
-  const WorkScreen({super.key});
+  final String? initialProjectId;
+  final bool projectScoped;
+
+  const WorkScreen({
+    super.key,
+    this.initialProjectId,
+    this.projectScoped = false,
+  });
 
   @override
   State<WorkScreen> createState() => _WorkScreenState();
 }
 
 class _WorkScreenState extends State<WorkScreen> {
-  WorkloadFilters _filters = const WorkloadFilters();
+  late WorkloadFilters _filters;
   Future<List<Project>>? _projectsFuture;
   Future<WorkloadSnapshot>? _snapshotFuture;
   final Set<String> _selected = {};
@@ -29,6 +36,12 @@ class _WorkScreenState extends State<WorkScreen> {
     'review_needed': 'Review Needed',
     'done_closed': 'Done / Closed',
   };
+
+  @override
+  void initState() {
+    super.initState();
+    _filters = WorkloadFilters(projectId: widget.initialProjectId);
+  }
 
   @override
   void didChangeDependencies() {
@@ -49,8 +62,11 @@ class _WorkScreenState extends State<WorkScreen> {
 
   void _setFilters(WorkloadFilters filters) {
     final state = AppStateScope.of(context);
+    final nextFilters = widget.projectScoped
+        ? filters.copyWith(projectId: widget.initialProjectId)
+        : filters;
     setState(() {
-      _filters = filters;
+      _filters = nextFilters;
       _snapshotFuture = state.getWorkloadSnapshot(filters: _filters);
       _selected.clear();
     });
@@ -97,6 +113,7 @@ class _WorkScreenState extends State<WorkScreen> {
                   _FiltersBar(
                     projects: projects,
                     filters: _filters,
+                    projectScoped: widget.projectScoped,
                     onChanged: _setFilters,
                   ),
                   _SnapshotPanel(snapshot: snapshot),
@@ -534,11 +551,13 @@ class _WorkScreenState extends State<WorkScreen> {
 class _FiltersBar extends StatelessWidget {
   final List<Project> projects;
   final WorkloadFilters filters;
+  final bool projectScoped;
   final ValueChanged<WorkloadFilters> onChanged;
 
   const _FiltersBar({
     required this.projects,
     required this.filters,
+    required this.projectScoped,
     required this.onChanged,
   });
 
@@ -556,6 +575,7 @@ class _FiltersBar extends StatelessWidget {
             SizedBox(
               width: 220,
               child: DropdownButtonFormField<String?>(
+                isExpanded: true,
                 value: filters.projectId,
                 decoration: const InputDecoration(
                   labelText: 'Project',
@@ -572,19 +592,29 @@ class _FiltersBar extends StatelessWidget {
                       value: project.id,
                       child: Text(
                         project.title,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ),
                 ],
-                onChanged: (value) => onChanged(
-                  filters.copyWith(
-                    projectId: value,
-                    clearProjectId: value == null,
-                  ),
-                ),
+                onChanged: projectScoped
+                    ? null
+                    : (value) => onChanged(
+                        filters.copyWith(
+                          projectId: value,
+                          clearProjectId: value == null,
+                        ),
+                      ),
               ),
             ),
+            if (projectScoped)
+              const Chip(
+                avatar: Icon(Icons.lock_outline, size: 16),
+                label: Text('Project scoped'),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
             _FilterDropdown(
               label: 'Readiness',
               value: filters.readiness,
@@ -1031,6 +1061,7 @@ class _FilterDropdown extends StatelessWidget {
     return SizedBox(
       width: 160,
       child: DropdownButtonFormField<String?>(
+        isExpanded: true,
         value: value,
         decoration: InputDecoration(
           labelText: label,
@@ -1038,11 +1069,17 @@ class _FilterDropdown extends StatelessWidget {
           isDense: true,
         ),
         items: [
-          DropdownMenuItem<String?>(value: null, child: Text('All $label')),
+          DropdownMenuItem<String?>(
+            value: null,
+            child: Text('All $label', overflow: TextOverflow.ellipsis),
+          ),
           ...values.map(
             (value) => DropdownMenuItem<String?>(
               value: value,
-              child: Text(workloadLabel(value)),
+              child: Text(
+                workloadLabel(value),
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ),
         ],

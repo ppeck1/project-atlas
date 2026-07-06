@@ -88,6 +88,13 @@ String _libraryRouteForProject(
   return Uri(path: '/library', queryParameters: queryParameters).toString();
 }
 
+String _workboardRouteForProject(String projectId) {
+  return Uri(
+    path: '/work',
+    queryParameters: {'projectId': projectId, 'scope': 'project'},
+  ).toString();
+}
+
 Color _tagColor(Tag tag) {
   final raw = tag.color;
   if (raw != null && raw.startsWith('#') && raw.length == 7) {
@@ -1031,7 +1038,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 icon: const Icon(Icons.view_kanban_outlined, size: 20),
                 onPressed: () async {
                   await state.setActiveById(project.id);
-                  if (context.mounted) context.go('/work');
+                  if (context.mounted) {
+                    context.go(_workboardRouteForProject(project.id));
+                  }
                 },
               ),
               IconButton(
@@ -1053,7 +1062,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 projectId: widget.projectId,
                 onOpenWorkboard: () async {
                   await state.setActiveById(project.id);
-                  if (context.mounted) context.go('/work');
+                  if (context.mounted) {
+                    context.go(_workboardRouteForProject(project.id));
+                  }
                 },
                 onEditMeta: () => _showMetaDialog(context, project),
                 onExportBundle: () =>

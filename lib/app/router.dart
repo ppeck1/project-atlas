@@ -50,7 +50,13 @@ GoRouter buildRouter() {
           ),
           // Legacy routes — still navigable (e.g. from Settings tabs)
           GoRoute(path: '/', builder: (_, __) => const DashboardScreen()),
-          GoRoute(path: '/work', builder: (_, __) => const WorkScreen()),
+          GoRoute(
+            path: '/work',
+            builder: (_, state) => WorkScreen(
+              initialProjectId: state.uri.queryParameters['projectId'],
+              projectScoped: state.uri.queryParameters['scope'] == 'project',
+            ),
+          ),
           GoRoute(path: '/review', builder: (_, __) => const ReviewScreen()),
           GoRoute(path: '/export', builder: (_, __) => const ExportScreen()),
           GoRoute(
