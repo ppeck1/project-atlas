@@ -30,11 +30,20 @@ jobs:
       - name: Generate Drift code
         run: dart run build_runner build --delete-conflicting-outputs
 
+      - name: Compile MCP gateway scripts
+        run: python -m py_compile tools\atlas_mcp_gateway.py tools\smoke_mcp_gateway.py
+
       - name: Analyze
         run: flutter analyze
+
+      - name: Test MCP adapter
+        run: flutter test test\atlas_mcp_stdio_server_test.dart test\atlas_mcp_adapter_test.dart --concurrency=1
 
       - name: Test
         run: flutter test
 
       - name: Build Windows release
         run: flutter build windows --release
+
+      - name: Smoke MCP gateway
+        run: python tools\smoke_mcp_gateway.py --exe build\windows\x64\runner\Release\project_atlas.exe

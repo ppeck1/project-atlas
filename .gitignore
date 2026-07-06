@@ -13,6 +13,7 @@ lib/db/app_db.g.dart
 *.bak
 *.autobak*
 *.orig
+__pycache__/
 .DS_Store
 Thumbs.db
 .atlas_backups/
