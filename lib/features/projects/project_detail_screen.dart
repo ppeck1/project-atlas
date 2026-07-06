@@ -2534,7 +2534,7 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
     try {
       final snapshot = await AppStateScope.of(
         context,
-      ).seedSinternetCultShopifySeoReview(widget.projectId);
+      ).seedExampleShopifySeoReview(widget.projectId);
       if (!mounted) return;
       setState(() {
         _snapshot = snapshot;
@@ -2655,7 +2655,7 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
       return _ShopifySeoEmptyState(
         message: 'No Shopify SEO review snapshot yet.',
         detail:
-            'Seed a plug-and-play Sinternet Cult snapshot or import a JSON product export. Admin API sync can feed this same review table later.',
+            'Seed a plug-and-play Example Store snapshot or import a JSON product export. Admin API sync can feed this same review table later.',
         busy: _busy,
         onSeed: _seed,
         onImport: _importJson,

@@ -5,10 +5,10 @@ import 'package:project_atlas/services/shopify_seo_review_service.dart';
 
 void main() {
   group('ShopifySeoReviewSnapshot', () {
-    test('sample snapshot is plug-and-play for sinternetcult.com', () {
-      final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
+    test('sample snapshot is plug-and-play for example-store.test', () {
+      final snapshot = ShopifySeoReviewSnapshot.sampleExampleStore();
 
-      expect(snapshot.shopDomain, 'sinternetcult.com');
+      expect(snapshot.shopDomain, 'example-store.test');
       expect(snapshot.source, 'shopify_admin_api_stub');
       expect(snapshot.products, hasLength(2));
       expect(snapshot.needsReviewCount, 2);
@@ -18,19 +18,19 @@ void main() {
     test('decodes Shopify-like product JSON', () {
       final snapshot = ShopifySeoReviewSnapshot.decode(
         jsonEncode({
-          'shopDomain': 'sinternetcult.com',
+          'shopDomain': 'example-store.test',
           'products': [
             {
               'id': 'gid://shopify/Product/1',
               'handle': 'chaos-tee',
               'title': 'Chaos Tee',
               'product_type': 'Apparel',
-              'vendor': 'Sinternet Cult',
+              'vendor': 'Example Store',
               'tags': 'tee, internet',
               'seo': {'title': 'Chaos Tee', 'description': ''},
               'body_html': '<p>Current body</p>',
               'proposal': {
-                'seoTitle': 'Chaos Tee | Sinternet Cult',
+                'seoTitle': 'Chaos Tee | Example Store',
                 'metaDescription': 'Search-ready chaos tee copy.',
               },
               'issueNotes': ['Missing meta description'],
@@ -44,14 +44,14 @@ void main() {
       expect(product.productType, 'Apparel');
       expect(product.tags, ['tee', 'internet']);
       expect(product.currentSeoTitle, 'Chaos Tee');
-      expect(product.proposedSeoTitle, 'Chaos Tee | Sinternet Cult');
+      expect(product.proposedSeoTitle, 'Chaos Tee | Example Store');
       expect(product.issueNotes, ['Missing meta description']);
     });
 
     test('decodes v2 images variants collections and timestamps', () {
       final snapshot = ShopifySeoReviewSnapshot.decode(
         jsonEncode({
-          'shopDomain': 'sinternetcult.com',
+          'shopDomain': 'example-store.test',
           'products': [
             {
               'id': 'gid://shopify/Product/2',
@@ -82,7 +82,7 @@ void main() {
               },
               'collection_handles': 'hoodies, signal',
               'onlineStoreUrl':
-                  'https://sinternetcult.com/products/signal-hoodie',
+                  'https://example-store.test/products/signal-hoodie',
               'updatedAt': '2026-07-06T12:00:00Z',
             },
           ],
@@ -100,7 +100,7 @@ void main() {
     test('decodes nested GraphQL media preview image shapes', () {
       final snapshot = ShopifySeoReviewSnapshot.decode(
         jsonEncode({
-          'shopDomain': 'sinternetcult.com',
+          'shopDomain': 'example-store.test',
           'products': [
             {
               'id': 'gid://shopify/Product/3',
@@ -169,7 +169,7 @@ void main() {
     });
 
     test('marks selected products queued without changing others', () {
-      final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
+      final snapshot = ShopifySeoReviewSnapshot.sampleExampleStore();
       final queued = snapshot.markQueued({snapshot.products.first.id});
 
       expect(queued.products.first.status, 'queued');
@@ -178,13 +178,13 @@ void main() {
     });
 
     test('default product selection is empty for catalog safety', () {
-      final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
+      final snapshot = ShopifySeoReviewSnapshot.sampleExampleStore();
 
       expect(defaultShopifySeoProductSelection(snapshot), isEmpty);
     });
 
     test('batch context is stage-only and product scoped', () {
-      final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
+      final snapshot = ShopifySeoReviewSnapshot.sampleExampleStore();
       final context = snapshot.products.first.toBatchContext(
         shopDomain: snapshot.shopDomain,
       );

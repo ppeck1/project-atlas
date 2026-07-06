@@ -216,7 +216,7 @@ class ShopifySeoAnalyzer {
     String? brandName,
   }) {
     final brand =
-        _clean(brandName) ?? _brandFromDomain(shopDomain) ?? 'Sinternet Cult';
+        _clean(brandName) ?? _brandFromDomain(shopDomain) ?? 'Example Store';
     final productType = _clean(product.productType);
     final titleBase = _dedupeWords(product.title);
     final seoTitle =
@@ -1094,7 +1094,7 @@ String? _brandFromDomain(String domain) {
       .first
       .replaceFirst(RegExp(r'^www\.'), '');
   final stem = host.split('.').first;
-  if (stem == 'sinternetcult') return 'Sinternet Cult';
+  if (stem == 'example-store') return 'Example Store';
   if (stem.isEmpty) return null;
   return stem
       .split(RegExp(r'[-_]+'))

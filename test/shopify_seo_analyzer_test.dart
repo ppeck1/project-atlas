@@ -29,7 +29,7 @@ void main() {
 
     test('duplicate meta descriptions across products are detected', () {
       final snapshot = ShopifySeoReviewSnapshot(
-        shopDomain: 'sinternetcult.com',
+        shopDomain: 'example-store.test',
         source: 'test',
         syncedAt: DateTime(2026, 1, 1),
         products: [
@@ -108,14 +108,14 @@ void main() {
     test('existing v1 sample JSON still decodes', () {
       final snapshot = ShopifySeoReviewSnapshot.decode(
         jsonEncode({
-          'shopDomain': 'sinternetcult.com',
+          'shopDomain': 'example-store.test',
           'products': [
             {
               'id': 'gid://shopify/Product/1',
               'handle': 'chaos-tee',
               'title': 'Chaos Tee',
               'product_type': 'Apparel',
-              'vendor': 'Sinternet Cult',
+              'vendor': 'Example Store',
               'tags': 'tee, internet',
               'seo': {'title': 'Chaos Tee', 'description': ''},
               'body_html': '<p>Current body</p>',
@@ -132,7 +132,7 @@ void main() {
       'batch context includes analysis, proposal seed, field rules, and policy',
       () {
         final context = _product().toBatchContext(
-          shopDomain: 'sinternetcult.com',
+          shopDomain: 'example-store.test',
         );
 
         expect(context['seoAnalysis'], isA<Map<String, Object?>>());
@@ -146,8 +146,8 @@ void main() {
     test('proposal seed does not invent unsupported claims', () {
       final seed = ShopifySeoAnalyzer.generateProposalSeed(
         _product(currentDescription: 'A graphic tee.'),
-        shopDomain: 'sinternetcult.com',
-        brandName: 'Sinternet Cult',
+        shopDomain: 'example-store.test',
+        brandName: 'Example Store',
       );
       final combined = [
         seed.proposedSeoTitle,
@@ -189,9 +189,9 @@ ShopifySeoProduct _product({
   String id = 'gid://shopify/Product/test',
   String handle = 'internet-cult-core-tee',
   String title = 'Internet Cult Core Tee',
-  String? currentSeoTitle = 'Internet Cult Core Tee | Sinternet Cult',
+  String? currentSeoTitle = 'Internet Cult Core Tee | Example Store',
   String? currentMetaDescription =
-      'A graphic streetwear tee from Sinternet Cult for extremely online outfit chaos.',
+      'A graphic streetwear tee from Example Store for extremely online outfit chaos.',
   String? currentDescription =
       '<p>A graphic tee with internet culture styling for everyday wear and gifting.</p>',
   List<ShopifySeoImage> images = const [
@@ -213,7 +213,7 @@ ShopifySeoProduct _product({
   title: title,
   status: 'needs_review',
   productType: 'Tee',
-  vendor: 'Sinternet Cult',
+  vendor: 'Example Store',
   tags: const ['streetwear', 'tee'],
   currentSeoTitle: currentSeoTitle,
   currentMetaDescription: currentMetaDescription,

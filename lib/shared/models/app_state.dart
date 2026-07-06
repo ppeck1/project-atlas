@@ -1599,10 +1599,10 @@ class AppState extends ChangeNotifier {
     return id;
   }
 
-  Future<ShopifySeoReviewSnapshot> seedSinternetCultShopifySeoReview(
+  Future<ShopifySeoReviewSnapshot> seedExampleShopifySeoReview(
     String projectId,
   ) async {
-    final snapshot = ShopifySeoReviewSnapshot.sampleSinternetCult();
+    final snapshot = ShopifySeoReviewSnapshot.sampleExampleStore();
     await saveShopifySeoReviewSnapshot(
       projectId: projectId,
       snapshot: snapshot,

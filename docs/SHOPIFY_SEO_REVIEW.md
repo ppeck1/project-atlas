@@ -1,6 +1,6 @@
 # Shopify SEO Review
 
-Project Atlas includes a draft-backed Shopify SEO review workflow for storefront product catalogs such as `sinternetcult.com`.
+Project Atlas includes a draft-backed Shopify SEO review workflow for storefront product catalogs such as `example-store.test`.
 
 The workflow is intentionally local and stage-only. It can import Shopify-like product JSON, analyze SEO readiness, prioritize product issues, export review packets, and queue product-level SEO improvement tasks. It does not write to Shopify. The snapshot schema is ready for a future read-only Shopify Admin API catalog sync path, but this slice does not require Admin API credentials.
 
@@ -24,17 +24,17 @@ Minimal v1 shape:
 
 ```json
 {
-  "shopDomain": "sinternetcult.com",
+  "shopDomain": "example-store.test",
   "products": [
     {
       "id": "gid://shopify/Product/1",
       "handle": "chaos-tee",
       "title": "Chaos Tee",
       "product_type": "Apparel",
-      "vendor": "Sinternet Cult",
+      "vendor": "Example Store",
       "tags": "tee, internet",
       "seo": {
-        "title": "Chaos Tee | Sinternet Cult",
+        "title": "Chaos Tee | Example Store",
         "description": "A readable product-specific snippet."
       },
       "body_html": "<p>Product description.</p>"
@@ -45,7 +45,7 @@ Minimal v1 shape:
 
 V2 can also include:
 
-- `brandName`, otherwise Atlas falls back to the most common product vendor, then shop domain, then `Sinternet Cult`
+- `brandName`, otherwise Atlas falls back to the most common product vendor, then shop domain, then `Example Store`
 - `images` with `id`, `src`, `alt`, `width`, `height`, and `position`
 - `variants` with `id`, `title`, `sku`, `price`, `barcode`, options, and availability
 - `collections`, `collectionTitles`, or `collection_handles`
@@ -123,10 +123,10 @@ The CSV review table includes product id, handle, title, status, score, issue co
 
 Read-only Shopify Admin API sync should feed the same `ShopifySeoReviewSnapshot` v2 model and preserve this draft-backed review surface. The future client should keep the access token in memory only, send it as `X-Shopify-Access-Token`, refresh before expiration, and reject GraphQL mutation strings locally before a request can be sent.
 
-Local credentials may come from environment variables or `.local/shopify_sinternetcult.env`:
+Local credentials may come from environment variables or `.local/shopify_example.env`:
 
 ```text
-SHOPIFY_SHOP=sinternetcult.myshopify.com
+SHOPIFY_SHOP=example-store.myshopify.com
 SHOPIFY_CLIENT_ID=...
 SHOPIFY_CLIENT_SECRET=...
 SHOPIFY_API_VERSION=2026-01
@@ -139,11 +139,11 @@ The `.local/` directory and common Shopify secret/token filenames are ignored by
 
 1. In Shopify admin, create a custom app for the store.
 2. Grant only read scopes needed for catalog review, starting with product/catalog read access such as `read_products`.
-3. Store the client id, client secret, shop, API version, and `SHOPIFY_SYNC_MODE=read_only` in environment variables or `.local/shopify_sinternetcult.env`.
+3. Store the client id, client secret, shop, API version, and `SHOPIFY_SYNC_MODE=read_only` in environment variables or `.local/shopify_example.env`.
 4. Import the generated snapshot JSON into Project Detail -> Shopify SEO.
 5. Review, export, and queue product batches from the snapshot.
 
-For `sinternetcult.com`, the public repo should only contain the shop domain and non-secret workflow docs. Shopify credentials belong in local ignored secret files or process environment only.
+For `example-store.test`, the public repo should only contain the shop domain and non-secret workflow docs. Shopify credentials belong in local ignored secret files or process environment only.
 
 ## Future MCP Path
 

@@ -22,7 +22,7 @@ void main() {
 
     test('already queued products are skipped at service layer', () async {
       final snapshot = ShopifySeoReviewSnapshot(
-        shopDomain: 'sinternetcult.com',
+        shopDomain: 'example-store.test',
         source: 'test',
         syncedAt: DateTime(2026, 1, 1),
         products: const [
@@ -31,7 +31,7 @@ void main() {
             handle: 'queued-product',
             title: 'Queued Product',
             status: 'queued',
-            vendor: 'Sinternet Cult',
+            vendor: 'Example Store',
           ),
         ],
       );

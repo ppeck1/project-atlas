@@ -20,7 +20,7 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Project organization: category grouping, pinned categories/projects, category visibility selection, category and project sorting, tag assignment, project filters for context/status/phase/priority, status descriptors for Open/Review/Inactive/Closed lifecycle states, and project merge
 - Project runtime profiles: opt-in per-project launch/stop/test commands, ports, URLs, and health checks with Launch/Test/Capsule actions, run history, settings-backed Dev Launchpad/capsule defaults, Dev Launchpad YAML import, and Project Ops Capsule integration — commands are operator-configured and never invented by the app
 - Project change log: per-project event history with changed-field views, newest/oldest sort controls, JSON copy, and persisted AI change-summary drafts in Project Detail
-- Shopify SEO review: Project Detail can store a draft-backed product SEO snapshot for Shopify storefronts, seed a plug-and-play `sinternetcult.com` review set, import v1/v2 Shopify-like product JSON, score deterministic SEO issues, filter/sort by review need, export JSON/CSV/Markdown packets, and queue product-level SEO review batches without live Shopify writes
+- Shopify SEO review: Project Detail can store a draft-backed product SEO snapshot for Shopify storefronts, seed a plug-and-play `example-store.test` review set, import v1/v2 Shopify-like product JSON, score deterministic SEO issues, filter/sort by review need, export JSON/CSV/Markdown packets, and queue product-level SEO review batches without live Shopify writes
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
 - Project governance: people roster, risk register, decision log
 - Workboard planning layer: global board grouped by readiness with filters for project/readiness/actor/risk/size/blocked/review/stale/high-priority, deterministic snapshot counts, ready-only execution candidates, separate planning/decision candidates, and explicit bulk planning actions for work items and queue items
@@ -192,7 +192,7 @@ AI actions available:
 
 Shopify Admin API sync is planned as a plug-and-play read-only catalog import path. Until that importer is enabled, Atlas uses a local JSON review snapshot and the same project-level Shopify SEO table.
 
-When enabled, the connection should load local credentials from environment variables or `.local/shopify_sinternetcult.env`: `SHOPIFY_SHOP`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION`, and `SHOPIFY_SYNC_MODE=read_only`. The client should keep access tokens in memory only, send `X-Shopify-Access-Token`, and reject GraphQL mutation strings locally. No live Shopify writes, write scopes, product mutation, order/customer access, broad MCP Shopify tools, or persisted secrets are part of this path.
+When enabled, the connection should load local credentials from environment variables or `.local/shopify_example.env`: `SHOPIFY_SHOP`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION`, and `SHOPIFY_SYNC_MODE=read_only`. The client should keep access tokens in memory only, send `X-Shopify-Access-Token`, and reject GraphQL mutation strings locally. No live Shopify writes, write scopes, product mutation, order/customer access, broad MCP Shopify tools, or persisted secrets are part of this path.
 
 ## Agent / MCP Boundary
 

@@ -36,7 +36,7 @@ class ShopifySeoReviewSnapshot {
       stringValue(brandName) ??
       _mostCommonVendor(products) ??
       _brandFromDomain(shopDomain) ??
-      'Sinternet Cult';
+      'Example Store';
 
   Map<String, Object?> toJson() => {
     'schema': 'shopify_seo_review_snapshot_v2',
@@ -105,7 +105,7 @@ class ShopifySeoReviewSnapshot {
     final decoded = jsonDecode(raw);
     if (decoded is List) {
       return fromJson({
-        'shopDomain': 'sinternetcult.com',
+        'shopDomain': 'example-store.test',
         'source': 'imported_json',
         'syncedAt': DateTime.now().toIso8601String(),
         'products': decoded,
@@ -123,7 +123,7 @@ class ShopifySeoReviewSnapshot {
       throw const FormatException('Shopify SEO review requires products[].');
     }
     return ShopifySeoReviewSnapshot(
-      shopDomain: stringValue(json['shopDomain']) ?? 'sinternetcult.com',
+      shopDomain: stringValue(json['shopDomain']) ?? 'example-store.test',
       brandName:
           stringValue(json['brandName']) ?? stringValue(json['brand_name']),
       source: stringValue(json['source']) ?? 'shopify_admin_api_stub',
@@ -141,11 +141,11 @@ class ShopifySeoReviewSnapshot {
     );
   }
 
-  static ShopifySeoReviewSnapshot sampleSinternetCult() {
+  static ShopifySeoReviewSnapshot sampleExampleStore() {
     final now = DateTime.now();
     return ShopifySeoReviewSnapshot(
-      shopDomain: 'sinternetcult.com',
-      brandName: 'Sinternet Cult',
+      shopDomain: 'example-store.test',
+      brandName: 'Example Store',
       source: 'shopify_admin_api_stub',
       syncedAt: now,
       products: const [
@@ -155,23 +155,23 @@ class ShopifySeoReviewSnapshot {
           title: 'Internet Cult Core Tee',
           status: 'needs_review',
           productType: 'Apparel',
-          vendor: 'Sinternet Cult',
+          vendor: 'Example Store',
           tags: ['streetwear', 'tee', 'dropship'],
           collections: ['Tees'],
           currentSeoTitle: '',
           currentMetaDescription: '',
           currentDescription:
               'Graphic tee for the extremely online and spiritually unwell.',
-          proposedSeoTitle: 'Internet Cult Core Tee | Sinternet Cult',
+          proposedSeoTitle: 'Internet Cult Core Tee | Example Store',
           proposedMetaDescription:
-              'Shop the Internet Cult Core Tee from Sinternet Cult, a graphic streetwear shirt for extremely online chaos.',
+              'Shop the Internet Cult Core Tee from Example Store, a graphic streetwear shirt for extremely online chaos.',
           proposedDescription:
               'A graphic tee for extremely online streetwear fans, built as a first SEO review placeholder until Shopify sync is connected.',
           images: [
             ShopifySeoImage(
               id: 'demo-img-001',
               src:
-                  'https://sinternetcult.com/products/internet-cult-core-tee.png',
+                  'https://example-store.test/products/internet-cult-core-tee.png',
               alt: '',
               width: 1200,
               height: 1200,
@@ -199,14 +199,14 @@ class ShopifySeoReviewSnapshot {
           title: 'Doomscroll Recovery Hoodie',
           status: 'needs_review',
           productType: 'Apparel',
-          vendor: 'Sinternet Cult',
+          vendor: 'Example Store',
           tags: ['hoodie', 'streetwear', 'comfort'],
           collections: ['Hoodies'],
           currentSeoTitle: 'Doomscroll Hoodie',
           currentMetaDescription: '',
           currentDescription:
               'Soft hoodie for logging off without actually logging off.',
-          proposedSeoTitle: 'Doomscroll Recovery Hoodie | Sinternet Cult',
+          proposedSeoTitle: 'Doomscroll Recovery Hoodie | Example Store',
           proposedMetaDescription:
               'A soft graphic hoodie for internet culture, comfort, and late-night scrolling recovery.',
           proposedDescription:
@@ -215,7 +215,7 @@ class ShopifySeoReviewSnapshot {
             ShopifySeoImage(
               id: 'demo-img-002',
               src:
-                  'https://sinternetcult.com/products/doomscroll-recovery-hoodie.png',
+                  'https://example-store.test/products/doomscroll-recovery-hoodie.png',
               alt: 'Doomscroll Recovery Hoodie',
               width: 1200,
               height: 1200,
@@ -319,7 +319,7 @@ class ShopifySeoProduct {
     final resolvedBrandName =
         stringValue(brandName) ??
         _brandFromDomain(shopDomain) ??
-        'Sinternet Cult';
+        'Example Store';
     final analysis = ShopifySeoAnalyzer.analyzeProduct(this);
     final proposalSeed = ShopifySeoAnalyzer.generateProposalSeed(
       this,
@@ -704,7 +704,7 @@ String? _brandFromDomain(String domain) {
       .first
       .replaceFirst(RegExp(r'^www\.'), '');
   final stem = host.split('.').first;
-  if (stem == 'sinternetcult') return 'Sinternet Cult';
+  if (stem == 'example-store') return 'Example Store';
   if (stem.isEmpty) return null;
   return stem
       .split(RegExp(r'[-_]+'))
