@@ -53,6 +53,44 @@ SENSITIVE_TEXT_PATTERNS = {
 
 HTTP_TIMEOUT_SECONDS = 75
 
+SENSITIVE_FIXTURE = {
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": (
+                    "Manual fixture from B:\\Projects\\LLM_Modules\\Project_Ops_Capsule "
+                    "owned by Paul Peck at atlas.owner@example.com."
+                ),
+            }
+        ],
+        "draftText": "DRAFT_FIXTURE_SHOULD_NOT_LEAK",
+        "proposalBody": "PROPOSAL_BODY_FIXTURE_SHOULD_NOT_LEAK",
+        "queueContext": {
+            "repoPath": "B:\\dev\\Project_Atlas\\project-atlas-main",
+            "detail": "QUEUE_CONTEXT_FIXTURE_SHOULD_NOT_LEAK",
+        },
+    }
+}
+
+SENSITIVE_FIXTURE_FORBIDDEN = {
+    "B:",
+    "Project_Ops_Capsule",
+    "project-atlas-main",
+    "atlas.owner@example.com",
+    "Paul Peck",
+    "DRAFT_FIXTURE_SHOULD_NOT_LEAK",
+    "PROPOSAL_BODY_FIXTURE_SHOULD_NOT_LEAK",
+    "QUEUE_CONTEXT_FIXTURE_SHOULD_NOT_LEAK",
+}
+
+SENSITIVE_FIXTURE_REQUIRED_REDACTIONS = {
+    "[redacted:path]",
+    "[redacted:email]",
+    "[redacted:person]",
+    "[redacted:private-context]",
+}
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -185,26 +223,18 @@ def assert_no_sensitive_payload(label: str, payload: Any) -> None:
 
 
 def assert_gateway_redaction_self_test(gateway_module: ModuleType) -> None:
-    synthetic = {
-        "result": {
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        "Owner Paul Peck has draft context in "
-                        "B:\\Projects\\LLM_Modules\\Project_Ops_Capsule and "
-                        "paul.peck@example.com"
-                    ),
-                }
-            ],
-            "draftText": "private queue draft at C:\\Users\\peckm\\draft.txt",
-            "proposalBody": "unresolved proposal body",
-            "queueContext": {"repoPath": "B:/dev/Project_Atlas/project-atlas-main"},
-        }
-    }
-    redacted = gateway_module.redact_gateway_payload(synthetic)
+    redacted = gateway_module.redact_gateway_payload(SENSITIVE_FIXTURE)
     assert_no_sensitive_payload("gateway redaction self-test", redacted)
-    if "[redacted:" not in json.dumps(redacted):
+    encoded = json.dumps(redacted, sort_keys=True)
+    leaked = sorted(value for value in SENSITIVE_FIXTURE_FORBIDDEN if value in encoded)
+    if leaked:
+        raise AssertionError(f"redaction fixture leaked sensitive values: {leaked}")
+    missing = sorted(
+        value for value in SENSITIVE_FIXTURE_REQUIRED_REDACTIONS if value not in encoded
+    )
+    if missing:
+        raise AssertionError(f"redaction fixture missing masks: {missing}")
+    if "[redacted:" not in encoded:
         raise AssertionError(f"redaction self-test did not redact payload: {redacted}")
 
 
