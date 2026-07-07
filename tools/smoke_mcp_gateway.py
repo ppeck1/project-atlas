@@ -59,6 +59,7 @@ OAUTH_SCOPE = "atlas.read"
 OAUTH_SMOKE_TOKEN = "atlas-oauth-smoke-token"
 OAUTH_MISSING_SCOPE_TOKEN = "atlas-oauth-missing-scope-token"
 OAUTH_WRONG_AUDIENCE_TOKEN = "atlas-oauth-wrong-audience-token"
+OAUTH_JWKS_KEY_ID = "atlas-smoke-jwks-key"
 
 SENSITIVE_FIXTURE = {
     "result": {
@@ -389,6 +390,27 @@ class OAuthIntrospectionServer(http.server.ThreadingHTTPServer):
     token_payloads: dict[str, dict[str, Any]]
 
 
+class OAuthJwksHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path != "/.well-known/jwks.json":
+            self.send_response(404)
+            self.end_headers()
+            return
+        encoded = json.dumps({"keys": [self.server.public_jwk]}).encode("utf-8")  # type: ignore[attr-defined]
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        return
+
+
+class OAuthJwksServer(http.server.ThreadingHTTPServer):
+    public_jwk: dict[str, Any]
+
+
 def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str]) -> dict[str, Any]:
     auth_server = OAuthIntrospectionServer(("127.0.0.1", 0), OAuthIntrospectionHandler)
     auth_port = int(auth_server.server_address[1])
@@ -452,6 +474,14 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
             raise AssertionError(f"bad auth servers: {metadata}")
         if metadata.get("scopes_supported") != [OAUTH_SCOPE]:
             raise AssertionError(f"bad scopes: {metadata}")
+        alias_status, alias_metadata = request_json(
+            f"{base_url}/.well-known/oauth-protected-resource/mcp"
+        )
+        if alias_status != 200 or alias_metadata != metadata:
+            raise AssertionError(
+                f"bad path-specific protected resource metadata: "
+                f"{alias_status} {alias_metadata}"
+            )
 
         assert_oauth_unauthorized(base_url, 201, "oauth missing token")
         assert_oauth_unauthorized(
@@ -533,6 +563,169 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
             "protectedResource": True,
             "negativePaths": 4,
             "originValidated": True,
+        }
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        auth_server.shutdown()
+        auth_server.server_close()
+
+
+def run_oauth_jwks_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str]) -> dict[str, Any]:
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_jwk["kid"] = OAUTH_JWKS_KEY_ID
+    public_jwk["use"] = "sig"
+    public_jwk["alg"] = "RS256"
+
+    auth_server = OAuthJwksServer(("127.0.0.1", 0), OAuthJwksHandler)
+    auth_server.public_jwk = public_jwk
+    auth_port = int(auth_server.server_address[1])
+    auth_base = f"http://127.0.0.1:{auth_port}"
+    auth_thread = threading.Thread(target=auth_server.serve_forever, daemon=True)
+    auth_thread.start()
+
+    port = free_port()
+    base_url = f"http://{args.host}:{port}"
+    now = int(time.time())
+
+    def make_token(**overrides: Any) -> str:
+        payload = {
+            "iss": auth_base,
+            "aud": base_url,
+            "iat": now,
+            "exp": now + 300,
+            "scope": OAUTH_SCOPE,
+        }
+        payload.update(overrides)
+        return jwt.encode(
+            payload,
+            private_key,
+            algorithm="RS256",
+            headers={"kid": OAUTH_JWKS_KEY_ID},
+        )
+
+    valid_token = make_token(iss=f"{auth_base}/")
+    missing_scope_token = make_token(scope="profile")
+    wrong_audience_token = make_token(aud=f"{base_url}/wrong-resource")
+    expired_token = make_token(exp=now - 30)
+
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            str(args.gateway),
+            "--host",
+            args.host,
+            "--port",
+            str(port),
+            "--exe",
+            str(args.exe),
+            "--auth-mode",
+            "oauth",
+            "--resource-url",
+            base_url,
+            "--authorization-server",
+            auth_base,
+            "--jwks-url",
+            f"{auth_base}/.well-known/jwks.json",
+            "--scope",
+            OAUTH_SCOPE,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        wait_for_health(base_url)
+
+        status, metadata = request_json(f"{base_url}/.well-known/oauth-protected-resource")
+        if status != 200:
+            raise AssertionError(f"bad jwks metadata status: {status} {metadata}")
+        if metadata.get("resource") != base_url:
+            raise AssertionError(f"bad jwks protected resource: {metadata}")
+        if metadata.get("authorization_servers") != [auth_base]:
+            raise AssertionError(f"bad jwks auth servers: {metadata}")
+        if metadata.get("jwks_uri") != f"{auth_base}/.well-known/jwks.json":
+            raise AssertionError(f"bad jwks uri metadata: {metadata}")
+        alias_status, alias_metadata = request_json(
+            f"{base_url}/.well-known/oauth-protected-resource/mcp"
+        )
+        if alias_status != 200 or alias_metadata != metadata:
+            raise AssertionError(
+                f"bad jwks path-specific protected resource metadata: "
+                f"{alias_status} {alias_metadata}"
+            )
+
+        assert_oauth_unauthorized(base_url, 301, "jwks missing token")
+        assert_oauth_unauthorized(
+            base_url,
+            302,
+            "jwks invalid token",
+            token="wrong-oauth-token",
+        )
+        assert_oauth_unauthorized(
+            base_url,
+            303,
+            "jwks missing atlas.read scope",
+            token=missing_scope_token,
+        )
+        assert_oauth_unauthorized(
+            base_url,
+            304,
+            "jwks wrong audience",
+            token=wrong_audience_token,
+        )
+        assert_oauth_unauthorized(
+            base_url,
+            305,
+            "jwks expired token",
+            token=expired_token,
+        )
+
+        status, tools_list = request_json(
+            f"{base_url}/mcp",
+            rpc("tools/list", 306, {}),
+            token=valid_token,
+        )
+        tool_names = {
+            tool["name"] for tool in tools_list.get("result", {}).get("tools", [])
+        }
+        if tool_names != ALLOWED_TOOLS:
+            raise AssertionError(f"unexpected jwks remote tools: {sorted(tool_names)}")
+        assert_no_sensitive_payload("jwks tools/list", tools_list)
+
+        status, projects = request_json(
+            f"{base_url}/mcp",
+            rpc(
+                "tools/call",
+                307,
+                {"name": "list_projects", "arguments": {"includeArchived": False}},
+            ),
+            token=valid_token,
+        )
+        if status != 200 or projects.get("result", {}).get("isError"):
+            raise AssertionError(f"jwks list_projects failed: {status} {projects}")
+        assert_no_sensitive_payload("jwks list_projects", projects)
+
+        hidden_tools = sorted(all_stdio_tools.difference(tool_names))
+        assert_denied_tool(
+            base_url,
+            valid_token,
+            308,
+            hidden_tools[0],
+        )
+        return {
+            "tools": len(tool_names),
+            "challenge": True,
+            "protectedResource": True,
+            "negativePaths": 5,
+            "hiddenToolRejected": True,
         }
     finally:
         proc.terminate()
@@ -698,6 +891,7 @@ def main(argv: list[str] | None = None) -> int:
             assert_denied_tool(base_url, args.token, offset, hidden_tool)
 
         oauth_summary = run_oauth_gateway_smoke(args, all_stdio_tools)
+        oauth_jwks_summary = run_oauth_jwks_gateway_smoke(args, all_stdio_tools)
 
         print(
             json.dumps(
@@ -708,6 +902,7 @@ def main(argv: list[str] | None = None) -> int:
                     "hiddenToolsRejected": len(hidden_tools),
                     "deniedToolsExposed": exposed_denied,
                     "oauth": oauth_summary,
+                    "oauthJwks": oauth_jwks_summary,
                 },
                 indent=2,
             )

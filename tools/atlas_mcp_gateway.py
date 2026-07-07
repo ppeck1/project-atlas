@@ -37,6 +37,7 @@ AUTH_MODE_OAUTH = "oauth"
 DEFAULT_OAUTH_SCOPE = "atlas.read"
 DEFAULT_UNSAFE_BIND_HOSTS = {"0.0.0.0"}
 LOCALHOST_NAMES = {"localhost"}
+MAX_MCP_REQUEST_BYTES = 1024 * 1024
 
 SENSITIVE_READ_TOOLS = {
     "get_project_brief",
@@ -266,6 +267,7 @@ class OAuthConfig:
         introspection_url: str | None = None,
         introspection_client_id: str | None = None,
         introspection_client_secret: str | None = None,
+        jwks_url: str | None = None,
     ) -> None:
         self.resource_url = resource_url.rstrip("/")
         self.authorization_servers = authorization_servers
@@ -274,6 +276,7 @@ class OAuthConfig:
         self.introspection_url = introspection_url
         self.introspection_client_id = introspection_client_id
         self.introspection_client_secret = introspection_client_secret
+        self.jwks_url = jwks_url
 
     @property
     def metadata_url(self) -> str:
@@ -345,6 +348,44 @@ class OAuthIntrospectionVerifier(TokenVerifier):
         return True, ""
 
 
+class OAuthJwksVerifier(TokenVerifier):
+    def __init__(self, config: OAuthConfig, timeout: int) -> None:
+        self.config = config
+        self.timeout = timeout
+        try:
+            import jwt
+        except ImportError as error:
+            raise RuntimeError(
+                "PyJWT is required for OAuth JWKS validation. "
+                "Install PyJWT or use --introspection-url."
+            ) from error
+        self.jwt = jwt
+        self.jwk_client = jwt.PyJWKClient(
+            config.jwks_url,
+            timeout=timeout,
+        )
+
+    def verify(self, token: str) -> tuple[bool, str]:
+        try:
+            signing_key = self.jwk_client.get_signing_key_from_jwt(token)
+            payload = self.jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=self.config.resource_url,
+                options={"require": ["exp", "iat"]},
+            )
+        except Exception as error:
+            return False, f"oauth jwt validation failed: {error}"
+        if not isinstance(payload, dict):
+            return False, "oauth jwt payload is invalid"
+        if not _issuer_matches(payload, self.config.authorization_servers):
+            return False, "oauth token issuer does not match authorization server"
+        if not _payload_has_scope(payload, self.config.scope):
+            return False, "oauth token is missing required scope"
+        return True, ""
+
+
 class GatewayState:
     def __init__(
         self,
@@ -363,9 +404,14 @@ class GatewayState:
         if auth_mode == AUTH_MODE_OAUTH:
             if oauth_config is None:
                 raise ValueError("oauth_config is required for oauth mode")
-            self.token_verifier: TokenVerifier = OAuthIntrospectionVerifier(
-                oauth_config, timeout
-            )
+            if oauth_config.jwks_url:
+                self.token_verifier: TokenVerifier = OAuthJwksVerifier(
+                    oauth_config, timeout
+                )
+            else:
+                self.token_verifier = OAuthIntrospectionVerifier(
+                    oauth_config, timeout
+                )
         elif token:
             self.token_verifier = StaticTokenVerifier(token)
         else:
@@ -396,6 +442,22 @@ def _scope_contains(scope_value: Any, required_scope: str) -> bool:
     if isinstance(scope_value, list):
         return required_scope in {str(scope) for scope in scope_value}
     return False
+
+
+def _payload_has_scope(payload: dict[str, Any], required_scope: str) -> bool:
+    return (
+        _scope_contains(payload.get("scope"), required_scope)
+        or _scope_contains(payload.get("scp"), required_scope)
+        or _scope_contains(payload.get("permissions"), required_scope)
+    )
+
+
+def _issuer_matches(payload: dict[str, Any], authorization_servers: list[str]) -> bool:
+    issuer = payload.get("iss")
+    if not isinstance(issuer, str):
+        return False
+    normalized_issuer = issuer.rstrip("/")
+    return normalized_issuer in {server.rstrip("/") for server in authorization_servers}
 
 
 def _audience_matches(payload: dict[str, Any], resource_url: str) -> bool:
@@ -585,16 +647,20 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         return self.server.gateway_state  # type: ignore[attr-defined]
 
     def do_GET(self) -> None:
-        if self.path in {"/healthz", "/health"}:
+        request_path = urllib.parse.urlparse(self.path).path
+        if request_path in {"/healthz", "/health"}:
             self._send_json(HTTPStatus.OK, {"status": "ok"})
             return
-        if self.path == "/.well-known/oauth-protected-resource":
+        if request_path in {
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-protected-resource/mcp",
+        }:
             if self.state.oauth_config is None:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             self._send_json(HTTPStatus.OK, self._oauth_protected_resource_metadata())
             return
-        if self.path == "/.well-known/project-atlas-mcp":
+        if request_path == "/.well-known/project-atlas-mcp":
             self._send_json(
                 HTTPStatus.OK,
                 {
@@ -607,7 +673,7 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        if self.path == "/mcp":
+        if request_path == "/mcp":
             if not self._origin_allowed():
                 self._send_forbidden_origin()
                 return
@@ -627,9 +693,15 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_POST(self) -> None:
-        if self.path != "/mcp":
+        request_path = urllib.parse.urlparse(self.path).path
+        if request_path != "/mcp":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
+        length = int(self.headers.get("Content-Length") or "0")
+        if length > MAX_MCP_REQUEST_BYTES:
+            self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "payload_too_large"})
+            return
+        raw = self.rfile.read(length)
         if not self._origin_allowed():
             self._send_forbidden_origin()
             return
@@ -637,8 +709,6 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             self._send_unauthorized()
             return
 
-        length = int(self.headers.get("Content-Length") or "0")
-        raw = self.rfile.read(length)
         try:
             decoded = json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError as error:
@@ -651,7 +721,10 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         responses = self._handle_json_rpc(decoded)
         if responses is None:
             self.send_response(HTTPStatus.ACCEPTED)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
             self.end_headers()
+            self.close_connection = True
             return
         self._send_json(HTTPStatus.OK, responses)
 
@@ -756,6 +829,8 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             metadata["resource_documentation"] = config.resource_documentation
         if config.introspection_url:
             metadata["introspection_endpoint"] = config.introspection_url
+        if config.jwks_url:
+            metadata["jwks_uri"] = config.jwks_url
         return metadata
 
     def _send_unauthorized(self) -> None:
@@ -793,10 +868,12 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Connection", "close")
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
         self.wfile.write(encoded)
+        self.close_connection = True
 
     def log_message(self, fmt: str, *args: Any) -> None:
         logging.info("%s - %s", self.address_string(), fmt % args)
@@ -866,6 +943,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--introspection-client-secret",
         default=os.environ.get("ATLAS_MCP_INTROSPECTION_CLIENT_SECRET"),
     )
+    parser.add_argument(
+        "--jwks-url",
+        default=os.environ.get("ATLAS_MCP_JWKS_URL"),
+        help="JWKS endpoint for JWT bearer-token validation, for example Auth0.",
+    )
     parser.add_argument("--timeout", type=int, default=45)
     return parser.parse_args(argv)
 
@@ -914,6 +996,7 @@ def main(argv: list[str] | None = None) -> int:
             introspection_url=args.introspection_url,
             introspection_client_id=args.introspection_client_id,
             introspection_client_secret=args.introspection_client_secret,
+            jwks_url=args.jwks_url,
         )
     try:
         allowed_origins = build_allowed_origins(

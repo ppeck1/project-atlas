@@ -27,6 +27,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Install MCP gateway Python dependencies
+        run: python -m pip install "PyJWT[crypto]"
+
       - name: Generate Drift code
         run: dart run build_runner build --delete-conflicting-outputs
 
