@@ -37,6 +37,7 @@ AUTH_MODE_OAUTH = "oauth"
 DEFAULT_OAUTH_SCOPE = "atlas.read"
 DEFAULT_UNSAFE_BIND_HOSTS = {"0.0.0.0"}
 LOCALHOST_NAMES = {"localhost"}
+MAX_MCP_REQUEST_BYTES = 1024 * 1024
 
 SENSITIVE_READ_TOOLS = {
     "get_project_brief",
@@ -372,13 +373,14 @@ class OAuthJwksVerifier(TokenVerifier):
                 signing_key.key,
                 algorithms=["RS256"],
                 audience=self.config.resource_url,
-                issuer=self.config.authorization_servers[0],
                 options={"require": ["exp", "iat"]},
             )
         except Exception as error:
             return False, f"oauth jwt validation failed: {error}"
         if not isinstance(payload, dict):
             return False, "oauth jwt payload is invalid"
+        if not _issuer_matches(payload, self.config.authorization_servers):
+            return False, "oauth token issuer does not match authorization server"
         if not _payload_has_scope(payload, self.config.scope):
             return False, "oauth token is missing required scope"
         return True, ""
@@ -448,6 +450,14 @@ def _payload_has_scope(payload: dict[str, Any], required_scope: str) -> bool:
         or _scope_contains(payload.get("scp"), required_scope)
         or _scope_contains(payload.get("permissions"), required_scope)
     )
+
+
+def _issuer_matches(payload: dict[str, Any], authorization_servers: list[str]) -> bool:
+    issuer = payload.get("iss")
+    if not isinstance(issuer, str):
+        return False
+    normalized_issuer = issuer.rstrip("/")
+    return normalized_issuer in {server.rstrip("/") for server in authorization_servers}
 
 
 def _audience_matches(payload: dict[str, Any], resource_url: str) -> bool:
@@ -637,16 +647,20 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         return self.server.gateway_state  # type: ignore[attr-defined]
 
     def do_GET(self) -> None:
-        if self.path in {"/healthz", "/health"}:
+        request_path = urllib.parse.urlparse(self.path).path
+        if request_path in {"/healthz", "/health"}:
             self._send_json(HTTPStatus.OK, {"status": "ok"})
             return
-        if self.path == "/.well-known/oauth-protected-resource":
+        if request_path in {
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-protected-resource/mcp",
+        }:
             if self.state.oauth_config is None:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             self._send_json(HTTPStatus.OK, self._oauth_protected_resource_metadata())
             return
-        if self.path == "/.well-known/project-atlas-mcp":
+        if request_path == "/.well-known/project-atlas-mcp":
             self._send_json(
                 HTTPStatus.OK,
                 {
@@ -659,7 +673,7 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        if self.path == "/mcp":
+        if request_path == "/mcp":
             if not self._origin_allowed():
                 self._send_forbidden_origin()
                 return
@@ -679,9 +693,15 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_POST(self) -> None:
-        if self.path != "/mcp":
+        request_path = urllib.parse.urlparse(self.path).path
+        if request_path != "/mcp":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
+        length = int(self.headers.get("Content-Length") or "0")
+        if length > MAX_MCP_REQUEST_BYTES:
+            self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "payload_too_large"})
+            return
+        raw = self.rfile.read(length)
         if not self._origin_allowed():
             self._send_forbidden_origin()
             return
@@ -689,8 +709,6 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             self._send_unauthorized()
             return
 
-        length = int(self.headers.get("Content-Length") or "0")
-        raw = self.rfile.read(length)
         try:
             decoded = json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError as error:
@@ -703,7 +721,10 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         responses = self._handle_json_rpc(decoded)
         if responses is None:
             self.send_response(HTTPStatus.ACCEPTED)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
             self.end_headers()
+            self.close_connection = True
             return
         self._send_json(HTTPStatus.OK, responses)
 
@@ -847,10 +868,12 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Connection", "close")
         for key, value in (headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
         self.wfile.write(encoded)
+        self.close_connection = True
 
     def log_message(self, fmt: str, *args: Any) -> None:
         logging.info("%s - %s", self.address_string(), fmt % args)

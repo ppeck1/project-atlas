@@ -474,6 +474,14 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
             raise AssertionError(f"bad auth servers: {metadata}")
         if metadata.get("scopes_supported") != [OAUTH_SCOPE]:
             raise AssertionError(f"bad scopes: {metadata}")
+        alias_status, alias_metadata = request_json(
+            f"{base_url}/.well-known/oauth-protected-resource/mcp"
+        )
+        if alias_status != 200 or alias_metadata != metadata:
+            raise AssertionError(
+                f"bad path-specific protected resource metadata: "
+                f"{alias_status} {alias_metadata}"
+            )
 
         assert_oauth_unauthorized(base_url, 201, "oauth missing token")
         assert_oauth_unauthorized(
@@ -603,7 +611,7 @@ def run_oauth_jwks_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[
             headers={"kid": OAUTH_JWKS_KEY_ID},
         )
 
-    valid_token = make_token()
+    valid_token = make_token(iss=f"{auth_base}/")
     missing_scope_token = make_token(scope="profile")
     wrong_audience_token = make_token(aud=f"{base_url}/wrong-resource")
     expired_token = make_token(exp=now - 30)
@@ -645,6 +653,14 @@ def run_oauth_jwks_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[
             raise AssertionError(f"bad jwks auth servers: {metadata}")
         if metadata.get("jwks_uri") != f"{auth_base}/.well-known/jwks.json":
             raise AssertionError(f"bad jwks uri metadata: {metadata}")
+        alias_status, alias_metadata = request_json(
+            f"{base_url}/.well-known/oauth-protected-resource/mcp"
+        )
+        if alias_status != 200 or alias_metadata != metadata:
+            raise AssertionError(
+                f"bad jwks path-specific protected resource metadata: "
+                f"{alias_status} {alias_metadata}"
+            )
 
         assert_oauth_unauthorized(base_url, 301, "jwks missing token")
         assert_oauth_unauthorized(
