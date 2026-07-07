@@ -266,6 +266,7 @@ class OAuthConfig:
         introspection_url: str | None = None,
         introspection_client_id: str | None = None,
         introspection_client_secret: str | None = None,
+        jwks_url: str | None = None,
     ) -> None:
         self.resource_url = resource_url.rstrip("/")
         self.authorization_servers = authorization_servers
@@ -274,6 +275,7 @@ class OAuthConfig:
         self.introspection_url = introspection_url
         self.introspection_client_id = introspection_client_id
         self.introspection_client_secret = introspection_client_secret
+        self.jwks_url = jwks_url
 
     @property
     def metadata_url(self) -> str:
@@ -345,6 +347,43 @@ class OAuthIntrospectionVerifier(TokenVerifier):
         return True, ""
 
 
+class OAuthJwksVerifier(TokenVerifier):
+    def __init__(self, config: OAuthConfig, timeout: int) -> None:
+        self.config = config
+        self.timeout = timeout
+        try:
+            import jwt
+        except ImportError as error:
+            raise RuntimeError(
+                "PyJWT is required for OAuth JWKS validation. "
+                "Install PyJWT or use --introspection-url."
+            ) from error
+        self.jwt = jwt
+        self.jwk_client = jwt.PyJWKClient(
+            config.jwks_url,
+            timeout=timeout,
+        )
+
+    def verify(self, token: str) -> tuple[bool, str]:
+        try:
+            signing_key = self.jwk_client.get_signing_key_from_jwt(token)
+            payload = self.jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=self.config.resource_url,
+                issuer=self.config.authorization_servers[0],
+                options={"require": ["exp", "iat"]},
+            )
+        except Exception as error:
+            return False, f"oauth jwt validation failed: {error}"
+        if not isinstance(payload, dict):
+            return False, "oauth jwt payload is invalid"
+        if not _payload_has_scope(payload, self.config.scope):
+            return False, "oauth token is missing required scope"
+        return True, ""
+
+
 class GatewayState:
     def __init__(
         self,
@@ -363,9 +402,14 @@ class GatewayState:
         if auth_mode == AUTH_MODE_OAUTH:
             if oauth_config is None:
                 raise ValueError("oauth_config is required for oauth mode")
-            self.token_verifier: TokenVerifier = OAuthIntrospectionVerifier(
-                oauth_config, timeout
-            )
+            if oauth_config.jwks_url:
+                self.token_verifier: TokenVerifier = OAuthJwksVerifier(
+                    oauth_config, timeout
+                )
+            else:
+                self.token_verifier = OAuthIntrospectionVerifier(
+                    oauth_config, timeout
+                )
         elif token:
             self.token_verifier = StaticTokenVerifier(token)
         else:
@@ -396,6 +440,14 @@ def _scope_contains(scope_value: Any, required_scope: str) -> bool:
     if isinstance(scope_value, list):
         return required_scope in {str(scope) for scope in scope_value}
     return False
+
+
+def _payload_has_scope(payload: dict[str, Any], required_scope: str) -> bool:
+    return (
+        _scope_contains(payload.get("scope"), required_scope)
+        or _scope_contains(payload.get("scp"), required_scope)
+        or _scope_contains(payload.get("permissions"), required_scope)
+    )
 
 
 def _audience_matches(payload: dict[str, Any], resource_url: str) -> bool:
@@ -756,6 +808,8 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             metadata["resource_documentation"] = config.resource_documentation
         if config.introspection_url:
             metadata["introspection_endpoint"] = config.introspection_url
+        if config.jwks_url:
+            metadata["jwks_uri"] = config.jwks_url
         return metadata
 
     def _send_unauthorized(self) -> None:
@@ -866,6 +920,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--introspection-client-secret",
         default=os.environ.get("ATLAS_MCP_INTROSPECTION_CLIENT_SECRET"),
     )
+    parser.add_argument(
+        "--jwks-url",
+        default=os.environ.get("ATLAS_MCP_JWKS_URL"),
+        help="JWKS endpoint for JWT bearer-token validation, for example Auth0.",
+    )
     parser.add_argument("--timeout", type=int, default=45)
     return parser.parse_args(argv)
 
@@ -914,6 +973,7 @@ def main(argv: list[str] | None = None) -> int:
             introspection_url=args.introspection_url,
             introspection_client_id=args.introspection_client_id,
             introspection_client_secret=args.introspection_client_secret,
+            jwks_url=args.jwks_url,
         )
     try:
         allowed_origins = build_allowed_origins(
