@@ -11,10 +11,14 @@ This v1.4 slice adds the Workboard Planning Layer. A later Shopify SEO hardening
 - LLM queue rows now carry the same planning metadata plus `blocker_reason`.
 - `/work` is now a primary Workboard view in the left rail, grouped into Ready, Needs Decision, Blocked, In Progress, Review Needed, and Done / Closed.
 - Workboard cards show project, task title, owner/contact, readiness, size, risk, suggested actor, verification needed, due/priority/status, LLM queue linkage, blocker reason, and next action.
+- Project Detail now has per-project display controls from the settings icon beside Open Workboard. Section visibility is stored in `app_meta` and hides irrelevant opened-project sections without deleting data.
+- Project Detail Workboard entry points route to the project-scoped Workboard, and the embedded Project Workboard section includes an explicit Open full board action.
+- Project Detail bundle export now exposes the same core bundle contents as the Settings export wizard: files, AI summary, project logs, change log, clean git archive, bootstrap context, and log window.
+- Project Detail Shopify SEO loading is lifecycle-safe: review snapshots load after `AppStateScope` is available during the widget lifecycle.
 - Filters cover project, readiness, actor, risk, size, blocked only, review needed, stale/unreviewed, and high priority.
 - Bulk planning actions are explicit operator actions: mark ready, mark blocked, assign suggested actor, set size/risk/verification, mark reviewed today, create LLM queue item from work item, and link existing LLM queue item.
 - Planning Snapshot shows ready/blocked/review/stale counts, actor/risk breakdowns, ready-only execution candidates, and separate planning/decision candidates.
-- MCP adds read-only planning tools: `atlas.workload_snapshot`, `atlas.project_workload`, `atlas.suggest_next_work`, and `atlas.work_item_context_bundle`.
+- MCP adds read-only planning tools: `atlas.workload_snapshot`, `atlas.project_planning_context`, `atlas.project_workload`, `atlas.suggest_next_work`, and `atlas.work_item_context_bundle`.
 - Shopify SEO review now lives in Project Detail as a draft-backed import/analyze/export/queue surface. It has no live Shopify writes, no Admin API credential requirement, and no broad MCP Shopify tools.
 
 ## Last Run

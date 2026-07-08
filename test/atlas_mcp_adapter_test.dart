@@ -35,6 +35,7 @@ void main() {
       expect(names, contains('get_project_capsule_status'));
       expect(names, contains('get_project_bootstrap_context'));
       expect(names, contains('atlas.workload_snapshot'));
+      expect(names, contains('atlas.project_planning_context'));
       expect(names, contains('atlas.project_workload'));
       expect(names, contains('atlas.suggest_next_work'));
       expect(names, contains('atlas.work_item_context_bundle'));

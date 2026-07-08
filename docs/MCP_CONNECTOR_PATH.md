@@ -60,7 +60,7 @@ python tools\atlas_mcp_gateway.py `
 
 OAuth mode exposes `GET /.well-known/oauth-protected-resource`, returns a
 `WWW-Authenticate` challenge on unauthenticated `/mcp` requests, annotates the
-three remote tools with `securitySchemes: [{ type: "oauth2", scopes:
+four remote tools with `securitySchemes: [{ type: "oauth2", scopes:
 ["atlas.read"] }]`, and validates bearer tokens through the configured
 introspection endpoint before forwarding calls to stdio.
 
@@ -77,6 +77,7 @@ Allowed remotely by default:
 - `list_projects`
 - `get_project_status`
 - `atlas.workload_snapshot`
+- `atlas.project_planning_context`
 
 Denied remotely by default:
 
@@ -121,6 +122,7 @@ The smoke verifies:
 - `GET /mcp` SSE readiness behavior
 - `initialize`
 - `tools/list`
+- the four-tool remote allowlist, including `atlas.project_planning_context`
 - `list_projects`
 - no non-allowlisted, queue, proposal, write, worker, bootstrap, enrichment, or
   sensitive-read tools exposed remotely

@@ -56,6 +56,10 @@ void main() {
         toolRows.map((tool) => (tool as Map)['name']),
         contains('get_llm_task_bootstrap'),
       );
+      expect(
+        toolRows.map((tool) => (tool as Map)['name']),
+        contains('atlas.project_planning_context'),
+      );
     });
 
     test('dispatches tools/call requests', () async {

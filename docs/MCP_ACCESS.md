@@ -77,9 +77,11 @@ first supported remote profile should be read-only, should enforce
 local paths or private project packet content.
 
 The tracked gateway prototype narrows that first profile to `list_projects`,
-`get_project_status`, and `atlas.workload_snapshot` only. Broader reads such as
-project briefs, work item bundles, proposals, queue reads, and task context
-remain blocked until their outputs have explicit disclosure review.
+`get_project_status`, `atlas.workload_snapshot`, and
+`atlas.project_planning_context` only. The planning-context tool returns a
+compact redacted packet for one project; broader reads such as project briefs,
+work item bundles, proposals, queue reads, raw bootstrap packets, and task
+context remain blocked until their outputs have explicit disclosure review.
 
 For ChatGPT connector work, the gateway should run in OAuth mode. OAuth mode
 publishes protected-resource metadata, challenges unauthenticated MCP requests,
