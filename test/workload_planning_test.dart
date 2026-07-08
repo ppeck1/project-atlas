@@ -164,6 +164,72 @@ void main() {
       );
     });
 
+    test(
+      'classifies stale reasons and demotes imported checklist rows globally',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final stage = (await db.getStagesForProject('atlas')).single;
+        final importedId = await db.addWorkItem(
+          stageId: stage.id,
+          title: 'Run manifest test command',
+          source: 'Dev Launchpad imported checklist',
+        );
+        final importedRefreshId = await db.addWorkItem(
+          stageId: stage.id,
+          title: 'Run the manifest test command if present.',
+          source: 'local_refresh',
+        );
+        final manualId = await db.addWorkItem(
+          stageId: stage.id,
+          title: 'Operator selected work',
+          priority: 'high',
+        );
+
+        final global = await state.getWorkloadSnapshot(
+          now: DateTime(2026, 7, 8),
+        );
+        final project = await state.getWorkloadSnapshot(
+          filters: const WorkloadFilters(projectId: 'atlas'),
+          now: DateTime(2026, 7, 8),
+        );
+
+        final imported = global.cards.singleWhere(
+          (card) => card.id == importedId,
+        );
+        final importedRefresh = global.cards.singleWhere(
+          (card) => card.id == importedRefreshId,
+        );
+        final manual = global.cards.singleWhere((card) => card.id == manualId);
+        expect(imported.originKind, 'imported_checklist');
+        expect(importedRefresh.originKind, 'imported_checklist');
+        expect(imported.showInMainWorkboard, isFalse);
+        expect(importedRefresh.showInMainWorkboard, isFalse);
+        expect(
+          imported.staleReasons(DateTime(2026, 7, 8)),
+          contains('imported_template_unreviewed'),
+        );
+        expect(
+          importedRefresh.staleReasons(DateTime(2026, 7, 8)),
+          contains('imported_template_unreviewed'),
+        );
+        expect(manual.originKind, 'manual');
+        expect(global.suggestedNextItems.map((card) => card.id), [manualId]);
+        expect(
+          project.suggestedNextItems.map((card) => card.id),
+          contains(importedId),
+        );
+        expect(
+          (global.toJson()['counts'] as Map)['demotedImportedChecklist'],
+          2,
+        );
+        expect(
+          ((global.toJson()['counts'] as Map)['byOrigin']
+              as Map)['imported_checklist'],
+          2,
+        );
+      },
+    );
+
     test('bulk planning updates and creates linked queue items', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
       final stage = (await db.getStagesForProject('atlas')).single;
