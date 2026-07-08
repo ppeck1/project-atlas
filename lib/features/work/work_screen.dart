@@ -52,7 +52,7 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   void _reload({bool clearSelection = false}) {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     setState(() {
       _projectsFuture = state.getVisibleProjects();
       _snapshotFuture = state.getWorkloadSnapshot(filters: _filters);
@@ -61,7 +61,7 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   void _setFilters(WorkloadFilters filters) {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final nextFilters = widget.projectScoped
         ? filters.copyWith(projectId: widget.initialProjectId)
         : filters;
@@ -182,7 +182,7 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   Future<void> _addTask() async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final projectId =
         _filters.projectId ?? (await state.watchActiveProject().first)?.id;
     if (!mounted) return;
@@ -271,7 +271,7 @@ class _WorkScreenState extends State<WorkScreen> {
   Future<void> _markReady(WorkloadSnapshot snapshot) async {
     final refs = _selectedRefs(snapshot);
     if (refs.isEmpty) return;
-    await AppStateScope.of(context).updateWorkloadPlanning(
+    await AppStateScope.read(context).updateWorkloadPlanning(
       items: refs,
       readiness: 'ready',
       clearBlockerReason: true,
@@ -280,7 +280,7 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   Future<void> _markBlocked(WorkloadSnapshot snapshot) async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final refs = _selectedRefs(snapshot);
     if (refs.isEmpty) return;
     final reason = await _promptText(
@@ -299,7 +299,7 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   Future<void> _assignActor(WorkloadSnapshot snapshot) async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final refs = _selectedRefs(snapshot);
     if (refs.isEmpty) return;
     final actor = await _chooseOption(
@@ -314,7 +314,7 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   Future<void> _setPlanningFields(WorkloadSnapshot snapshot) async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final refs = _selectedRefs(snapshot);
     if (refs.isEmpty) return;
     final result = await _showPlanningFieldsDialog();
@@ -332,12 +332,12 @@ class _WorkScreenState extends State<WorkScreen> {
   Future<void> _markReviewed(WorkloadSnapshot snapshot) async {
     final refs = _selectedRefs(snapshot);
     if (refs.isEmpty) return;
-    await AppStateScope.of(context).markWorkloadReviewedToday(refs);
+    await AppStateScope.read(context).markWorkloadReviewedToday(refs);
     if (mounted) _reload(clearSelection: true);
   }
 
   Future<void> _createQueueItems(WorkloadSnapshot snapshot) async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final workItems = _selectedCards(
       snapshot,
     ).where((card) => card.isWorkItem).toList(growable: false);
@@ -362,7 +362,7 @@ class _WorkScreenState extends State<WorkScreen> {
       );
       return;
     }
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final workItem = selectedWorkItems.single;
     final tasks = await state.getLlmTasksForProject(
       workItem.projectId,

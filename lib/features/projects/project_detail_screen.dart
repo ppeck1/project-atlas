@@ -176,7 +176,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   }
 
   Future<void> _loadAll() async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     // Each query is independent — a schema mismatch on one table (e.g. a
     // missing column that _ensureProjectCompatibilityColumns hasn't patched
     // yet on this run) must not prevent the others from loading.
@@ -252,7 +252,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   Future<void> _loadSummaryEvidence({bool? includeLibrary}) async {
     if (!mounted) return;
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final resolvedIncludeLibrary = includeLibrary ?? _includeLibrary;
     setState(() => _summaryEvidenceLoading = true);
     try {
@@ -280,7 +280,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       setState(() => _expandedSection = _expandedSection == key ? null : key);
 
   Future<void> _addProjectTask(BuildContext context) async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final draft = await showCreateWorkItemDialog(context);
     if (draft == null) return;
     DateTime? dueAt;
@@ -309,7 +309,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   }
 
   Future<void> _showCreateLlmTaskDialog(BuildContext context) async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final title = TextEditingController();
     final objective = TextEditingController();
     final contextNotes = TextEditingController();
@@ -438,7 +438,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   }
 
   Future<void> _showLlmQueueManagerDialog(BuildContext context) async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final items = await state.getLlmTasksForProject(
       widget.projectId,
       limit: 100,
@@ -501,7 +501,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     BuildContext context,
     LlmTaskQueueItem item,
   ) async {
-    final state = AppStateScope.of(context);
+    final state = AppStateScope.read(context);
     final projects = await state.getVisibleProjects();
     final projectIds = projects.map((project) => project.id).toSet();
     final selectedInitialProjectId = projectIds.contains(item.projectId)
