@@ -891,12 +891,12 @@ Pure Dart planning model and deterministic scoring helpers used by Workboard, `A
 | `workloadVerificationValues` | `List<String>` | `none`, `tests`, `smoke`, `build`, `manual_ui`. |
 | `WorkloadFilters` | DTO | Project/readiness/actor/risk/size filters plus blocked/review/stale/high-priority booleans. |
 | `WorkloadCard` | DTO | Normalized card for work items and LLM queue rows. Includes project, status, planning metadata, queue linkage, stale state, and score. |
-| `WorkloadSnapshot` | DTO | Filtered cards, grouped counts, actor/risk breakdowns, stale count, ready-only execution candidates, separate planning candidates, and review-needed cards. |
+| `WorkloadSnapshot` | DTO | Filtered cards, grouped counts, actor/risk/origin breakdowns, stale count, imported-checklist demotion count, ready-only execution candidates, separate planning candidates, and review-needed cards. |
 | `WorkloadPlanner.scoreCard()` | deterministic scoring | Used to sort ready execution candidates and separate planning candidates. Blocked, review-needed, done/closed, and in-progress cards are not execution candidates. |
 
 ### AtlasAgentService (`lib/services/atlas_agent_service.dart`)
 
-Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `AppState` and exposes stable DTOs rather than UI widgets or raw screen state.
+Desktop-side adapter for local MCP clients, the read-only remote gateway, and local LLM harnesses. It wraps `AppState` and exposes stable DTOs rather than UI widgets or raw screen state.
 
 | Method | Returns | Notes |
 |--------|---------|-------|
@@ -905,7 +905,8 @@ Desktop-side adapter for the future Atlas MCP and local LLM harness. It wraps `A
 | `getProjectBrief(projectId)` | `Future<AtlasProjectBrief?>` | Aggregates lifecycle/category fields, tags, people, risks, decisions, open work items, local registry, and latest local observation. |
 | `getProjectIdentity(projectId)` | `Future<AtlasProjectIdentity?>` | Resolves one project to local registry, local path, repo root, cached GitHub remote, capsule project ID/display name/profiles, and resolver warnings/errors. Delegates path/capsule reads to `ProjectIdentityResolver`. |
 | `getProjectCapsuleStatus(projectId)` | `Future<AtlasCapsuleStatus?>` | Reads linked repo `.project/project_manifest.json`, `.project/ops_capsule.json`, local run-ledger/outbox evidence counts, and availability states through the read-only resolver. |
-| `getProjectBootstrapContext(projectId)` | `Future<AtlasProjectBootstrapContext?>` | Versioned agent startup packet (`atlas.project_bootstrap_context.v1`) combining identity, brief, capsule status, pending LLM tasks, pending proposals, recommended next action, confidence, and gaps. |
+| `getProjectBootstrapContext(projectId)` | `Future<AtlasProjectBootstrapContext?>` | Versioned agent startup packet (`atlas.project_bootstrap_context.v1`) combining identity, brief, capsule status, freshness snapshot, pending LLM tasks, pending proposals, recommended next action, confidence, and gaps. |
+| `getProjectPlanningContext(projectId)` | `Future<AtlasProjectPlanningContext?>` | Compact redacted project planning packet (`atlas.project_planning_context.v1`) for the narrow ChatGPT connector profile. Includes sanitized freshness, workload digest, constraints, verification hints, and recent evidence without raw paths, remotes, task bodies, or secrets. |
 | `getStaleProjects()` | `Future<List<AtlasProjectStatus>>` | Returns projects whose status or blocked work indicates attention. |
 | `workloadSnapshot({filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only Workboard snapshot across projects. Returns cards, counts, actor/risk breakdowns, stale count, ready-only execution candidates, separate planning candidates, and review-needed list. |
 | `projectWorkload(projectId, {filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only project-scoped Workboard snapshot. Validates visible project. |
@@ -956,7 +957,7 @@ Transport-neutral MCP tool registry and JSON-safe dispatcher for `AtlasAgentServ
 | `listTools()` | `List<AtlasMcpTool>` | Exposes read and proposal-creation tools only. Destructive tools and approval/rejection tools are intentionally absent. |
 | `callTool(name, arguments)` | `Future<AtlasMcpCallResult>` | Dispatches MCP-style tool calls to `AtlasAgentService` and returns JSON-safe text content. Unknown tools return an error result. |
 
-**Tools exposed:** `list_projects`, `get_project_status`, `get_project_brief`, `get_project_identity`, `get_project_capsule_status`, `get_project_bootstrap_context`, `get_stale_projects`, `atlas.workload_snapshot`, `atlas.project_workload`, `atlas.suggest_next_work`, `atlas.work_item_context_bundle`, `list_agent_proposals`, `preview_local_refresh`, `inspect_git_visibility`, `get_github_remote_status`, `refresh_github_remote_status`, `list_project_enrichment_runs`, `get_project_enrichment_run`, `run_project_enrichment`, `enqueue_llm_task`, `list_llm_tasks`, `get_llm_task`, `get_llm_task_bootstrap`, `claim_llm_task`, `complete_llm_task`, `fail_llm_task`, `propose_status_change`, `propose_task_update`, `propose_manifest_update`, `record_validation_run`, `record_handoff`, and `propose_closeout`.
+**Tools exposed:** `list_projects`, `get_project_status`, `get_project_brief`, `get_project_identity`, `get_project_capsule_status`, `get_project_bootstrap_context`, `get_stale_projects`, `atlas.workload_snapshot`, `atlas.project_planning_context`, `atlas.project_workload`, `atlas.suggest_next_work`, `atlas.work_item_context_bundle`, `list_agent_proposals`, `preview_local_refresh`, `inspect_git_visibility`, `get_github_remote_status`, `refresh_github_remote_status`, `list_project_enrichment_runs`, `get_project_enrichment_run`, `run_project_enrichment`, `enqueue_llm_task`, `list_llm_tasks`, `get_llm_task`, `get_llm_task_bootstrap`, `claim_llm_task`, `complete_llm_task`, `fail_llm_task`, `propose_status_change`, `propose_task_update`, `propose_manifest_update`, `record_validation_run`, `record_handoff`, and `propose_closeout`.
 
 ### Atlas MCP stdio wrapper (`lib/mcp/atlas_mcp_stdio*.dart`)
 

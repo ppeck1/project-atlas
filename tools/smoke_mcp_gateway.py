@@ -25,6 +25,7 @@ ALLOWED_TOOLS = {
     "list_projects",
     "get_project_status",
     "atlas.workload_snapshot",
+    "atlas.project_planning_context",
 }
 
 DENIED_TOOL_PROBES = {

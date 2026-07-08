@@ -7,7 +7,7 @@ gateway PR has been reviewed and merged.
 
 Prove that ChatGPT can reach the Project Atlas `/mcp` gateway through an HTTPS
 tunnel, complete OAuth bearer-token validation through a real provider, list
-exactly the frozen three-tool remote surface, and call one harmless read tool
+exactly the frozen four-tool remote surface, and call one harmless read tool
 without leaking private local context.
 
 ## Non-Goals
@@ -25,6 +25,7 @@ without leaking private local context.
 - `list_projects`
 - `get_project_status`
 - `atlas.workload_snapshot`
+- `atlas.project_planning_context`
 
 ## Preferred Tunnel Path
 
@@ -97,6 +98,7 @@ After the tunnel is running, verify manually or with a small script:
   - `list_projects`
   - `get_project_status`
   - `atlas.workload_snapshot`
+  - `atlas.project_planning_context`
 - Calls to hidden tools are rejected.
 - Raw `/mcp` responses do not include local Windows paths, repo-local paths,
   personal names, emails, queue context, proposal bodies, or draft text.
@@ -105,7 +107,7 @@ After the tunnel is running, verify manually or with a small script:
 
 - ChatGPT reaches `/mcp` over HTTPS.
 - OAuth challenge and protected-resource metadata are visible.
-- ChatGPT sees exactly three tools.
+- ChatGPT sees exactly four tools.
 - One harmless allowed read succeeds.
 - Hidden tools remain unavailable.
 - Redaction remains clean in captured raw responses.

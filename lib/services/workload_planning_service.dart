@@ -182,6 +182,8 @@ class WorkloadCard {
   final DateTime? lastReviewedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String originKind;
+  final bool showInMainWorkboard;
 
   const WorkloadCard({
     required this.kind,
@@ -209,6 +211,8 @@ class WorkloadCard {
     required this.lastReviewedAt,
     required this.createdAt,
     required this.updatedAt,
+    required this.originKind,
+    required this.showInMainWorkboard,
   });
 
   bool get isWorkItem => kind == workItemKind;
@@ -221,6 +225,24 @@ class WorkloadCard {
     final reviewedAt = lastReviewedAt;
     if (reviewedAt == null) return true;
     return reviewedAt.isBefore(now.subtract(const Duration(days: 14)));
+  }
+
+  List<String> staleReasons(DateTime now) {
+    final reasons = <String>[];
+    final reviewedAt = lastReviewedAt;
+    if (reviewedAt == null) {
+      reasons.add(
+        originKind == 'imported_checklist'
+            ? 'imported_template_unreviewed'
+            : 'no_last_reviewed_at',
+      );
+    } else if (reviewedAt.isBefore(now.subtract(const Duration(days: 14)))) {
+      reasons.add('old_last_reviewed_at');
+    }
+    if (originKind == 'placeholder') {
+      reasons.add('placeholder_title');
+    }
+    return reasons;
   }
 
   int score(DateTime now) => WorkloadPlanner.scoreCard(this, now: now);
@@ -255,6 +277,9 @@ class WorkloadCard {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'stale': isStale(resolvedNow),
+      'staleReasons': staleReasons(resolvedNow),
+      'originKind': originKind,
+      'showInMainWorkboard': showInMainWorkboard,
       'score': score(resolvedNow),
     };
   }
@@ -270,7 +295,9 @@ class WorkloadSnapshot {
   final Map<String, int> countsByGroup;
   final Map<String, int> tasksByActor;
   final Map<String, int> tasksByRisk;
+  final Map<String, int> tasksByOrigin;
   final int staleTasks;
+  final int demotedImportedChecklistTasks;
 
   const WorkloadSnapshot({
     required this.generatedAt,
@@ -282,7 +309,9 @@ class WorkloadSnapshot {
     required this.countsByGroup,
     required this.tasksByActor,
     required this.tasksByRisk,
+    required this.tasksByOrigin,
     required this.staleTasks,
+    required this.demotedImportedChecklistTasks,
   });
 
   int get readyTasks => countsByGroup['ready'] ?? 0;
@@ -302,6 +331,8 @@ class WorkloadSnapshot {
       'byGroup': countsByGroup,
       'byActor': tasksByActor,
       'byRisk': tasksByRisk,
+      'byOrigin': tasksByOrigin,
+      'demotedImportedChecklist': demotedImportedChecklistTasks,
     },
     'suggestedNextItems': suggestedNextItems
         .map((card) => card.toJson(now: generatedAt))
@@ -346,6 +377,7 @@ class WorkloadPlanner {
       final readiness = normalizeWorkloadReadiness(item.readiness);
       final blockerReason = cleanWorkloadText(item.blockedReason);
       final status = item.status.trim().isEmpty ? 'next' : item.status.trim();
+      final originKind = _originKindForWorkItem(item);
       cards.add(
         WorkloadCard(
           kind: WorkloadCard.workItemKind,
@@ -383,6 +415,8 @@ class WorkloadPlanner {
           lastReviewedAt: item.lastReviewedAt,
           createdAt: item.createdAt,
           updatedAt: item.updatedAt,
+          originKind: originKind,
+          showInMainWorkboard: _showInMainWorkboard(originKind),
         ),
       );
     }
@@ -392,6 +426,7 @@ class WorkloadPlanner {
       if (project == null) continue;
       final readiness = normalizeWorkloadReadiness(task.readiness);
       final blockerReason = cleanWorkloadText(task.blockerReason);
+      final originKind = _originKindForLlmTask(task);
       cards.add(
         WorkloadCard(
           kind: WorkloadCard.llmQueueKind,
@@ -426,6 +461,8 @@ class WorkloadPlanner {
           lastReviewedAt: task.lastReviewedAt,
           createdAt: task.createdAt,
           updatedAt: task.updatedAt,
+          originKind: originKind,
+          showInMainWorkboard: _showInMainWorkboard(originKind),
         ),
       );
     }
@@ -455,16 +492,26 @@ class WorkloadPlanner {
     };
     final byActor = <String, int>{};
     final byRisk = <String, int>{};
+    final byOrigin = <String, int>{};
     var stale = 0;
     for (final card in filtered) {
       countsByGroup[card.boardGroup] =
           (countsByGroup[card.boardGroup] ?? 0) + 1;
       byActor[card.suggestedActor] = (byActor[card.suggestedActor] ?? 0) + 1;
       byRisk[card.risk] = (byRisk[card.risk] ?? 0) + 1;
+      byOrigin[card.originKind] = (byOrigin[card.originKind] ?? 0) + 1;
       if (card.isStale(generatedAt)) stale++;
     }
+    final demoteImportedChecklist = filters.projectId == null;
     final executionCandidates =
-        filtered.where(_isExecutionCandidate).toList(growable: false)
+        filtered
+            .where(
+              (card) => _isExecutionCandidate(
+                card,
+                demoteImportedChecklist: demoteImportedChecklist,
+              ),
+            )
+            .toList(growable: false)
           ..sort((a, b) {
             final score = a.score(generatedAt).compareTo(b.score(generatedAt));
             if (score != 0) return score;
@@ -496,7 +543,17 @@ class WorkloadPlanner {
       countsByGroup: Map.unmodifiable(countsByGroup),
       tasksByActor: Map.unmodifiable(byActor),
       tasksByRisk: Map.unmodifiable(byRisk),
+      tasksByOrigin: Map.unmodifiable(byOrigin),
       staleTasks: stale,
+      demotedImportedChecklistTasks: demoteImportedChecklist
+          ? filtered
+                .where(
+                  (card) =>
+                      card.originKind == 'imported_checklist' &&
+                      card.boardGroup == 'ready',
+                )
+                .length
+          : 0,
     );
   }
 
@@ -617,8 +674,12 @@ class WorkloadPlanner {
     return score;
   }
 
-  static bool _isExecutionCandidate(WorkloadCard card) =>
-      card.boardGroup == 'ready';
+  static bool _isExecutionCandidate(
+    WorkloadCard card, {
+    bool demoteImportedChecklist = false,
+  }) =>
+      card.boardGroup == 'ready' &&
+      (!demoteImportedChecklist || card.originKind != 'imported_checklist');
 
   static bool _isPlanningCandidate(WorkloadCard card) =>
       card.boardGroup == 'needs_decision' &&
@@ -633,4 +694,64 @@ class WorkloadPlanner {
     'done_closed' => 5,
     _ => 6,
   };
+
+  static String _originKindForWorkItem(WorkItem item) {
+    final source = cleanWorkloadText(item.source)?.toLowerCase() ?? '';
+    if (_looksLikeImportedChecklist(item.title, source)) {
+      return 'imported_checklist';
+    }
+    if (_looksLikePlaceholderTitle(item.title)) return 'placeholder';
+    if (source.contains('atlas agent proposal')) return 'agent_proposal';
+    if (source.contains('local_refresh')) return 'local_refresh';
+    return item.source == null ? 'manual' : 'imported_work_item';
+  }
+
+  static String _originKindForLlmTask(LlmTaskQueueItem task) {
+    final contextSource = cleanWorkloadText(
+      task.context['source']?.toString(),
+    )?.toLowerCase();
+    final createdBy = task.createdBy.trim().toLowerCase();
+    if (_looksLikeImportedChecklist(task.title, contextSource ?? createdBy)) {
+      return 'imported_checklist';
+    }
+    if (_looksLikePlaceholderTitle(task.title)) return 'placeholder';
+    if (contextSource == 'workboard_bulk_action' ||
+        createdBy == 'ui_planning') {
+      return 'workboard_generated';
+    }
+    if (contextSource == 'project_detail_header' || createdBy == 'ui') {
+      return 'manual';
+    }
+    if (createdBy == 'codex' || contextSource == 'codex') {
+      return 'agent_generated';
+    }
+    return 'llm_queue';
+  }
+
+  static bool _showInMainWorkboard(String originKind) =>
+      originKind != 'imported_checklist';
+
+  static bool _looksLikeImportedChecklist(String title, String source) {
+    final normalizedTitle = title.trim().toLowerCase();
+    return source.contains('dev launchpad') ||
+        source.contains('launchpad') ||
+        normalizedTitle.contains('dev launchpad') ||
+        normalizedTitle == 'launch project' ||
+        normalizedTitle == 'launch the project from dev launchpad.' ||
+        normalizedTitle == 'run health checks' ||
+        normalizedTitle.startsWith('run health checks ') ||
+        normalizedTitle == 'run manifest test command' ||
+        normalizedTitle.startsWith('run the manifest test command') ||
+        normalizedTitle == 'run manifest build command' ||
+        normalizedTitle.startsWith('run the manifest build command') ||
+        normalizedTitle == 'let dev launchpad update metadata' ||
+        normalizedTitle.startsWith('let dev launchpad update ');
+  }
+
+  static bool _looksLikePlaceholderTitle(String title) {
+    final normalized = title.trim().toLowerCase();
+    return normalized == 'test review' ||
+        normalized == 'test' ||
+        RegExp(r'^test\d*$').hasMatch(normalized);
+  }
 }

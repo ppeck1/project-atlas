@@ -1,8 +1,8 @@
 # Project Atlas
 
-Local-first project command center for personal work tracking.
+Local-first project command center and agent-workflow control plane for operator-owned work.
 
-Project Atlas is a Flutter desktop app for answering the daily operational questions: what am I carrying, what is blocked, what needs action today, and what should go to my phone? It stores data locally in SQLite through Drift. There is no cloud sync, no telemetry, and optional integrations stay user-reviewed.
+Project Atlas is a Flutter desktop app for answering daily operational questions: what am I carrying, what is blocked, what needs action today, what evidence is stale, and what should go to my phone? It stores data locally in SQLite through Drift. There is no cloud sync, no telemetry, and optional integrations stay user-reviewed. It is also a portfolio case study in local-first operational software: deterministic planning metadata, provenance-aware agent packets, read-only MCP planning surfaces, and proposal-first automation boundaries.
 
 ## Current State
 
@@ -20,22 +20,37 @@ Project Atlas is a Flutter desktop app for answering the daily operational quest
 - Project organization: category grouping, pinned categories/projects, category visibility selection, category and project sorting, tag assignment, project filters for context/status/phase/priority, status descriptors for Open/Review/Inactive/Closed lifecycle states, and project merge
 - Project runtime profiles: opt-in per-project launch/stop/test commands, ports, URLs, and health checks with Launch/Test/Capsule actions, run history, settings-backed Dev Launchpad/capsule defaults, Dev Launchpad YAML import, and Project Ops Capsule integration — commands are operator-configured and never invented by the app
 - Project change log: per-project event history with changed-field views, newest/oldest sort controls, JSON copy, and persisted AI change-summary drafts in Project Detail
-- Shopify SEO review: Project Detail can store a draft-backed product SEO snapshot for Shopify storefronts, seed a plug-and-play `example-store.test` review set, import v1/v2 Shopify-like product JSON, score deterministic SEO issues, filter/sort by review need, export JSON/CSV/Markdown packets, and queue product-level SEO review batches without live Shopify writes
+- Shopify SEO review: Project Detail can store a draft-backed product SEO snapshot for Shopify-like storefront catalogs, seed a plug-and-play `example-store.test` review set, import v1/v2 product JSON, score deterministic SEO issues, filter/sort by review need, export JSON/CSV/Markdown packets, and queue product-level SEO review batches without live Shopify writes
 - Project metadata: description, desired outcome, success criteria, scope, outcome summary, lessons learned
 - Project governance: people roster, risk register, decision log
-- Workboard planning layer: global board grouped by readiness with filters for project/readiness/actor/risk/size/blocked/review/stale/high-priority, deterministic snapshot counts, ready-only execution candidates, separate planning/decision candidates, and explicit bulk planning actions for work items and queue items
+- Workboard planning layer: global board grouped by readiness with filters for project/readiness/actor/risk/size/blocked/review/stale/high-priority, deterministic snapshot counts, origin/provenance counts, imported-checklist demotion, ready-only execution candidates, separate planning/decision candidates, and explicit bulk planning actions for work items and queue items
+- Project freshness preflight: agent-facing status and planning packets include `atlas.project_freshness_snapshot.v1` with local observation, GitHub cache, capsule metadata, timestamp confidence, stale reasons, and the action required before planning; impossible or future observation timestamps are treated as unknown evidence rather than trusted age math
 - Project media: app-owned image/file gallery with cover-image selection; media can be attached to work items and queued LLM tasks; local refresh imports discovered image, video, and audio files from linked project folders
 - Document library: native file picker, app-owned copies, in-app preview, and AI analysis integration
 - Local Operations Registry: manual shallow scans of operator-selected local project folders, selectable additional folders, append-only observations, queue filters, bulk candidate review, reviewed registry records, candidate accept/link/ignore/needs-review actions, create/update existing Project actions, first-import local refresh for docs/media/source/card/native project rows, Atlas-only enrichment runs with open findings, scan JSON copy/export, project bundle preview/export with bootstrap JSON/Markdown artifacts, and app-owned scan artifact storage
-- Agent boundary: `AtlasAgentService` exposes read-heavy project status/brief/summary operations, Workboard workload snapshots/suggestions/context bundles, Project Ops Capsule identity/evidence/bootstrap context reads, queue-bound bootstrap packets, Atlas-only enrichment runs/findings, an operator-editable persisted LLM task queue with media attachment context, and proposal-first writes including closeout records stored as reviewable drafts (`kind='atlas_agent_proposal'`) for the Atlas MCP and local LLM harness
+- Agent boundary: `AtlasAgentService` exposes read-heavy project status/brief/summary operations, freshness-aware Workboard snapshots/suggestions/context bundles, Project Ops Capsule identity/evidence/bootstrap context reads, queue-bound bootstrap packets, Atlas-only enrichment runs/findings, an operator-editable persisted LLM task queue with media attachment context, and proposal-first writes including closeout records stored as reviewable drafts (`kind='atlas_agent_proposal'`) for MCP clients and local LLM harnesses
 
-## Project Ops Capsule Audit
+## Portfolio Safety
 
-Project Ops Capsule v0.2 is installed as repo-local metadata under `.project/` with public-repo raw evidence and outboxes kept local-only by `.gitignore`. The capsule records launch, test, build, documentation, Atlas outbox, BOH outbox, and git closeout evidence; it is not the Atlas Operations scanner, a BOH promotion mechanism, a GitHub sync engine, or authority to bypass proposal review.
+This public repository contains source, tests, documentation, synthetic sample files, and sanitized screenshots. It does not contain the live `project_atlas.sqlite`, app-data folders, raw queue exports, local scan ledgers, secrets, or a seeded list of the operator's personal projects.
+
+It is portfolio-safe rather than fully anonymous: public identity, project-ecosystem names such as Project Ops Capsule and Dev Launchpad, and local-only path examples remain where they explain the system. Demo/store content uses placeholders such as `example-store.test`.
+
+## What This Demonstrates
+
+- A desktop operations console that keeps records local while still supporting evidence-rich summaries, exports, and review queues
+- A planning model that separates execution candidates from decision, context, blocked, and review work instead of flattening everything into one task list
+- An agent contract where broad local reads are explicit, remote ChatGPT planning is narrow/read-only, and writes become human-reviewable proposals
+- Freshness/currentness checks that expose stale local scans, GitHub cache gaps, capsule metadata problems, and timestamp confidence before work is selected
+- A capsule control-plane pattern that can describe protocol upgrades without silently mutating sibling repositories
+
+## Project Ops Capsule / Control Plane Boundary
+
+Project Ops Capsule v0.2 is installed as repo-local metadata under `.project/`. Local run ledgers and integration outboxes are ignored by Git; public docs contain sanitized capsule metadata, schema examples, and closeout summaries only. Capsule owns protocol catalogs and evidence conventions, while Atlas observes capsule state, compares protocol versions, and stages reviewable upgrade work-order shapes. Atlas does not mark protocol adoption complete without evidence, mutate sibling repositories, or bypass proposal review. See `docs/CAPSULE_CONTROL_PLANE.md`.
 
 ## Screenshots
 
-These screenshots are current Windows desktop captures from the schema v20 app,
+These screenshots were refreshed on July 3, 2026 from the schema v20 Windows desktop app,
 with local project paths and private library rows sanitized for the public repo.
 They show daily focus, project runtime controls, local Operations review,
 Library-backed AI draft review, and opt-in AI summary settings.
@@ -50,7 +65,7 @@ Library-backed AI draft review, and opt-in AI summary settings.
 
 ![Settings AI Summaries setup with Library evidence and bulk refresh gates](docs/screenshots/settings.png)
 
-The checked-in PNGs were refreshed for the v1.4/schema 20 release docs.
+The checked-in PNGs were refreshed for the v1.4/schema 20 release docs on July 3, 2026.
 For fallback public-safe mockups only, run:
 
 ```powershell
@@ -196,12 +211,15 @@ When enabled, the connection should load local credentials from environment vari
 
 ## Agent / MCP Boundary
 
-`lib/services/atlas_agent_service.dart` is the desktop-side contract intended for the future Atlas MCP and for a local LLM harness.
+`lib/services/atlas_agent_service.dart` is the desktop-side contract for local MCP clients, the read-only remote gateway, and local LLM harnesses.
 
-- Read operations assemble stable project DTOs: alphabetical project list, status, brief, capsule-aware project identity, capsule evidence availability, bootstrap context, stale/attention list, local refresh preview, git visibility inspection, enrichment run history/findings, and local-refresh triggers.
+- Read operations assemble stable project DTOs: alphabetical project list, status, brief, freshness snapshots, capsule-aware project identity, capsule evidence availability, bootstrap context, stale/attention list, local refresh preview, git visibility inspection, enrichment run history/findings, workload planning snapshots, and local-refresh triggers.
 - Write-shaped operations are proposal-first. Status changes, task updates, manifest updates, validation runs, handoffs, and agent closeouts are validated and saved as Library drafts with `kind='atlas_agent_proposal'`.
 - Library has an **Agent Proposals** filter with pending/approved/rejected status chips. Pending proposals can be approved or rejected from the detail pane; approved status/task/manifest proposals apply through `AppState`, validation proposals log the run, and handoff proposals create a `project_handoff` draft.
-- The MCP tool registry lives in `lib/mcp/atlas_mcp_server.dart`, with a local stdio JSON-RPC wrapper available from the Windows executable via `--mcp-stdio` for release builds. It exposes reads, capsule-aware bootstrap tools, read-only Workboard tools (`atlas.workload_snapshot`, `atlas.project_workload`, `atlas.suggest_next_work`, `atlas.work_item_context_bundle`), Atlas-only enrichment triggers, existing LLM queue lifecycle tools, and proposal-creation tools; approval/rejection stays in the desktop review queue. Project Detail lets the operator edit, move, cancel, requeue, and attach media to LLM tasks. MCP `get_project_bootstrap_context` returns the project startup packet; `get_llm_task_bootstrap` returns a task plus its project startup packet; `get_llm_task` returns attached media metadata for harness context. Queue completion can attach a proposed handoff as a reviewable draft, and `propose_closeout` records validation/git/packet evidence for review instead of directly mutating project state.
+- The local MCP tool registry lives in `lib/mcp/atlas_mcp_server.dart`, with a stdio JSON-RPC wrapper available from the Windows executable via `--mcp-stdio` for release builds. This broad local surface includes project reads, capsule-aware bootstrap tools, read-only Workboard tools (`atlas.workload_snapshot`, `atlas.project_planning_context`, `atlas.project_workload`, `atlas.suggest_next_work`, `atlas.work_item_context_bundle`), Atlas-only enrichment triggers, existing LLM queue lifecycle tools, and proposal-creation tools. Approval/rejection stays in the desktop review queue.
+- Project Detail lets the operator edit, move, cancel, requeue, and attach media to LLM tasks. `get_project_bootstrap_context` returns the fuller local project startup packet; `get_llm_task_bootstrap` returns a task plus its project startup packet; `get_llm_task` returns attached media metadata for harness context. Queue completion can attach a proposed handoff as a reviewable draft, and `propose_closeout` records validation/git/packet evidence for review instead of directly mutating project state.
+- Local stdio access is separate from ChatGPT remote or tunneled access. Tool metadata advertises Atlas access classes and role allowlists for client/gateway filtering, but local stdio is not an authentication boundary by itself. See `docs/MCP_ACCESS.md` for the Codex/Claude local path, ChatGPT remote boundary, and role allowlist defaults.
+- MCP connector v0.2 is a narrow ChatGPT planning profile, not a public hosted automation service. It exposes only `list_projects`, `get_project_status`, `atlas.workload_snapshot`, and `atlas.project_planning_context` through the OAuth read-only gateway. ChatGPT can draft and review plans from redacted packets, but it has no execution, queue mutation, proposal, GitHub refresh, shell, raw-file, or write authority. See `docs/MCP_ACCESS.md` and `docs/MCP_CONNECTOR_PATH.md` for the connector boundary.
 - Shopify SEO review is intentionally queued through the existing LLM task queue. The first supported approval unit is one product per batch, with allowed fields limited in task context and live Admin API writes left out of the public app until explicit supervised apply tooling is added.
 - The service does not delete projects, overwrite manifests, push/fetch Git, or mutate discovered repositories. Human review remains the approval boundary.
 - Workboard MCP tools are read-only planning views. `atlas.suggest_next_work` returns ready execution candidates only; decision/context/review/blocked items stay in planning or review buckets. These tools do not claim tasks, complete work, run harness jobs, or mutate queue state.
@@ -281,12 +299,21 @@ Generated files and build products are intentionally ignored:
 - `build/`
 - local app-data and secret files
 
+## Known Limitations
+
+- Windows-oriented Flutter desktop app; other desktop targets are not release-verified.
+- SQLite is plaintext. Do not store passwords, API keys, or sensitive private notes in project fields.
+- There is no cloud sync or background project watcher. Operations scans, enrichment, GitHub checks, and workload review remain explicit operator actions.
+- The remote MCP gateway is a narrow read-only planning prototype. It does not execute tasks, mutate queues, approve proposals, refresh GitHub state, run shell commands, or expose raw local files.
+- Freshness and Workboard signals are decision support, not proof that a repository or external service is globally current.
+- Shopify Admin API sync is planned as read-only catalog import. Live Shopify writes are intentionally not implemented.
+
 ## Roadmap
 
 - In-app PDF rendering (currently opens in system viewer)
 - Drafts screen as a first-class route
 - Inbound Telegram commands such as `/done`, `/snooze`, and `/add`
-- Atlas MCP wrapper over `AtlasAgentService`
+- Remote MCP gateway hardening, deployment packaging, and broader reviewed read surfaces
 - Restore/import flow for project bundles and operational backups before deeper agent autonomy
 - SQLCipher encrypted storage path before broader distribution
 - Review history browser — `watchRecentDailyReviews()` exists in the DB layer; no history screen yet

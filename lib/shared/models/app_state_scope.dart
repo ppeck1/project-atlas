@@ -1,4 +1,4 @@
-﻿import 'package:flutter/widgets.dart';
+import 'package:flutter/widgets.dart';
 
 import '../models/app_state.dart';
 
@@ -16,6 +16,17 @@ class AppStateScope extends InheritedNotifier<AppState> {
     if (scope == null) {
       throw FlutterError(
         'AppStateScope.of() called with a context that does not contain an AppStateScope.\n'
+        'Ensure AppStateScope wraps your MaterialApp or top-level widget.',
+      );
+    }
+    return scope.notifier!;
+  }
+
+  static AppState read(BuildContext context) {
+    final scope = context.getInheritedWidgetOfExactType<AppStateScope>();
+    if (scope == null) {
+      throw FlutterError(
+        'AppStateScope.read() called with a context that does not contain an AppStateScope.\n'
         'Ensure AppStateScope wraps your MaterialApp or top-level widget.',
       );
     }

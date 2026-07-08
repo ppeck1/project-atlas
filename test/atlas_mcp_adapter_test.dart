@@ -35,6 +35,7 @@ void main() {
       expect(names, contains('get_project_capsule_status'));
       expect(names, contains('get_project_bootstrap_context'));
       expect(names, contains('atlas.workload_snapshot'));
+      expect(names, contains('atlas.project_planning_context'));
       expect(names, contains('atlas.project_workload'));
       expect(names, contains('atlas.suggest_next_work'));
       expect(names, contains('atlas.work_item_context_bundle'));
@@ -67,6 +68,11 @@ void main() {
       final rows = result.data as List;
       expect(rows.map((row) => (row as Map)['title']), ['Alpha', 'Bravo']);
       expect((rows.first as Map)['category'], 'Program');
+      expect((rows.first as Map)['freshness'], isA<Map>());
+      expect(
+        ((rows.first as Map)['freshness'] as Map)['schema'],
+        'atlas.project_freshness_snapshot.v1',
+      );
     });
 
     test('dispatches bootstrap context with capsule visibility', () async {
@@ -173,6 +179,10 @@ void main() {
           1,
         );
         expect((data['pendingLlmTasks'] as List), hasLength(1));
+        expect(
+          (data['freshness'] as Map)['schema'],
+          'atlas.project_freshness_snapshot.v1',
+        );
       } finally {
         await root.delete(recursive: true);
       }
@@ -206,6 +216,38 @@ void main() {
 
     test('dispatches read-only workload planning tools', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+      await db.updateProjectMeta('atlas', {
+        'description':
+            r'Planning surface for B:\dev\Project_Atlas with token=abc123456789.',
+        'phase': 'build',
+        'priority': 'high',
+      });
+      final scanId = await db.startProjectScanRun(
+        rootsJson: '[]',
+        startedAt: DateTime(2026, 7, 8),
+      );
+      await db.addProjectObservation(
+        id: 'obs-atlas',
+        scanRunId: scanId,
+        observedPath: r'B:\private\SecretProject',
+        classificationGuess: 'software',
+        confidence: 95,
+        branch: 'main',
+        dirtyCount: 0,
+        remoteUrl: 'git@example.com:owner/private-redaction-fixture.git',
+        markerFilesJson: '[]',
+        warningsJson: '[]',
+        rawJson: jsonEncode({
+          'displayName': 'Atlas',
+          'gitRoot': r'B:\private\SecretProject',
+        }),
+        observedAt: DateTime(2026, 7, 8),
+      );
+      await db.reviewProjectObservation(
+        observationId: 'obs-atlas',
+        reviewState: 'linked',
+        atlasProjectId: 'atlas',
+      );
       final stage = (await db.getStagesForProject('atlas')).single;
       final workItemId = await db.addWorkItem(
         stageId: stage.id,
@@ -245,6 +287,10 @@ void main() {
       final projectWorkload = await adapter.callTool('atlas.project_workload', {
         'projectId': 'atlas',
       });
+      final planningContext = await adapter.callTool(
+        'atlas.project_planning_context',
+        {'projectId': 'atlas'},
+      );
       final suggestions = await adapter.callTool('atlas.suggest_next_work', {
         'projectId': 'atlas',
         'limit': 3,
@@ -262,6 +308,44 @@ void main() {
       );
       expect(projectWorkload.isError, isFalse);
       expect(((projectWorkload.data as Map)['cards'] as List), hasLength(3));
+      expect(
+        planningContext.isError,
+        isFalse,
+        reason: '${planningContext.data}',
+      );
+      final planning = planningContext.data as Map;
+      expect(planning['schema'], 'atlas.project_planning_context.v1');
+      expect((planning['project'] as Map)['projectId'], 'atlas');
+      expect(
+        ((planning['project'] as Map)['freshness'] as Map)['schema'],
+        'atlas.project_freshness_snapshot.v1',
+      );
+      final planningFreshness =
+          (planning['project'] as Map)['freshness'] as Map;
+      expect(
+        (planningFreshness['localObservation'] as Map).containsKey('remoteUrl'),
+        isFalse,
+      );
+      expect(
+        (planningFreshness['github'] as Map).containsKey('fullName'),
+        isFalse,
+      );
+      expect(
+        (planning['safeConstraints'] as Map)['noRemoteWriteTools'],
+        isTrue,
+      );
+      expect(
+        (((planning['workload'] as Map)['readyItems'] as List).first
+            as Map)['id'],
+        workItemId,
+      );
+      final encodedPlanning = jsonEncode(planning);
+      expect(encodedPlanning, isNot(contains(r'B:\')));
+      expect(encodedPlanning, isNot(contains('abc123456789')));
+      expect(encodedPlanning, isNot(contains('private-redaction-fixture')));
+      expect(encodedPlanning, isNot(contains('git@example.com')));
+      expect(encodedPlanning, contains('[redacted:path]'));
+      expect(encodedPlanning, contains('[redacted:secret]'));
       expect(suggestions.isError, isFalse);
       final suggestedIds = (suggestions.data as List)
           .map((item) => (item as Map)['id'])

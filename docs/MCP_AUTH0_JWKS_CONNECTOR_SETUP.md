@@ -7,6 +7,7 @@ to:
 - `list_projects`
 - `get_project_status`
 - `atlas.workload_snapshot`
+- `atlas.project_planning_context`
 
 Do not enable project briefs, queue reads, task context, proposal tools,
 enrichment tools, GitHub refresh, or write tools.
@@ -81,7 +82,7 @@ $env:CONTROL_PLANE_API_KEY="<OpenAI tunnel runtime API key>"
 - Authentication: OAuth
 - Scope: `atlas.read`
 
-First success condition: ChatGPT lists exactly three Project Atlas tools and can
+First success condition: ChatGPT lists exactly four Project Atlas tools and can
 call `list_projects`.
 
 ## Verification

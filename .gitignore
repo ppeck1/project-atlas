@@ -57,3 +57,4 @@ telegram_token.txt
 # Installer output (built artifacts, not source)
 dist/
 atlas-windows-*.zip
+*_project_bundle.zip

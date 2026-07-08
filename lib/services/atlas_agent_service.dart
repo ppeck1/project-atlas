@@ -5,6 +5,7 @@ import '../shared/models/app_state.dart';
 import '../shared/models/project_metadata.dart' as project_meta;
 import 'local_git_visibility_service.dart';
 import 'local_project_refresh_service.dart';
+import 'project_freshness_service.dart';
 import 'project_identity_resolver.dart';
 import 'workload_planning_service.dart';
 
@@ -26,6 +27,7 @@ class AtlasProjectStatus {
   final bool hasLocalRegistry;
   final DateTime? lastLocalObservationAt;
   final Map<String, Object?>? githubRemote;
+  final AtlasProjectFreshnessSnapshot freshness;
 
   const AtlasProjectStatus({
     required this.id,
@@ -45,6 +47,7 @@ class AtlasProjectStatus {
     required this.hasLocalRegistry,
     required this.lastLocalObservationAt,
     required this.githubRemote,
+    required this.freshness,
   });
 
   bool get needsAttention =>
@@ -69,6 +72,8 @@ class AtlasProjectStatus {
     'hasLocalRegistry': hasLocalRegistry,
     'lastLocalObservationAt': lastLocalObservationAt?.toIso8601String(),
     'githubRemote': githubRemote,
+    'freshness': freshness.toJson(),
+    'attentionReasons': freshness.attentionReasons,
     'needsAttention': needsAttention,
   };
 }
@@ -139,6 +144,7 @@ class AtlasProjectBootstrapContext {
   final AtlasProjectIdentity identity;
   final AtlasProjectBrief brief;
   final AtlasCapsuleStatus capsule;
+  final AtlasProjectFreshnessSnapshot freshness;
   final List<Map<String, Object?>> pendingLlmTasks;
   final List<Map<String, Object?>> pendingAgentProposals;
   final String recommendedNextAction;
@@ -151,6 +157,7 @@ class AtlasProjectBootstrapContext {
     required this.identity,
     required this.brief,
     required this.capsule,
+    required this.freshness,
     required this.pendingLlmTasks,
     required this.pendingAgentProposals,
     required this.recommendedNextAction,
@@ -164,11 +171,48 @@ class AtlasProjectBootstrapContext {
     'identity': identity.toJson(),
     'brief': brief.toJson(),
     'capsule': capsule.toJson(),
+    'freshness': freshness.toJson(),
     'pendingLlmTasks': pendingLlmTasks,
     'pendingAgentProposals': pendingAgentProposals,
     'recommendedNextAction': recommendedNextAction,
     'confidence': confidence,
     'gaps': gaps,
+  };
+}
+
+class AtlasProjectPlanningContext {
+  final String schema;
+  final DateTime generatedAt;
+  final Map<String, Object?> project;
+  final Map<String, Object?> currentAcceptedTruth;
+  final Map<String, Object?> workload;
+  final Map<String, Object?> safeConstraints;
+  final Map<String, Object?> verification;
+  final List<Map<String, Object?>> recentEvidence;
+  final List<Map<String, Object?>> contextExcerpts;
+
+  const AtlasProjectPlanningContext({
+    this.schema = 'atlas.project_planning_context.v1',
+    required this.generatedAt,
+    required this.project,
+    required this.currentAcceptedTruth,
+    required this.workload,
+    required this.safeConstraints,
+    required this.verification,
+    required this.recentEvidence,
+    required this.contextExcerpts,
+  });
+
+  Map<String, Object?> toJson() => {
+    'schema': schema,
+    'generatedAt': generatedAt.toIso8601String(),
+    'project': project,
+    'currentAcceptedTruth': currentAcceptedTruth,
+    'workload': workload,
+    'safeConstraints': safeConstraints,
+    'verification': verification,
+    'recentEvidence': recentEvidence,
+    'contextExcerpts': contextExcerpts,
   };
 }
 
@@ -546,6 +590,7 @@ class AtlasAgentService {
     final identity = await getProjectIdentity(projectId);
     final capsule = await getProjectCapsuleStatus(projectId);
     if (brief == null || identity == null || capsule == null) return null;
+    final freshness = await _buildProjectFreshness(project, capsule: capsule);
 
     final pendingTasks = await listLlmTasks(
       projectId: projectId,
@@ -581,6 +626,7 @@ class AtlasAgentService {
       identity: identity,
       brief: brief,
       capsule: capsule,
+      freshness: freshness,
       pendingLlmTasks: pendingTasks
           .map((task) => task.toJson())
           .toList(growable: false),
@@ -588,6 +634,84 @@ class AtlasAgentService {
       recommendedNextAction: recommendedNextAction,
       confidence: confidence,
       gaps: gaps,
+    );
+  }
+
+  Future<AtlasProjectPlanningContext?> getProjectPlanningContext(
+    String projectId,
+  ) async {
+    final project = await _visibleProject(projectId);
+    if (project == null) return null;
+    final status = await _buildProjectStatus(project);
+    final workload = await projectWorkload(projectId, suggestionLimit: 5);
+    final capsule = await getProjectCapsuleStatus(projectId);
+    final freshness = await _buildProjectFreshness(project, capsule: capsule);
+    final validation = capsule?.toJson()['validation'];
+    final observation = await state.getLatestLocalProjectObservation(projectId);
+
+    return AtlasProjectPlanningContext(
+      generatedAt: DateTime.now(),
+      project: {
+        'projectId': status.id,
+        'title': status.title,
+        'category': status.category,
+        'status': status.status,
+        'phase': status.phase,
+        'priority': status.priority,
+        'needsAttention': status.needsAttention,
+        'freshness': _planningFreshnessDigest(freshness),
+        'attentionReasons': freshness.attentionReasons,
+      },
+      currentAcceptedTruth: {
+        'acceptedVersion': _planningSafeString(
+          capsule?.projectManifest?['version'],
+        ),
+        'currentActiveTask': _firstCardTitle(workload.suggestedNextItems),
+        'latestAcceptedCheckpoint': _latestAcceptedCheckpoint(capsule),
+        'currentBranchOrPhase': status.phase,
+        'knownDirtyTreeState': {
+          'available': observation != null,
+          'dirtyCount': observation?.dirtyCount,
+        },
+        'latestVerificationStatus': _verificationStatus(validation),
+        'freshnessStatus': freshness.status,
+        'freshnessReasons': freshness.staleReasons,
+        'actionRequiredBeforePlanning': freshness.actionRequiredBeforePlanning,
+        'blockedOrDeferredItems': workload.cards
+            .where((card) => card.isBlocked)
+            .take(5)
+            .map(_planningCardDigest)
+            .toList(growable: false),
+      },
+      workload: {
+        'counts': workload.toJson()['counts'],
+        'readyItems': workload.suggestedNextItems
+            .take(5)
+            .map(_planningCardDigest)
+            .toList(growable: false),
+        'blockedItems': workload.cards
+            .where((card) => card.isBlocked)
+            .take(5)
+            .map(_planningCardDigest)
+            .toList(growable: false),
+        'reviewNeededItems': workload.reviewNeededItems
+            .take(5)
+            .map(_planningCardDigest)
+            .toList(growable: false),
+        'planningCandidateItems': workload.planningCandidateItems
+            .take(5)
+            .map(_planningCardDigest)
+            .toList(growable: false),
+      },
+      safeConstraints: _safePlanningConstraints(),
+      verification: _planningVerification(validation, workload),
+      recentEvidence: _planningRecentEvidence(
+        status: status,
+        capsule: capsule,
+        observation: observation,
+        freshness: freshness,
+      ),
+      contextExcerpts: _planningContextExcerpts(project, capsule),
     );
   }
 
@@ -1570,6 +1694,17 @@ class AtlasAgentService {
     final githubRemote = await state.getLatestProjectGitRemoteStatus(
       project.id,
     );
+    final blockedWorkItems = activeItems
+        .where((item) => _clean(item.blockedReason) != null)
+        .length;
+    final freshness = const ProjectFreshnessService().build(
+      project: project,
+      registry: registry,
+      observation: observation,
+      githubRemote: githubRemote,
+      activeWorkItems: activeItems.length,
+      blockedWorkItems: blockedWorkItems,
+    );
 
     return AtlasProjectStatus(
       id: project.id,
@@ -1581,9 +1716,7 @@ class AtlasAgentService {
       priority: _clean(project.priority),
       createdAt: project.createdAt,
       activeWorkItems: activeItems.length,
-      blockedWorkItems: activeItems
-          .where((item) => _clean(item.blockedReason) != null)
-          .length,
+      blockedWorkItems: blockedWorkItems,
       documents: docs.length,
       media: media.length,
       risks: risks.length,
@@ -1591,6 +1724,35 @@ class AtlasAgentService {
       hasLocalRegistry: registry != null,
       lastLocalObservationAt: observation?.observedAt,
       githubRemote: githubRemote?.toJson(),
+      freshness: freshness,
+    );
+  }
+
+  Future<AtlasProjectFreshnessSnapshot> _buildProjectFreshness(
+    Project project, {
+    AtlasCapsuleStatus? capsule,
+  }) async {
+    final items = await state.getWorkItemsForProject(project.id);
+    final activeItems = items
+        .where((item) => !{'done', 'archived'}.contains(item.status))
+        .toList();
+    final registry = await state.getProjectRegistryForAtlasProject(project.id);
+    final observation = await state.getLatestLocalProjectObservation(
+      project.id,
+    );
+    final githubRemote = await state.getLatestProjectGitRemoteStatus(
+      project.id,
+    );
+    return const ProjectFreshnessService().build(
+      project: project,
+      registry: registry,
+      observation: observation,
+      githubRemote: githubRemote,
+      capsule: capsule,
+      activeWorkItems: activeItems.length,
+      blockedWorkItems: activeItems
+          .where((item) => _clean(item.blockedReason) != null)
+          .length,
     );
   }
 
@@ -1772,6 +1934,250 @@ class AtlasAgentService {
       ..writeln('```json')
       ..writeln(const JsonEncoder.withIndent('  ').convert(value))
       ..writeln('```');
+  }
+
+  static Map<String, Object?> _planningFreshnessDigest(
+    AtlasProjectFreshnessSnapshot freshness,
+  ) {
+    final local = freshness.localObservation;
+    final github = freshness.github;
+    return {
+      'schema': freshness.schema,
+      'status': freshness.status,
+      'confidence': freshness.confidence,
+      'staleReasons': freshness.staleReasons,
+      'attentionReasons': freshness.attentionReasons,
+      'actionRequiredBeforePlanning': freshness.actionRequiredBeforePlanning,
+      'timestamps': freshness.timestamps,
+      'localObservation': {
+        'status': local['status'],
+        'evidenceSource': local['evidenceSource'],
+        'lastObservedAt': local['lastObservedAt'],
+        'ageDays': local['ageDays'],
+        'dirtyCount': local['dirtyCount'],
+        'branch': _planningSafeString(local['branch']),
+        'confidence': local['confidence'],
+      },
+      'github': {
+        'refreshStatus': github['refreshStatus'],
+        'evidenceSource': github['evidenceSource'],
+        'checkedAt': github['checkedAt'],
+        'ageDays': github['ageDays'],
+        'remotePushedAt': github['remotePushedAt'],
+        'remoteUpdatedAt': github['remoteUpdatedAt'],
+        'defaultBranch': _planningSafeString(github['defaultBranch']),
+        'visibility': github['visibility'],
+        'hasOnlineHead': github['onlineHeadSha'] != null,
+        'confidence': github['confidence'],
+        'error': _planningSafeString(github['error']),
+      },
+      'capsule': freshness.capsule,
+    };
+  }
+
+  static Map<String, Object?> _safePlanningConstraints() => {
+    'humanFinal': true,
+    'noDirectFileMutationByChatGPT': true,
+    'noRemoteWriteTools': true,
+    'noQueueClaimOrComplete': true,
+    'noProjectBriefExposureByDefault': true,
+    'noRawLocalPaths': true,
+    'noSecrets': true,
+    'noToolBus': true,
+    'noCloudAdapter': true,
+    'noAutonomousExecution': true,
+  };
+
+  static Map<String, Object?> _planningCardDigest(WorkloadCard card) => {
+    'id': card.id,
+    'kind': card.kind,
+    'title': _planningSafeString(card.title),
+    'readiness': card.readiness,
+    'boardGroup': card.boardGroup,
+    'size': card.size,
+    'risk': card.risk,
+    'suggestedActor': card.suggestedActor,
+    'verificationNeeded': card.verificationNeeded,
+    'priority': card.priority,
+    'status': card.status,
+    'nextAction': _planningSafeString(card.nextAction),
+    'blockerReason': _planningSafeString(card.blockerReason),
+    'planningNotes': _planningSafeString(card.planningNotes),
+    'lastReviewedAt': card.lastReviewedAt?.toIso8601String(),
+    'stale': card.isStale(DateTime.now()),
+    'staleReasons': card.staleReasons(DateTime.now()),
+    'originKind': card.originKind,
+    'showInMainWorkboard': card.showInMainWorkboard,
+  };
+
+  static Map<String, Object?> _planningVerification(
+    Object? validation,
+    WorkloadSnapshot workload,
+  ) {
+    final commands = <String>{
+      ..._validationCommands(validation, 'required'),
+      ..._validationCommands(validation, 'focused'),
+      ..._validationCommands(validation, 'smoke'),
+    }.toList(growable: false);
+    final manual = <String>{
+      ..._validationCommands(validation, 'manual'),
+      'Confirm only read-only connector tools are exposed remotely.',
+      'Confirm generated planning packet contains no local absolute paths.',
+      if (workload.cards.any((card) => card.verificationNeeded != 'none'))
+        'Run the verification named by selected workload cards before closeout.',
+    }.toList(growable: false);
+    return {
+      'commands': commands,
+      'manualChecks': manual,
+      'workloadVerificationNeeded': workload.cards
+          .map((card) => card.verificationNeeded)
+          .where((value) => value != 'none')
+          .toSet()
+          .toList(growable: false),
+    };
+  }
+
+  static List<Map<String, Object?>> _planningRecentEvidence({
+    required AtlasProjectStatus status,
+    required AtlasCapsuleStatus? capsule,
+    required ProjectObservation? observation,
+    required AtlasProjectFreshnessSnapshot freshness,
+  }) => [
+    {
+      'kind': 'project_status',
+      'label': 'Atlas project status',
+      'status': status.status,
+      'detail':
+          'Phase ${status.phase ?? 'unknown'}, priority ${status.priority ?? 'normal'}.',
+    },
+    {
+      'kind': 'freshness',
+      'label': 'Project freshness preflight',
+      'status': freshness.status,
+      'detail': freshness.actionRequiredBeforePlanning,
+      'reasons': freshness.staleReasons,
+    },
+    {
+      'kind': 'capsule',
+      'label': 'Project Ops Capsule',
+      'status': capsule?.evidenceAvailability ?? 'not_linked',
+      'detail': capsule == null
+          ? 'No capsule metadata is linked.'
+          : 'Warnings ${capsule.warnings.length}, errors ${capsule.errors.length}.',
+    },
+    if (observation != null)
+      {
+        'kind': 'local_observation',
+        'label': 'Latest local observation',
+        'status': observation.dirtyCount == 0 ? 'clean' : 'dirty',
+        'detail': 'Tracked dirty count: ${observation.dirtyCount}.',
+      },
+  ];
+
+  static List<Map<String, Object?>> _planningContextExcerpts(
+    Project project,
+    AtlasCapsuleStatus? capsule,
+  ) {
+    final excerpts = <Map<String, Object?>>[];
+    void add(String source, String authority, Object? value) {
+      final summary = _planningSafeString(value);
+      if (summary == null) return;
+      excerpts.add({
+        'source': source,
+        'authority': authority,
+        'summary': summary,
+      });
+    }
+
+    add('project.description', 'atlas-project-metadata', project.description);
+    add(
+      'project.desiredOutcome',
+      'atlas-project-metadata',
+      project.desiredOutcome,
+    );
+    add(
+      'project.successCriteria',
+      'atlas-project-metadata',
+      project.successCriteria,
+    );
+    add(
+      'project.scopeExcluded',
+      'atlas-project-metadata',
+      project.scopeExcluded,
+    );
+    final manifest = capsule?.projectManifest;
+    add(
+      'project_manifest.display_name',
+      'capsule-project-manifest',
+      manifest?['display_name'],
+    );
+    add(
+      'project_manifest.repo_kind',
+      'capsule-project-manifest',
+      manifest?['repo_kind'],
+    );
+    return excerpts;
+  }
+
+  static List<String> _validationCommands(Object? validation, String key) {
+    if (validation is! Map) return const [];
+    final value = validation[key];
+    if (value is! Iterable) return const [];
+    return value
+        .map(_planningSafeString)
+        .whereType<String>()
+        .toList(growable: false);
+  }
+
+  static String? _verificationStatus(Object? validation) {
+    if (validation is! Map || validation.isEmpty) return 'unknown';
+    final required = _validationCommands(validation, 'required');
+    if (required.isEmpty) return 'configured_without_required_commands';
+    return 'commands_configured';
+  }
+
+  static String? _latestAcceptedCheckpoint(AtlasCapsuleStatus? capsule) {
+    final manifest = capsule?.projectManifest;
+    return _planningSafeString(
+      manifest?['accepted_version'] ??
+          manifest?['version'] ??
+          manifest?['schema_version'],
+    );
+  }
+
+  static String? _firstCardTitle(List<WorkloadCard> cards) {
+    if (cards.isEmpty) return null;
+    return _planningSafeString(cards.first.title);
+  }
+
+  static String? _planningSafeString(Object? value) {
+    if (value == null) return null;
+    var text = '$value'.trim();
+    if (text.isEmpty) return null;
+    text = text
+        .replaceAll(
+          RegExp(r'''(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/][^\s"'<>|]+)'''),
+          '[redacted:path]',
+        )
+        .replaceAll(
+          RegExp(r'''file:///[A-Za-z]:/[^\s"'<>]+'''),
+          '[redacted:path]',
+        )
+        .replaceAll(
+          RegExp(r'\.env\b', caseSensitive: false),
+          '[redacted:secret-file]',
+        )
+        .replaceAll(
+          RegExp(
+            r'(token|secret|api[_-]?key|password)\s*[:=]\s*[A-Za-z0-9_\-\.]{8,}',
+            caseSensitive: false,
+          ),
+          '[redacted:secret]',
+        );
+    if (text.length > 280) {
+      text = '${text.substring(0, 277)}...';
+    }
+    return text;
   }
 
   int _priorityRank(String priority) => switch (priority) {

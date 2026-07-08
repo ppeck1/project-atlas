@@ -114,7 +114,7 @@ Future<Contact?> showContactEditor(
   BuildContext context, {
   Contact? contact,
 }) async {
-  final state = AppStateScope.of(context);
+  final state = AppStateScope.read(context);
   final name = TextEditingController(text: contact?.name ?? '');
   final title = TextEditingController(text: contact?.title ?? '');
   final phone = TextEditingController(text: contact?.phone ?? '');

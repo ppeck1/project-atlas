@@ -30,6 +30,7 @@ DEFAULT_ALLOWED_TOOLS = {
     "list_projects",
     "get_project_status",
     "atlas.workload_snapshot",
+    "atlas.project_planning_context",
 }
 
 AUTH_MODE_STATIC = "static"
@@ -99,8 +100,10 @@ PRIVATE_CONTEXT_KEYS = {
     "errorDetails",
     "fullPath",
     "githubRemoteUrl",
+    "headSha",
     "localPath",
     "notes",
+    "onlineHeadSha",
     "owner",
     "path",
     "privateContext",
@@ -110,6 +113,7 @@ PRIVATE_CONTEXT_KEYS = {
     "rawQueueContext",
     "repoPath",
     "repositoryPath",
+    "remoteUrl",
     "unresolvedProposalBody",
     "unresolvedBody",
 }

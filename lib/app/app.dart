@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../db/app_db.dart';
 import '../shared/models/app_state.dart';
 import '../shared/models/app_state_scope.dart';
@@ -15,12 +18,22 @@ class ProjectAtlasApp extends StatefulWidget {
 class _ProjectAtlasAppState extends State<ProjectAtlasApp> {
   late final AppDb _db;
   late final AppState _state;
+  late final GoRouter _router;
 
   @override
   void initState() {
     super.initState();
     _db = AppDb();
     _state = AppState(_db);
+    _router = buildRouter();
+  }
+
+  @override
+  void dispose() {
+    _router.dispose();
+    _state.dispose();
+    unawaited(_db.close());
+    super.dispose();
   }
 
   @override
@@ -30,7 +43,7 @@ class _ProjectAtlasAppState extends State<ProjectAtlasApp> {
       child: MaterialApp.router(
         title: 'Project Atlas',
         theme: buildAtlasTheme(),
-        routerConfig: buildRouter(),
+        routerConfig: _router,
       ),
     );
   }

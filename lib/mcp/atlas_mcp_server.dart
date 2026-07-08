@@ -121,6 +121,12 @@ class AtlasMcpAdapter {
       },
     ),
     AtlasMcpTool(
+      name: 'atlas.project_planning_context',
+      description:
+          'Read a compact redacted planning packet for one project, including accepted state, workload digest, constraints, verification hints, and recent evidence. Does not mutate state.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
       name: 'atlas.project_workload',
       description:
           'Read one project workload board, snapshot counts, ready execution candidates, and separate planning candidates.',
@@ -501,6 +507,10 @@ class AtlasMcpAdapter {
         filters: _workloadFilters(args),
         suggestionLimit: _int(args, 'limit') ?? 5,
       )).toJson(),
+      'atlas.project_planning_context' =>
+        (await agent.getProjectPlanningContext(
+          _requiredString(args, 'projectId'),
+        ))?.toJson(),
       'atlas.project_workload' => (await agent.projectWorkload(
         _requiredString(args, 'projectId'),
         filters: _workloadFilters(args),
