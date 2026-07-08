@@ -27,9 +27,10 @@ This v1.4 slice adds the Workboard Planning Layer. A later Shopify SEO hardening
 |---|---|
 | Run ID | `20260704-v1.4.0-release-stabilization` |
 | Run State | v1.4.0 release stabilization evidence recorded |
-| Last Verified At | 2026-07-04 |
+| Last Verified At | 2026-07-08 |
 | Validation State | complete locally: docs refresh, schema 20 migration checkpoint, screenshot file audit, format, analyze, focused tests, full suite, release build, and Windows ZIP asset |
 | Release Commit | this release stabilization commit |
+| Accepted Public Main Hash | `a62155457bbc8dd001dfc7970722b3c4688dda8f` (PR #5 merged 2026-07-08) |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
 ## Validation Evidence
