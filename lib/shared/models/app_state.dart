@@ -75,6 +75,14 @@ class ProjectAiSummarySettings {
   }
 }
 
+class ProjectDetailSectionVisibility {
+  final Set<String> visibleSectionIds;
+
+  const ProjectDetailSectionVisibility({required this.visibleSectionIds});
+
+  bool isVisible(String sectionId) => visibleSectionIds.contains(sectionId);
+}
+
 class ProjectChangeLogEntry {
   final String id;
   final String sourceEventId;
@@ -798,6 +806,58 @@ class AppState extends ChangeNotifier {
 
   Future<void> setActiveById(String id) async {
     await db.setActiveProjectId(id);
+    notifyListeners();
+  }
+
+  String _projectDetailVisibleSectionsKey(String projectId) =>
+      'project_detail::$projectId::visible_sections';
+
+  Future<ProjectDetailSectionVisibility> loadProjectDetailSectionVisibility(
+    String projectId,
+    Iterable<String> defaultSectionIds,
+  ) async {
+    final defaults = defaultSectionIds.toSet();
+    final raw = await db.getMetaString(
+      _projectDetailVisibleSectionsKey(projectId),
+    );
+    if (raw == null || raw.trim().isEmpty) {
+      return ProjectDetailSectionVisibility(visibleSectionIds: defaults);
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final rawIds = decoded['visibleSectionIds'];
+        if (rawIds is List) {
+          final visible = rawIds
+              .whereType<String>()
+              .where(defaults.contains)
+              .toSet();
+          return ProjectDetailSectionVisibility(visibleSectionIds: visible);
+        }
+      }
+    } catch (_) {}
+    return ProjectDetailSectionVisibility(visibleSectionIds: defaults);
+  }
+
+  Future<void> saveProjectDetailSectionVisibility(
+    String projectId,
+    Iterable<String> visibleSectionIds,
+    Iterable<String> defaultSectionIds,
+  ) async {
+    final defaults = defaultSectionIds.toSet();
+    final visible = visibleSectionIds.where(defaults.contains).toList()..sort();
+    if (visible.length == defaults.length) {
+      await db.setMetaString(_projectDetailVisibleSectionsKey(projectId), null);
+    } else {
+      await db.setMetaString(
+        _projectDetailVisibleSectionsKey(projectId),
+        jsonEncode({
+          'schema': 'project_detail_visible_sections_v1',
+          'projectId': projectId,
+          'visibleSectionIds': visible,
+        }),
+      );
+    }
     notifyListeners();
   }
 

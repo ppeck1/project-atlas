@@ -139,6 +139,46 @@ class _LlmTaskEditResult {
 }
 
 // ─── Main widget ──────────────────────────────────────────────────────────
+class _ProjectDetailSectionDefinition {
+  final String id;
+  final String title;
+
+  const _ProjectDetailSectionDefinition({
+    required this.id,
+    required this.title,
+  });
+}
+
+const _projectDetailSections = <_ProjectDetailSectionDefinition>[
+  _ProjectDetailSectionDefinition(id: 'tags', title: 'Tags'),
+  _ProjectDetailSectionDefinition(id: 'identity', title: 'Project Identity'),
+  _ProjectDetailSectionDefinition(id: 'shopify_seo', title: 'Shopify SEO'),
+  _ProjectDetailSectionDefinition(id: 'local_repo', title: 'Local Repo'),
+  _ProjectDetailSectionDefinition(id: 'runtime', title: 'Runtime'),
+  _ProjectDetailSectionDefinition(id: 'people', title: 'People & Roles'),
+  _ProjectDetailSectionDefinition(id: 'work', title: 'Project Workboard'),
+  _ProjectDetailSectionDefinition(id: 'risks', title: 'Risks & Issues'),
+  _ProjectDetailSectionDefinition(id: 'decisions', title: 'Decision Log'),
+  _ProjectDetailSectionDefinition(id: 'change_log', title: 'Change Log'),
+  _ProjectDetailSectionDefinition(id: 'media', title: 'Media & Documents'),
+  _ProjectDetailSectionDefinition(id: 'closure', title: 'Closure'),
+];
+
+const _projectDetailDefaultSectionIds = <String>[
+  'tags',
+  'identity',
+  'shopify_seo',
+  'local_repo',
+  'runtime',
+  'people',
+  'work',
+  'risks',
+  'decisions',
+  'change_log',
+  'media',
+  'closure',
+];
+
 class ProjectDetailScreen extends StatefulWidget {
   final String projectId;
   const ProjectDetailScreen({super.key, required this.projectId});
@@ -158,6 +198,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   DateTime? _summaryGeneratedAt;
   ProjectSummaryEvidencePacket? _summaryEvidencePacket;
   bool _summaryEvidenceLoading = false;
+  Set<String> _visibleSectionIds = _projectDetailDefaultSectionIds.toSet();
 
   List<WorkItem> _workItems = const [];
   List<LlmTaskQueueItem> _llmQueueItems = const [];
@@ -195,6 +236,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       decisions = await state.getProjectDecisions(widget.projectId);
     } catch (_) {}
     final summarySettings = await state.loadProjectAiSummarySettings();
+    final sectionVisibility = await state.loadProjectDetailSectionVisibility(
+      widget.projectId,
+      _projectDetailDefaultSectionIds,
+    );
 
     Draft? cachedDraft;
     if (summarySettings.enabled) {
@@ -213,6 +258,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       _risks = risks;
       _decisions = decisions;
       _includeLibrary = summarySettings.includeLibrary;
+      _visibleSectionIds = sectionVisibility.visibleSectionIds;
       _summaryEvidenceLoading = summarySettings.enabled;
       if (!summarySettings.enabled) _summaryEvidencePacket = null;
     });
@@ -278,6 +324,20 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   void _toggleSection(String key) =>
       setState(() => _expandedSection = _expandedSection == key ? null : key);
+
+  bool _sectionVisible(String sectionId) =>
+      _visibleSectionIds.contains(sectionId);
+
+  Future<void> _openProjectWorkboard(
+    BuildContext context,
+    Project project,
+  ) async {
+    final state = AppStateScope.of(context);
+    await state.setActiveById(project.id);
+    if (context.mounted) {
+      context.go(_workboardRouteForProject(project.id));
+    }
+  }
 
   Future<void> _addProjectTask(BuildContext context) async {
     final state = AppStateScope.read(context);
@@ -1034,14 +1094,14 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             ),
             actions: [
               IconButton(
+                tooltip: 'Project detail display settings',
+                icon: const Icon(Icons.settings_outlined, size: 20),
+                onPressed: () => _showSectionVisibilityDialog(context),
+              ),
+              IconButton(
                 tooltip: 'Open work board',
                 icon: const Icon(Icons.view_kanban_outlined, size: 20),
-                onPressed: () async {
-                  await state.setActiveById(project.id);
-                  if (context.mounted) {
-                    context.go(_workboardRouteForProject(project.id));
-                  }
-                },
+                onPressed: () => _openProjectWorkboard(context, project),
               ),
               IconButton(
                 tooltip: 'Delete project',
@@ -1060,12 +1120,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             children: [
               _ProjectCommandToolbar(
                 projectId: widget.projectId,
-                onOpenWorkboard: () async {
-                  await state.setActiveById(project.id);
-                  if (context.mounted) {
-                    context.go(_workboardRouteForProject(project.id));
-                  }
-                },
+                onOpenWorkboard: () => _openProjectWorkboard(context, project),
                 onEditMeta: () => _showMetaDialog(context, project),
                 onExportBundle: () =>
                     _showProjectBundleExportDialog(context, project.title),
@@ -1080,7 +1135,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     setState(() => _taskHeaderExpanded = !_taskHeaderExpanded),
                 onAddProjectTask: () => _addProjectTask(context),
                 onAddLlmTask: () => _showCreateLlmTaskDialog(context),
-                onOpenWorkboard: () => _toggleSection('work'),
+                onOpenWorkboard: () => _openProjectWorkboard(context, project),
                 onRefresh: _loadAll,
                 onOpenTask: (item) async {
                   await showWorkItemDetailSheet(context, item.id);
@@ -1121,166 +1176,181 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
               const SizedBox(height: 8),
 
               // Expandable sections
-              _Section(
-                id: 'tags',
-                title: 'Tags',
-                subtitle: 'Separate home, work, personal, and other contexts',
-                expanded: _expandedSection == 'tags',
-                onTap: () => _toggleSection('tags'),
-                child: _TagsSection(
-                  projectId: widget.projectId,
-                  onEdit: () => _showTagsDialog(context),
+              if (_sectionVisible('tags'))
+                _Section(
+                  id: 'tags',
+                  title: 'Tags',
+                  subtitle: 'Separate home, work, personal, and other contexts',
+                  expanded: _expandedSection == 'tags',
+                  onTap: () => _toggleSection('tags'),
+                  child: _TagsSection(
+                    projectId: widget.projectId,
+                    onEdit: () => _showTagsDialog(context),
+                  ),
                 ),
-              ),
-              _Section(
-                id: 'identity',
-                title: 'Project Identity',
-                subtitle: 'Purpose, outcome, success criteria, scope',
-                expanded: _expandedSection == 'identity',
-                onTap: () => _toggleSection('identity'),
-                child: _IdentitySection(
-                  projectId: widget.projectId,
-                  project: project,
-                  onEdit: () => _showIdentityDialog(context, project),
-                  onReplaceGithub: () => _replaceGithubMetadata(context),
-                  onForgetGithub: () => _forgetGithubMetadata(context),
+              if (_sectionVisible('identity'))
+                _Section(
+                  id: 'identity',
+                  title: 'Project Identity',
+                  subtitle: 'Purpose, outcome, success criteria, scope',
+                  expanded: _expandedSection == 'identity',
+                  onTap: () => _toggleSection('identity'),
+                  child: _IdentitySection(
+                    projectId: widget.projectId,
+                    project: project,
+                    onEdit: () => _showIdentityDialog(context, project),
+                    onReplaceGithub: () => _replaceGithubMetadata(context),
+                    onForgetGithub: () => _forgetGithubMetadata(context),
+                  ),
                 ),
-              ),
-              _Section(
-                id: 'shopify_seo',
-                title: 'Shopify SEO',
-                subtitle: 'Product review table and product-level batches',
-                expanded: _expandedSection == 'shopify_seo',
-                onTap: () => _toggleSection('shopify_seo'),
-                child: _ShopifySeoSection(projectId: widget.projectId),
-              ),
-              _Section(
-                id: 'local_repo',
-                title: 'Local Repo',
-                subtitle: 'Refresh from reviewed local project files',
-                expanded: _expandedSection == 'local_repo',
-                onTap: () => _toggleSection('local_repo'),
-                child: _LocalRepoSection(
-                  projectId: widget.projectId,
-                  onChooseLocalRepo: () => _replaceLocalRepoLink(context),
-                  onAssociateFile: () => _associateLocalFile(context),
-                  onAssociateFolder: () => _associateLocalFolder(context),
-                  onPreviewRefresh: () => _showLocalRefreshDialog(context),
-                  onExportBundle: () =>
-                      _showProjectBundleExportDialog(context, project.title),
-                  onInspectGit: () => _showGitVisibilityDialog(context),
-                  onRefreshGithub: () => _refreshGithubMetadata(context),
+              if (_sectionVisible('shopify_seo'))
+                _Section(
+                  id: 'shopify_seo',
+                  title: 'Shopify SEO',
+                  subtitle: 'Product review table and product-level batches',
+                  expanded: _expandedSection == 'shopify_seo',
+                  onTap: () => _toggleSection('shopify_seo'),
+                  child: _ShopifySeoSection(projectId: widget.projectId),
                 ),
-              ),
-              _Section(
-                id: 'runtime',
-                title: 'Runtime',
-                subtitle: 'Launch, tests, and capsule checks',
-                expanded: _expandedSection == 'runtime',
-                onTap: () => _toggleSection('runtime'),
-                child: _ProjectRuntimeSection(
-                  projectId: widget.projectId,
-                  onEdit: () => _showMetaDialog(context, project),
+              if (_sectionVisible('local_repo'))
+                _Section(
+                  id: 'local_repo',
+                  title: 'Local Repo',
+                  subtitle: 'Refresh from reviewed local project files',
+                  expanded: _expandedSection == 'local_repo',
+                  onTap: () => _toggleSection('local_repo'),
+                  child: _LocalRepoSection(
+                    projectId: widget.projectId,
+                    onChooseLocalRepo: () => _replaceLocalRepoLink(context),
+                    onAssociateFile: () => _associateLocalFile(context),
+                    onAssociateFolder: () => _associateLocalFolder(context),
+                    onPreviewRefresh: () => _showLocalRefreshDialog(context),
+                    onExportBundle: () =>
+                        _showProjectBundleExportDialog(context, project.title),
+                    onInspectGit: () => _showGitVisibilityDialog(context),
+                    onRefreshGithub: () => _refreshGithubMetadata(context),
+                  ),
                 ),
-              ),
-              _Section(
-                id: 'people',
-                title: 'People & Roles',
-                subtitle: 'Who is involved and what do they own?',
-                expanded: _expandedSection == 'people',
-                onTap: () => _toggleSection('people'),
-                child: _PeopleSection(
-                  people: _people,
-                  onAdd: () => _showAddPersonDialog(context),
-                  onEdit: (p) => _showEditPersonDialog(context, p),
-                  onDelete: (p) async {
-                    await state.deleteProjectPerson(p.id);
-                    await _loadAll();
-                  },
+              if (_sectionVisible('runtime'))
+                _Section(
+                  id: 'runtime',
+                  title: 'Runtime',
+                  subtitle: 'Launch, tests, and capsule checks',
+                  expanded: _expandedSection == 'runtime',
+                  onTap: () => _toggleSection('runtime'),
+                  child: _ProjectRuntimeSection(
+                    projectId: widget.projectId,
+                    onEdit: () => _showMetaDialog(context, project),
+                  ),
                 ),
-              ),
-              _Section(
-                id: 'work',
-                title: 'Project Workboard',
-                subtitle: 'Project-scoped tasks, grouped by status',
-                expanded: _expandedSection == 'work',
-                onTap: () => _toggleSection('work'),
-                child: _ProjectWorkSection(
-                  projectId: widget.projectId,
-                  items: _workItems,
-                  onChanged: _loadAll,
-                  onAddProjectTask: () => _addProjectTask(context),
+              if (_sectionVisible('people'))
+                _Section(
+                  id: 'people',
+                  title: 'People & Roles',
+                  subtitle: 'Who is involved and what do they own?',
+                  expanded: _expandedSection == 'people',
+                  onTap: () => _toggleSection('people'),
+                  child: _PeopleSection(
+                    people: _people,
+                    onAdd: () => _showAddPersonDialog(context),
+                    onEdit: (p) => _showEditPersonDialog(context, p),
+                    onDelete: (p) async {
+                      await state.deleteProjectPerson(p.id);
+                      await _loadAll();
+                    },
+                  ),
                 ),
-              ),
-              _Section(
-                id: 'risks',
-                title: 'Risks & Issues',
-                subtitle: 'What might break, what is already broken?',
-                expanded: _expandedSection == 'risks',
-                onTap: () => _toggleSection('risks'),
-                child: _RisksSection(
-                  risks: _risks,
-                  onAdd: () => _showAddRiskDialog(context),
-                  onDelete: (r) async {
-                    await state.deleteProjectRisk(r.id);
-                    await _loadAll();
-                  },
+              if (_sectionVisible('work'))
+                _Section(
+                  id: 'work',
+                  title: 'Project Workboard',
+                  subtitle: 'Project-scoped tasks, grouped by status',
+                  expanded: _expandedSection == 'work',
+                  onTap: () => _toggleSection('work'),
+                  child: _ProjectWorkSection(
+                    projectId: widget.projectId,
+                    items: _workItems,
+                    onChanged: _loadAll,
+                    onAddProjectTask: () => _addProjectTask(context),
+                    onOpenWorkboard: () =>
+                        _openProjectWorkboard(context, project),
+                  ),
                 ),
-              ),
-              _Section(
-                id: 'decisions',
-                title: 'Decision Log',
-                subtitle: 'What was decided, why, and by whom?',
-                expanded: _expandedSection == 'decisions',
-                onTap: () => _toggleSection('decisions'),
-                child: _DecisionsSection(
-                  decisions: _decisions,
-                  onAdd: () => _showAddDecisionDialog(context),
-                  onDelete: (d) async {
-                    await state.deleteProjectDecision(d.id);
-                    await _loadAll();
-                  },
+              if (_sectionVisible('risks'))
+                _Section(
+                  id: 'risks',
+                  title: 'Risks & Issues',
+                  subtitle: 'What might break, what is already broken?',
+                  expanded: _expandedSection == 'risks',
+                  onTap: () => _toggleSection('risks'),
+                  child: _RisksSection(
+                    risks: _risks,
+                    onAdd: () => _showAddRiskDialog(context),
+                    onDelete: (r) async {
+                      await state.deleteProjectRisk(r.id);
+                      await _loadAll();
+                    },
+                  ),
                 ),
-              ),
-              _Section(
-                id: 'change_log',
-                title: 'Change Log',
-                subtitle: 'Who changed what, and when',
-                expanded: _expandedSection == 'change_log',
-                onTap: () => _toggleSection('change_log'),
-                child: _ProjectChangeLogSection(projectId: widget.projectId),
-              ),
-              _Section(
-                id: 'media',
-                title: 'Media & Documents',
-                subtitle: 'Images, reference files, and project evidence',
-                expanded: _expandedSection == 'media',
-                onTap: () => _toggleSection('media'),
-                child: _MediaSection(
-                  projectId: widget.projectId,
-                  onImportMedia: () => _showImportMediaDialog(context),
+              if (_sectionVisible('decisions'))
+                _Section(
+                  id: 'decisions',
+                  title: 'Decision Log',
+                  subtitle: 'What was decided, why, and by whom?',
+                  expanded: _expandedSection == 'decisions',
+                  onTap: () => _toggleSection('decisions'),
+                  child: _DecisionsSection(
+                    decisions: _decisions,
+                    onAdd: () => _showAddDecisionDialog(context),
+                    onDelete: (d) async {
+                      await state.deleteProjectDecision(d.id);
+                      await _loadAll();
+                    },
+                  ),
                 ),
-              ),
-              _Section(
-                id: 'closure',
-                title: 'Closure',
-                subtitle:
-                    normalizeProjectStatusValue(project.status) == 'completed'
-                    ? 'Completed'
-                    : 'Open project',
-                expanded: _expandedSection == 'closure',
-                onTap: () => _toggleSection('closure'),
-                child: _ClosureSection(
-                  project: project,
-                  onEdit: () => _showClosureDialog(context, project),
-                  onComplete: () => state.updateProjectMeta(widget.projectId, {
-                    'status': 'completed',
-                  }),
-                  onArchive: () => state.updateProjectMeta(widget.projectId, {
-                    'status': 'archived',
-                  }),
+              if (_sectionVisible('change_log'))
+                _Section(
+                  id: 'change_log',
+                  title: 'Change Log',
+                  subtitle: 'Who changed what, and when',
+                  expanded: _expandedSection == 'change_log',
+                  onTap: () => _toggleSection('change_log'),
+                  child: _ProjectChangeLogSection(projectId: widget.projectId),
                 ),
-              ),
+              if (_sectionVisible('media'))
+                _Section(
+                  id: 'media',
+                  title: 'Media & Documents',
+                  subtitle: 'Images, reference files, and project evidence',
+                  expanded: _expandedSection == 'media',
+                  onTap: () => _toggleSection('media'),
+                  child: _MediaSection(
+                    projectId: widget.projectId,
+                    onImportMedia: () => _showImportMediaDialog(context),
+                  ),
+                ),
+              if (_sectionVisible('closure'))
+                _Section(
+                  id: 'closure',
+                  title: 'Closure',
+                  subtitle:
+                      normalizeProjectStatusValue(project.status) == 'completed'
+                      ? 'Completed'
+                      : 'Open project',
+                  expanded: _expandedSection == 'closure',
+                  onTap: () => _toggleSection('closure'),
+                  child: _ClosureSection(
+                    project: project,
+                    onEdit: () => _showClosureDialog(context, project),
+                    onComplete: () => state.updateProjectMeta(
+                      widget.projectId,
+                      {'status': 'completed'},
+                    ),
+                    onArchive: () => state.updateProjectMeta(widget.projectId, {
+                      'status': 'archived',
+                    }),
+                  ),
+                ),
             ],
           ),
         );
@@ -1826,6 +1896,83 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('Export failed: $error')));
     }
+  }
+
+  Future<void> _showSectionVisibilityDialog(BuildContext context) async {
+    final state = AppStateScope.of(context);
+    final selected = _visibleSectionIds.toSet();
+    final result = await showDialog<Set<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: _kPanel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: _kLine),
+          ),
+          title: const Text('Project display'),
+          content: SizedBox(
+            width: 420,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 520),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final section in _projectDetailSections)
+                      CheckboxListTile(
+                        dense: true,
+                        value: selected.contains(section.id),
+                        onChanged: (value) => setLocal(() {
+                          if (value ?? false) {
+                            selected.add(section.id);
+                          } else {
+                            selected.remove(section.id);
+                          }
+                        }),
+                        title: Text(section.title),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(
+                ctx,
+              ).pop(_projectDetailDefaultSectionIds.toSet()),
+              child: const Text('Show all'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: selected.isEmpty
+                  ? null
+                  : () => Navigator.of(ctx).pop(selected),
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || !context.mounted) return;
+    await state.saveProjectDetailSectionVisibility(
+      widget.projectId,
+      result,
+      _projectDetailDefaultSectionIds,
+    );
+    if (!mounted) return;
+    setState(() {
+      _visibleSectionIds = result;
+      if (_expandedSection != null && !result.contains(_expandedSection)) {
+        _expandedSection = null;
+      }
+    });
   }
 
   Future<void> _showMetaDialog(BuildContext context, Project project) async {
@@ -2496,23 +2643,55 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
   String? _error;
   String _filter = 'all';
   String _sort = 'lowest_score';
+  AppState? _loadedState;
+  String? _loadedProjectId;
 
   @override
-  void initState() {
-    super.initState();
-    unawaited(_load());
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _loadIfNeeded();
   }
 
-  Future<void> _load() async {
+  @override
+  void didUpdateWidget(covariant _ShopifySeoSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.projectId != widget.projectId) {
+      _snapshot = null;
+      _selected.clear();
+      _loading = true;
+      _error = null;
+      _loadedProjectId = null;
+      _loadIfNeeded(force: true);
+    }
+  }
+
+  void _loadIfNeeded({bool force = false}) {
+    final state = AppStateScope.of(context);
+    if (!force &&
+        identical(_loadedState, state) &&
+        _loadedProjectId == widget.projectId) {
+      return;
+    }
+    _loadedState = state;
+    _loadedProjectId = widget.projectId;
+    unawaited(_load(state: state, projectId: widget.projectId));
+  }
+
+  Future<void> _load({
+    required AppState state,
+    required String projectId,
+  }) async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final snapshot = await AppStateScope.of(
-        context,
-      ).getLatestShopifySeoReview(widget.projectId);
-      if (!mounted) return;
+      final snapshot = await state.getLatestShopifySeoReview(projectId);
+      if (!mounted ||
+          widget.projectId != projectId ||
+          !identical(_loadedState, state)) {
+        return;
+      }
       setState(() {
         _snapshot = snapshot;
         _selected
@@ -2521,7 +2700,11 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
         _loading = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted ||
+          widget.projectId != projectId ||
+          !identical(_loadedState, state)) {
+        return;
+      }
       setState(() {
         _error = '$error';
         _loading = false;
@@ -2580,17 +2763,18 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
   }
 
   Future<void> _queueSelected() async {
+    final state = AppStateScope.of(context);
     final snapshot = _snapshot;
     if (snapshot == null || _selected.isEmpty) return;
     setState(() => _busy = true);
     try {
-      final count = await AppStateScope.of(context)
-          .queueShopifySeoProductBatches(
-            projectId: widget.projectId,
-            snapshot: snapshot,
-            productIds: Set<String>.of(_selected),
-          );
-      await _load();
+      final projectId = widget.projectId;
+      final count = await state.queueShopifySeoProductBatches(
+        projectId: projectId,
+        snapshot: snapshot,
+        productIds: Set<String>.of(_selected),
+      );
+      await _load(state: state, projectId: projectId);
       _showSnack(
         'Queued $count Shopify SEO product batch${count == 1 ? '' : 'es'}.',
       );
@@ -7008,12 +7192,14 @@ class _ProjectWorkSection extends StatelessWidget {
   final List<WorkItem> items;
   final Future<void> Function() onChanged;
   final Future<void> Function() onAddProjectTask;
+  final Future<void> Function() onOpenWorkboard;
 
   const _ProjectWorkSection({
     required this.projectId,
     required this.items,
     required this.onChanged,
     required this.onAddProjectTask,
+    required this.onOpenWorkboard,
   });
 
   @override
@@ -7042,6 +7228,12 @@ class _ProjectWorkSection extends StatelessWidget {
               onPressed: onAddProjectTask,
               icon: const Icon(Icons.add, size: 16),
               label: const Text('Add project task'),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: onOpenWorkboard,
+              icon: const Icon(Icons.view_kanban_outlined, size: 16),
+              label: const Text('Open full board'),
             ),
           ],
         ),
