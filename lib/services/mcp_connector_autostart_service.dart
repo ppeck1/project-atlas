@@ -293,7 +293,7 @@ class McpConnectorAutostartService {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return null;
       }
-      return response
+      return await response
           .transform(utf8.decoder)
           .join()
           .timeout(const Duration(seconds: 2));
@@ -400,6 +400,14 @@ class McpConnectorAutostartService {
     final psArgs = args.map(_psQuote).join(', ');
     final script =
         '''
+\$processPath = [Environment]::GetEnvironmentVariable('Path', 'Process')
+if ([string]::IsNullOrWhiteSpace(\$processPath)) {
+  \$processPath = [Environment]::GetEnvironmentVariable('PATH', 'Process')
+}
+if (-not [string]::IsNullOrWhiteSpace(\$processPath)) {
+  [Environment]::SetEnvironmentVariable('PATH', \$null, 'Process')
+  [Environment]::SetEnvironmentVariable('Path', \$processPath, 'Process')
+}
 Start-Process -FilePath ${_psQuote(executable)} -ArgumentList @($psArgs) -WorkingDirectory ${_psQuote(workingDirectory)} -WindowStyle Hidden -RedirectStandardOutput ${_psQuote(stdoutPath)} -RedirectStandardError ${_psQuote(stderrPath)}
 ''';
     final result = await Process.run('powershell.exe', [
