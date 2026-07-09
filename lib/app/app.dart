@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../db/app_db.dart';
+import '../services/mcp_connector_autostart_service.dart';
 import '../shared/models/app_state.dart';
 import '../shared/models/app_state_scope.dart';
 import 'router.dart';
@@ -26,6 +27,7 @@ class _ProjectAtlasAppState extends State<ProjectAtlasApp> {
     _db = AppDb();
     _state = AppState(_db);
     _router = buildRouter();
+    unawaited(McpConnectorAutostartService().startIfConfigured());
   }
 
   @override

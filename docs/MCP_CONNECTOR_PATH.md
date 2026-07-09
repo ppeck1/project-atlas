@@ -68,6 +68,10 @@ For private development, expose the local OAuth-mode gateway with an HTTPS
 tunnel such as Secure MCP Tunnel, Cloudflare Tunnel, or ngrok. The ChatGPT
 connector URL should point at the tunneled `/mcp` endpoint.
 
+For taskbar-first use, see `docs/MCP_CONNECTOR_AUTOSTART.md`. The desktop app
+can opt in to starting the gateway and tunnel from a local ignored config file
+when the normal UI launches.
+
 ## Current Remote Security Boundary
 
 The first remote profile is a tiny, redacted, read-only prototype.
