@@ -121,6 +121,21 @@ On normal desktop startup, Project Atlas checks the local config file.
   for up to 12 seconds. It does not launch the tunnel if the child exits early
   or reports mismatched tools, auth, or policy identity.
 
+## Operator Disclosure Preview
+
+Settings -> Integrations includes a local-only remote disclosure preview. The
+preview reads the ignored autostart config, ignored disclosure policy, and
+ignored disclosure audit metadata. If the configured gateway is already running
+on loopback, it also reads the gateway metadata and OAuth protected-resource
+metadata. It never starts, stops, restarts, or writes gateway or tunnel state.
+
+The preview shows the exact four remote tools, approved aliases and labels,
+disclosed field groups per tool, synthetic redacted samples, OAuth mode/scope
+and verifier kind, issuer count, a short policy SHA-256 fingerprint, recent
+metadata-only audit events, and the current policy/gateway metadata match. It
+reports active executable identity as `unverified` because current gateway
+metadata does not attest the process binary.
+
 ## Logs
 
 Autostart summary:

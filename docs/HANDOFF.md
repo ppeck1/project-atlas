@@ -6,6 +6,14 @@ Project Atlas is a public Flutter Windows desktop repo. The active app repo is t
 
 This v1.4 slice adds the Workboard Planning Layer. A later Shopify SEO hardening slice adds a draft-backed, stage-only Project Detail Shopify SEO review workflow; this document preserves the v1.4 release evidence below and should not be read as the newest feature inventory by itself.
 
+Current MCP hardening continuation: Settings -> Integrations now includes a
+local-only ChatGPT remote disclosure preview. It reads ignored connector
+config/policy/audit metadata and loopback gateway metadata, shows approved
+aliases, exact tools, disclosed field groups, OAuth scope/verifier shape, short
+policy fingerprint, recent safe audit metadata, and synthetic redacted samples,
+and does not start the gateway or tunnel. Active executable identity remains
+explicitly unverified until process attestation exists.
+
 - Work items now carry planning metadata: readiness, size, risk, suggested actor, verification needed, next action, planning notes, and last reviewed timestamp.
 - Existing work-item `blocked_reason` remains the blocker source of truth for work items.
 - LLM queue rows now carry the same planning metadata plus `blocker_reason`.

@@ -127,7 +127,16 @@ cross the gateway.
 
 The current containment profile intentionally withholds work-item titles,
 accepted-truth claims, commands, free-text notes, and evidence excerpts until
-their semantics and disclosure preview are hardened.
+their semantics are hardened.
+
+Settings -> Integrations includes a local-only disclosure preview for the
+remote profile. It reads only local ignored config/policy/audit files and
+loopback metadata from an already-running gateway. It shows approved aliases,
+the exact four tools, disclosed field groups, synthetic redacted samples, OAuth
+scope/verifier shape, issuer count, short policy fingerprint, recent
+metadata-only audit events, and whether gateway metadata matches the current
+policy. The preview does not start the gateway or tunnel, and active executable
+identity remains `unverified` until the gateway can attest its process binary.
 
 The v0.1 gateway still launches `project_atlas.exe --mcp-stdio` per forwarded
 request. Calls are serialized with a single-flight lock and protected by a

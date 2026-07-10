@@ -11,6 +11,7 @@ import '../../services/telegram_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/widgets/contact_picker.dart';
+import 'mcp_disclosure_preview_panel.dart';
 
 const _bg = Color(0xFF0F1115);
 const _panel = Color(0xFF151A22);
@@ -425,6 +426,11 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
           result: _ollamaResult,
           onTest: _testOllama,
         ),
+        const SizedBox(height: 28),
+        const Divider(color: _line),
+        const SizedBox(height: 24),
+
+        const McpDisclosurePreviewPanel(),
         const SizedBox(height: 28),
         const Divider(color: _line),
         const SizedBox(height: 24),
@@ -2510,7 +2516,7 @@ class _AdminTabState extends State<_AdminTab> {
         const Text(
           'Local-first personal project management.\n'
           'Data stored in local SQLite on this machine.\n'
-          'No cloud. No telemetry.',
+          'No telemetry. Optional integrations transmit only when explicitly configured.',
           style: TextStyle(fontSize: 12, color: _text54, height: 1.6),
         ),
         const SizedBox(height: 28),

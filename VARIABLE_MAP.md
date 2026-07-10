@@ -1000,6 +1000,24 @@ the gateway. A newly launched gateway must pass that check before autostart can
 start the tunnel. Stdio stdout and stderr are drained incrementally under hard
 caps and terminate the child on overflow.
 
+### Remote MCP disclosure preview (`lib/services/mcp_disclosure_preview_service.dart`)
+
+`McpDisclosurePreviewService` is a local inspector for the ChatGPT remote
+profile. It reads the ignored autostart config, ignored disclosure policy, and
+ignored `.local/runs/atlas-mcp-disclosure-audit.jsonl` metadata, and it probes
+only the configured loopback metadata endpoints when a gateway is already
+running. It returns `project_atlas.operator_disclosure_preview.v1` with approved
+aliases/labels, the exact four-tool boundary, disclosed field groups, synthetic
+redacted samples, OAuth mode/scope/verifier shape, issuer count, a 12-character
+policy SHA-256 fingerprint, recent safe audit rows, and gateway metadata match
+booleans. It never returns local project IDs, local paths, issuer/resource URLs,
+tokens, request/response bodies, correlation IDs, or full policy digests.
+
+The Settings -> Integrations panel renders this DTO as an operator preview. It
+does not start, stop, restart, or write gateway/tunnel state. Active executable
+identity is deliberately reported as `unverified` because current gateway
+metadata does not attest the process binary.
+
 ### Project runtime defaults
 
 | Export | Type / Signature | Notes |

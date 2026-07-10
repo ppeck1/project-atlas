@@ -37,6 +37,15 @@ OAuth claims, arguments, local IDs, or response content. Revoke the OAuth
 client/tunnel credential and stop the local gateway if remote access may be
 compromised.
 
+Settings -> Integrations includes a local-only remote disclosure preview. It
+reads the ignored connector config and disclosure policy, probes only the
+configured loopback metadata endpoints, and shows approved aliases, disclosed
+field groups, OAuth scope/verifier shape, policy fingerprint, recent audit
+metadata, and synthetic redacted samples for the exact four tools. It does not
+start or restart the gateway or tunnel. Active executable identity is reported
+as unverified because current gateway metadata does not attest the process
+binary.
+
 ## Data Storage Warning
 
 **The SQLite database is stored in plaintext.**
