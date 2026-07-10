@@ -51,5 +51,20 @@ jobs:
       - name: Build Windows release
         run: flutter build windows --release
 
+      - name: Seed MCP smoke fixture
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path 'build\windows\x64\runner\Release\project_atlas.exe').Path
+          $request = '{"jsonrpc":"2.0","id":"bootstrap","method":"tools/call","params":{"name":"list_projects","arguments":{"includeArchived":false}}}'
+          $request | & $exe --mcp-stdio | Out-Null
+          $db = Get-ChildItem -Path $env:APPDATA -Filter 'project_atlas.sqlite' -File -Recurse |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if ($null -eq $db) {
+            throw 'Project Atlas did not create its application-support database.'
+          }
+          $env:ATLAS_MCP_SMOKE_DB = $db.FullName
+          flutter test tools\seed_mcp_smoke_fixture_test.dart --concurrency=1
+
       - name: Smoke MCP gateway
         run: python tools\smoke_mcp_gateway.py --exe build\windows\x64\runner\Release\project_atlas.exe
