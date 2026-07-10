@@ -84,7 +84,15 @@ The tracked gateway prototype narrows that first profile to `list_projects`,
 approved project IDs to remote aliases. Tool results are parsed from their MCP
 text blocks and rebuilt from exact output allowlists. Planning free text,
 accepted-truth claims, commands, notes, evidence excerpts, and broader reads
-remain blocked until their semantics and disclosure preview are hardened.
+remain blocked until their semantics are hardened.
+
+Settings -> Integrations includes a local-only disclosure preview for this
+remote profile. It shows approved aliases, exact tools, disclosed field groups,
+synthetic redacted samples, OAuth scope/verifier shape, a short policy
+fingerprint, recent metadata-only audit events, and whether the running
+loopback gateway metadata matches the current policy. It does not start the
+gateway or tunnel, and it reports active executable identity as unverified
+until process-binary attestation exists.
 
 For ChatGPT connector work, the gateway should run in OAuth mode. OAuth mode
 publishes protected-resource metadata, challenges unauthenticated MCP requests,
