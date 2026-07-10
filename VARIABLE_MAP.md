@@ -906,7 +906,7 @@ Desktop-side adapter for local MCP clients, the read-only remote gateway, and lo
 | `getProjectIdentity(projectId)` | `Future<AtlasProjectIdentity?>` | Resolves one project to local registry, local path, repo root, cached GitHub remote, capsule project ID/display name/profiles, and resolver warnings/errors. Delegates path/capsule reads to `ProjectIdentityResolver`. |
 | `getProjectCapsuleStatus(projectId)` | `Future<AtlasCapsuleStatus?>` | Reads linked repo `.project/project_manifest.json`, `.project/ops_capsule.json`, local run-ledger/outbox evidence counts, and availability states through the read-only resolver. |
 | `getProjectBootstrapContext(projectId)` | `Future<AtlasProjectBootstrapContext?>` | Versioned agent startup packet (`atlas.project_bootstrap_context.v1`) combining identity, brief, capsule status, freshness snapshot, pending LLM tasks, pending proposals, recommended next action, confidence, and gaps. |
-| `getProjectPlanningContext(projectId)` | `Future<AtlasProjectPlanningContext?>` | Compact redacted project planning packet (`atlas.project_planning_context.v1`) for the narrow ChatGPT connector profile. Includes sanitized freshness, workload digest, constraints, verification hints, and recent evidence without raw paths, remotes, task bodies, or secrets. |
+| `getProjectPlanningContext(projectId)` | `Future<AtlasProjectPlanningContext?>` | Local planning packet (`atlas.project_planning_context.v1`) for trusted MCP consumers and as untrusted input to the remote projector. May include accepted-state hints, verification commands, evidence, and excerpts; the gateway never forwards this DTO directly. |
 | `getStaleProjects()` | `Future<List<AtlasProjectStatus>>` | Returns projects whose status or blocked work indicates attention. |
 | `workloadSnapshot({filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only Workboard snapshot across projects. Returns cards, counts, actor/risk breakdowns, stale count, ready-only execution candidates, separate planning candidates, and review-needed list. |
 | `projectWorkload(projectId, {filters, suggestionLimit})` | `Future<WorkloadSnapshot>` | Read-only project-scoped Workboard snapshot. Validates visible project. |
@@ -962,6 +962,43 @@ Transport-neutral MCP tool registry and JSON-safe dispatcher for `AtlasAgentServ
 ### Atlas MCP stdio wrapper (`lib/mcp/atlas_mcp_stdio*.dart`)
 
 Local JSON-RPC stdio transport for release Windows builds. `project_atlas.exe --mcp-stdio` redirects Flutter debug output to stderr, reads newline-delimited UTF-8 JSON-RPC from stdin, and writes only MCP response frames to stdout. Supported methods: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. Debug builds print the Dart VM service banner to stdout and are not suitable for stdio protocol smoke tests.
+
+### Remote MCP disclosure projection (`tools/atlas_mcp_gateway.py`, `tools/atlas_mcp_remote_policy.py`)
+
+The public ChatGPT gateway is a separate deny-by-default trust boundary over the
+broad local stdio server. It requires an ignored
+`.local/atlas_mcp_remote_disclosure.json` policy using
+`project_atlas.remote_disclosure_policy.v1`. Each approved local Atlas project
+ID maps to one non-sensitive alias and label; callers provide the alias, and the
+local ID never appears in remote results or audit entries. Missing, unreadable,
+or invalid policy state prevents gateway startup. An empty valid policy is a
+valid deny-all configuration.
+
+The gateway exposes exactly `list_projects`, `get_project_status`,
+`atlas.workload_snapshot`, and `atlas.project_planning_context`. For each call it
+parses the JSON carried inside the local MCP text-content envelope, validates the
+expected structure, filters to policy-approved projects, and constructs a fresh
+bounded `project_atlas.remote_projection.v1` result. Local DTOs, upstream tool
+definitions, free-text work content, commands, evidence excerpts, paths, remote
+URLs, and local identifiers are never forwarded by recursive redaction.
+Project lifecycle, freshness, and workload classifications are constrained to
+field-specific enums; malformed or token-shaped substitutions become fixed
+sentinels or are omitted. Archived aliases are rejected by status and planning
+projections, while workload reads bind to a fresh non-archived approved-project
+set before projecting any cards or counts.
+
+The ignored disclosure audit contains decision metadata only: generated
+correlation ID, allowed tool, approved alias when applicable, decision/outcome,
+projection schema, policy digest, counts, response bytes, and duration. Request
+and response bodies, tokens, local IDs, paths, and upstream error details are
+excluded. Connector autostart accepts an existing gateway only when its metadata
+advertises this projection schema, deny-by-default mode, the exact four tools,
+the configured auth mode/scope and OAuth resource/issuer endpoints, and a match
+to the current local policy digest.
+The digest is supplied in a local health-request header and is never returned by
+the gateway. A newly launched gateway must pass that check before autostart can
+start the tunnel. Stdio stdout and stderr are drained incrementally under hard
+caps and terminate the child on overflow.
 
 ### Project runtime defaults
 

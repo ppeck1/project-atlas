@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.server
 import importlib.util
 import json
@@ -11,6 +12,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -128,8 +130,11 @@ def request_json(
     payload: dict[str, Any] | None = None,
     token: str | None = None,
     origin: str | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, Any]:
-    status, body, _headers = request_json_with_headers(url, payload, token, origin)
+    status, body, _headers = request_json_with_headers(
+        url, payload, token, origin, extra_headers
+    )
     return status, body
 
 
@@ -138,6 +143,7 @@ def request_json_with_headers(
     payload: dict[str, Any] | None = None,
     token: str | None = None,
     origin: str | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, Any, dict[str, str]]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -145,6 +151,7 @@ def request_json_with_headers(
         headers["Authorization"] = f"Bearer {token}"
     if origin:
         headers["Origin"] = origin
+    headers.update(extra_headers or {})
     request = urllib.request.Request(url, data=data, headers=headers, method="POST" if payload is not None else "GET")
     try:
         with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
@@ -230,6 +237,78 @@ def stdio_tool_names(exe: Path) -> set[str]:
     raise RuntimeError("stdio tools/list did not return a tools response")
 
 
+def stdio_tool_call(exe: Path, name: str, arguments: dict[str, Any]) -> Any:
+    payload = [
+        {"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": "call",
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        },
+    ]
+    proc = subprocess.run(
+        [str(exe), "--mcp-stdio"],
+        input="\n".join(json.dumps(item) for item in payload) + "\n",
+        text=True,
+        capture_output=True,
+        timeout=45,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError("stdio tool call failed")
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        decoded = json.loads(line)
+        if decoded.get("id") != "call":
+            continue
+        result = decoded.get("result")
+        if not isinstance(result, dict) or result.get("isError"):
+            raise RuntimeError("stdio tool returned an error")
+        content = result.get("content")
+        if not isinstance(content, list) or len(content) != 1:
+            raise RuntimeError("stdio tool returned an invalid content envelope")
+        return json.loads(content[0]["text"])
+    raise RuntimeError("stdio tool call did not return a response")
+
+
+def create_smoke_disclosure_policy(
+    exe: Path, directory: Path
+) -> tuple[Path, str, str]:
+    projects = stdio_tool_call(exe, "list_projects", {"includeArchived": False})
+    if not isinstance(projects, list) or not projects:
+        raise RuntimeError("stdio list_projects returned no project for remote smoke")
+    selected = next(
+        (
+            project
+            for project in projects
+            if isinstance(project, dict) and project.get("title") == "Project Atlas"
+        ),
+        projects[0],
+    )
+    if not isinstance(selected, dict) or not isinstance(selected.get("id"), str):
+        raise RuntimeError("stdio list_projects returned no usable project ID")
+    alias = "atlas-smoke"
+    policy_path = directory / "atlas_mcp_remote_disclosure.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema": "project_atlas.remote_disclosure_policy.v1",
+                "projects": [
+                    {
+                        "projectId": selected["id"],
+                        "alias": alias,
+                        "label": "Atlas Smoke Project",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return policy_path, alias, selected["id"]
+
+
 def load_gateway_module(path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location("atlas_mcp_gateway_under_test", path)
     if spec is None or spec.loader is None:
@@ -245,7 +324,8 @@ def assert_no_sensitive_payload(label: str, payload: Any) -> None:
         if pattern.search(encoded):
             raise AssertionError(f"{label} leaked {name}: {encoded[:1200]}")
     for private_key in ("draftText", "proposalBody", "queueContext", "unresolvedBody"):
-        if private_key in encoded and "[redacted:" not in encoded:
+        expected_mask = f'"{private_key}": "[redacted:'
+        if private_key in encoded and expected_mask not in encoded:
             raise AssertionError(f"{label} leaked unredacted {private_key}: {encoded[:1200]}")
 
 
@@ -342,6 +422,189 @@ def assert_denied_tool(
         raise AssertionError(f"denied tool {name} timed out") from error
     if status != 200 or "error" not in denied:
         raise AssertionError(f"denied tool {name} was not rejected: {status} {denied}")
+
+
+FORBIDDEN_REMOTE_KEYS = {
+    "absolutePath",
+    "branch",
+    "command",
+    "commands",
+    "contextExcerpts",
+    "currentAcceptedTruth",
+    "draftText",
+    "fullPath",
+    "githubRemote",
+    "headSha",
+    "id",
+    "localPath",
+    "notes",
+    "onlineHeadSha",
+    "owner",
+    "path",
+    "proposalBody",
+    "raw",
+    "rawJson",
+    "remoteUrl",
+    "repositoryPath",
+    "workItemId",
+    "llmTaskId",
+}
+
+
+def decode_remote_tool_payload(response: Any) -> Any:
+    if not isinstance(response, dict) or "error" in response:
+        raise AssertionError(f"remote tool returned a JSON-RPC error: {response}")
+    result = response.get("result")
+    if not isinstance(result, dict) or result.get("isError") is not False:
+        raise AssertionError(f"remote tool returned an invalid result: {response}")
+    content = result.get("content")
+    if not isinstance(content, list) or len(content) != 1:
+        raise AssertionError(f"remote tool returned invalid content: {response}")
+    block = content[0]
+    if not isinstance(block, dict) or set(block) != {"type", "text"}:
+        raise AssertionError(f"remote tool returned an invalid content block: {block}")
+    if block.get("type") != "text" or not isinstance(block.get("text"), str):
+        raise AssertionError(f"remote tool returned non-text content: {block}")
+    return json.loads(block["text"])
+
+
+def assert_no_forbidden_remote_keys(value: Any, *, path: str = "$") -> None:
+    if isinstance(value, dict):
+        forbidden = sorted(set(value).intersection(FORBIDDEN_REMOTE_KEYS))
+        if forbidden:
+            raise AssertionError(f"forbidden remote keys at {path}: {forbidden}")
+        for key, child in value.items():
+            assert_no_forbidden_remote_keys(child, path=f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            assert_no_forbidden_remote_keys(child, path=f"{path}[{index}]")
+
+
+def assert_hardened_initialize(response: Any) -> None:
+    if not isinstance(response, dict) or set(response) != {"jsonrpc", "id", "result"}:
+        raise AssertionError(f"initialize root shape drifted: {response}")
+    result = response.get("result")
+    if not isinstance(result, dict) or set(result) != {
+        "protocolVersion",
+        "serverInfo",
+        "capabilities",
+        "instructions",
+        "_meta",
+    }:
+        raise AssertionError(f"initialize result shape drifted: {response}")
+    if result.get("protocolVersion") != "2025-06-18":
+        raise AssertionError(f"initialize protocol drifted: {response}")
+    if result.get("serverInfo") != {
+        "name": "project-atlas-gateway",
+        "version": "0.2.0",
+        "profile": "remote_readonly",
+    }:
+        raise AssertionError(f"initialize serverInfo drifted: {response}")
+    if result.get("capabilities") != {"tools": {"listChanged": False}}:
+        raise AssertionError(f"initialize capabilities drifted: {response}")
+    meta = result.get("_meta")
+    if not isinstance(meta, dict) or set(meta) != {
+        "gatewayProfile",
+        "projectionSchema",
+        "denyByDefault",
+        "disclosurePolicyLoaded",
+        "remoteWritesEnabled",
+    }:
+        raise AssertionError(f"initialize metadata drifted: {response}")
+
+
+def assert_four_remote_tool_calls(
+    base_url: str,
+    token: str,
+    project_alias: str,
+    local_project_id: str,
+    *,
+    request_id_start: int,
+) -> dict[str, str]:
+    calls = [
+        ("list_projects", {}, "project_atlas.remote_project_list.v1"),
+        (
+            "get_project_status",
+            {"projectId": project_alias},
+            "project_atlas.remote_project_status.v1",
+        ),
+        (
+            "atlas.workload_snapshot",
+            {"projectId": project_alias, "limit": 3},
+            "project_atlas.remote_workload_snapshot.v1",
+        ),
+        (
+            "atlas.project_planning_context",
+            {"projectId": project_alias},
+            "project_atlas.remote_planning_context.v1",
+        ),
+    ]
+    schemas: dict[str, str] = {}
+    for offset, (name, arguments, expected_schema) in enumerate(calls):
+        status, response = request_json(
+            f"{base_url}/mcp",
+            rpc(
+                "tools/call",
+                request_id_start + offset,
+                {"name": name, "arguments": arguments},
+            ),
+            token=token,
+        )
+        if status != 200:
+            raise AssertionError(f"{name} failed with HTTP {status}: {response}")
+        payload = decode_remote_tool_payload(response)
+        if not isinstance(payload, dict) or payload.get("schema") != expected_schema:
+            raise AssertionError(f"{name} returned an unexpected schema: {payload}")
+        assert_no_sensitive_payload(name, payload)
+        assert_no_forbidden_remote_keys(payload)
+        if local_project_id in json.dumps(payload, sort_keys=True):
+            raise AssertionError(f"{name} exposed the local project ID")
+        schemas[name] = expected_schema
+    return schemas
+
+
+def assert_disclosure_audit(
+    path: Path,
+    local_project_id: str,
+    forbidden_values: set[str],
+) -> int:
+    if not path.exists():
+        raise AssertionError("disclosure audit log was not created")
+    events = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if not events:
+        raise AssertionError("disclosure audit log is empty")
+    expected_keys = {
+        "ts",
+        "correlationId",
+        "tool",
+        "projectAlias",
+        "decision",
+        "projectionSchema",
+        "policyDigest",
+        "items",
+        "responseBytes",
+        "durationMs",
+        "outcome",
+    }
+    for event in events:
+        if not isinstance(event, dict) or set(event) != expected_keys:
+            raise AssertionError(f"disclosure audit event shape drifted: {event}")
+    encoded = json.dumps(events, sort_keys=True)
+    for forbidden in {local_project_id, *forbidden_values}:
+        if forbidden and forbidden in encoded:
+            raise AssertionError("disclosure audit leaked private request data")
+    successful_tools = {
+        event.get("tool") for event in events if event.get("outcome") == "ok"
+    }
+    if not ALLOWED_TOOLS.issubset(successful_tools):
+        raise AssertionError(
+            f"disclosure audit missed projected tool calls: {successful_tools}"
+        )
+    return len(events)
 
 
 def assert_oauth_unauthorized(
@@ -448,6 +711,10 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
             str(port),
             "--exe",
             str(args.exe),
+            "--disclosure-policy",
+            str(args.disclosure_policy),
+            "--disclosure-audit-log",
+            str(args.disclosure_audit_log),
             "--auth-mode",
             "oauth",
             "--resource-url",
@@ -520,6 +787,7 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
         )
         if status != 200 or initialize.get("result", {}).get("instructions") is None:
             raise AssertionError(f"bad oauth initialize: {status} {initialize}")
+        assert_hardened_initialize(initialize)
         assert_no_sensitive_payload("oauth initialize", initialize)
 
         status, tools_list = request_json(
@@ -538,24 +806,19 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
                 raise AssertionError(f"missing oauth securitySchemes: {tool}")
         assert_no_sensitive_payload("oauth tools/list", tools_list)
 
-        status, projects = request_json(
-            f"{base_url}/mcp",
-            rpc(
-                "tools/call",
-                207,
-                {"name": "list_projects", "arguments": {"includeArchived": False}},
-            ),
-            token=OAUTH_SMOKE_TOKEN,
+        projected_schemas = assert_four_remote_tool_calls(
+            base_url,
+            OAUTH_SMOKE_TOKEN,
+            args.project_alias,
+            args.local_project_id,
+            request_id_start=207,
         )
-        if status != 200 or projects.get("result", {}).get("isError"):
-            raise AssertionError(f"oauth list_projects failed: {status} {projects}")
-        assert_no_sensitive_payload("oauth list_projects", projects)
 
         hidden_tools = sorted(all_stdio_tools.difference(tool_names))
         assert_denied_tool(
             base_url,
             OAUTH_SMOKE_TOKEN,
-            208,
+            218,
             hidden_tools[0],
         )
         return {
@@ -564,6 +827,7 @@ def run_oauth_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[str])
             "protectedResource": True,
             "negativePaths": 4,
             "originValidated": True,
+            "projectedTools": len(projected_schemas),
         }
     finally:
         proc.terminate()
@@ -627,6 +891,10 @@ def run_oauth_jwks_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[
             str(port),
             "--exe",
             str(args.exe),
+            "--disclosure-policy",
+            str(args.disclosure_policy),
+            "--disclosure-audit-log",
+            str(args.disclosure_audit_log),
             "--auth-mode",
             "oauth",
             "--resource-url",
@@ -701,24 +969,19 @@ def run_oauth_jwks_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[
             raise AssertionError(f"unexpected jwks remote tools: {sorted(tool_names)}")
         assert_no_sensitive_payload("jwks tools/list", tools_list)
 
-        status, projects = request_json(
-            f"{base_url}/mcp",
-            rpc(
-                "tools/call",
-                307,
-                {"name": "list_projects", "arguments": {"includeArchived": False}},
-            ),
-            token=valid_token,
+        projected_schemas = assert_four_remote_tool_calls(
+            base_url,
+            valid_token,
+            args.project_alias,
+            args.local_project_id,
+            request_id_start=307,
         )
-        if status != 200 or projects.get("result", {}).get("isError"):
-            raise AssertionError(f"jwks list_projects failed: {status} {projects}")
-        assert_no_sensitive_payload("jwks list_projects", projects)
 
         hidden_tools = sorted(all_stdio_tools.difference(tool_names))
         assert_denied_tool(
             base_url,
             valid_token,
-            308,
+            318,
             hidden_tools[0],
         )
         return {
@@ -727,6 +990,7 @@ def run_oauth_jwks_gateway_smoke(args: argparse.Namespace, all_stdio_tools: set[
             "protectedResource": True,
             "negativePaths": 5,
             "hiddenToolRejected": True,
+            "projectedTools": len(projected_schemas),
         }
     finally:
         proc.terminate()
@@ -752,6 +1016,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     if not args.exe.exists():
         raise SystemExit(f"Project Atlas executable not found: {args.exe}")
+    args.temp_policy_dir = tempfile.TemporaryDirectory(
+        prefix="atlas_mcp_gateway_smoke_"
+    )
+    temp_policy_root = Path(args.temp_policy_dir.name)
+    (
+        args.disclosure_policy,
+        args.project_alias,
+        args.local_project_id,
+    ) = create_smoke_disclosure_policy(args.exe, temp_policy_root)
+    args.disclosure_audit_log = temp_policy_root / "disclosure-audit.jsonl"
     all_stdio_tools = stdio_tool_names(args.exe)
     missing_allowed = sorted(ALLOWED_TOOLS.difference(all_stdio_tools))
     if missing_allowed:
@@ -759,6 +1033,18 @@ def main(argv: list[str] | None = None) -> int:
     gateway_module = load_gateway_module(args.gateway)
     assert_gateway_redaction_self_test(gateway_module)
     assert_gateway_transport_hardening_self_test(gateway_module)
+    assert_gateway_startup_failure(
+        args,
+        [
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(free_port()),
+            "--token",
+            args.token,
+        ],
+        "--disclosure-policy",
+    )
     assert_gateway_startup_failure(
         args,
         [
@@ -780,8 +1066,34 @@ def main(argv: list[str] | None = None) -> int:
             "http://atlas.example.test",
             "--authorization-server",
             "https://auth.example.test",
+            "--jwks-url",
+            "https://auth.example.test/jwks.json",
+            "--disclosure-policy",
+            str(args.disclosure_policy),
+            "--disclosure-audit-log",
+            str(args.disclosure_audit_log),
         ],
         "not HTTPS",
+    )
+    assert_gateway_startup_failure(
+        args,
+        [
+            "--auth-mode",
+            "oauth",
+            "--resource-url",
+            f"http://127.0.0.1:{free_port()}",
+            "--authorization-server",
+            "https://auth.example.test",
+            "--jwks-url",
+            "https://auth.example.test/jwks.json",
+            "--introspection-url",
+            "https://auth.example.test/introspect",
+            "--disclosure-policy",
+            str(args.disclosure_policy),
+            "--disclosure-audit-log",
+            str(args.disclosure_audit_log),
+        ],
+        "exactly one",
     )
 
     port = args.port or free_port()
@@ -796,6 +1108,10 @@ def main(argv: list[str] | None = None) -> int:
             str(port),
             "--exe",
             str(args.exe),
+            "--disclosure-policy",
+            str(args.disclosure_policy),
+            "--disclosure-audit-log",
+            str(args.disclosure_audit_log),
             "--token",
             args.token,
         ],
@@ -806,11 +1122,29 @@ def main(argv: list[str] | None = None) -> int:
     try:
         wait_for_health(base_url)
 
-        status, metadata = request_json(f"{base_url}/.well-known/project-atlas-mcp")
+        expected_policy_digest = hashlib.sha256(
+            args.disclosure_policy.read_bytes()
+        ).hexdigest()
+        status, metadata = request_json(
+            f"{base_url}/.well-known/project-atlas-mcp",
+            extra_headers={
+                "X-Project-Atlas-Policy-Digest": expected_policy_digest
+            },
+        )
         if status != 200 or metadata.get("profile") != "remote_readonly":
             raise AssertionError(f"bad metadata: {status} {metadata}")
         if set(metadata.get("allowedTools", [])) != ALLOWED_TOOLS:
             raise AssertionError(f"metadata allowlist drifted: {metadata}")
+        if (
+            metadata.get("projectionSchema")
+            != "project_atlas.remote_projection.v1"
+            or metadata.get("denyByDefault") is not True
+            or metadata.get("disclosurePolicyLoaded") is not True
+            or metadata.get("disclosurePolicyMatches") is not True
+        ):
+            raise AssertionError(f"metadata projection boundary drifted: {metadata}")
+        if "policyDigest" in metadata:
+            raise AssertionError("metadata exposed the disclosure policy digest")
         assert_no_sensitive_payload("metadata", metadata)
 
         status, body = request_json(f"{base_url}/mcp", rpc("initialize", 1))
@@ -852,6 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if status != 200 or initialize.get("result", {}).get("instructions") is None:
             raise AssertionError(f"bad initialize: {status} {initialize}")
+        assert_hardened_initialize(initialize)
         assert_no_sensitive_payload("initialize", initialize)
 
         status, tools_list = request_json(
@@ -868,19 +1203,23 @@ def main(argv: list[str] | None = None) -> int:
         if exposed_denied:
             raise AssertionError(f"denied tools exposed: {exposed_denied}")
         assert_no_sensitive_payload("tools/list", tools_list)
-
-        status, projects = request_json(
-            f"{base_url}/mcp",
-            rpc(
-                "tools/call",
-                4,
-                {"name": "list_projects", "arguments": {"includeArchived": False}},
-            ),
-            token=args.token,
+        list_tool = next(
+            tool
+            for tool in tools_list.get("result", {}).get("tools", [])
+            if tool.get("name") == "list_projects"
         )
-        if status != 200 or projects.get("result", {}).get("isError"):
-            raise AssertionError(f"list_projects failed: {status} {projects}")
-        assert_no_sensitive_payload("list_projects", projects)
+        if "includeArchived" in list_tool.get("inputSchema", {}).get(
+            "properties", {}
+        ):
+            raise AssertionError("remote list_projects still exposes includeArchived")
+
+        projected_schemas = assert_four_remote_tool_calls(
+            base_url,
+            args.token,
+            args.project_alias,
+            args.local_project_id,
+            request_id_start=4,
+        )
 
         hidden_tools = sorted(all_stdio_tools.difference(tool_names))
         missing_denied_probes = sorted(DENIED_TOOL_PROBES.difference(hidden_tools))
@@ -893,6 +1232,16 @@ def main(argv: list[str] | None = None) -> int:
 
         oauth_summary = run_oauth_gateway_smoke(args, all_stdio_tools)
         oauth_jwks_summary = run_oauth_jwks_gateway_smoke(args, all_stdio_tools)
+        audit_events = assert_disclosure_audit(
+            args.disclosure_audit_log,
+            args.local_project_id,
+            {
+                args.token,
+                OAUTH_SMOKE_TOKEN,
+                OAUTH_MISSING_SCOPE_TOKEN,
+                OAUTH_WRONG_AUDIENCE_TOKEN,
+            },
+        )
 
         print(
             json.dumps(
@@ -902,6 +1251,8 @@ def main(argv: list[str] | None = None) -> int:
                     "tools": len(tool_names),
                     "hiddenToolsRejected": len(hidden_tools),
                     "deniedToolsExposed": exposed_denied,
+                    "projectedTools": len(projected_schemas),
+                    "disclosureAuditEvents": audit_events,
                     "oauth": oauth_summary,
                     "oauthJwks": oauth_jwks_summary,
                 },
@@ -915,6 +1266,7 @@ def main(argv: list[str] | None = None) -> int:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+        args.temp_policy_dir.cleanup()
 
 
 if __name__ == "__main__":

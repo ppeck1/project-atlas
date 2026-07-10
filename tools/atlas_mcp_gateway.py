@@ -9,6 +9,8 @@ to the existing Project Atlas stdio MCP executable.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import hmac
 import json
 import logging
 import os
@@ -16,6 +18,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +27,31 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+try:
+    from atlas_mcp_remote_policy import (
+        REMOTE_PROJECTION_SCHEMA,
+        DisclosurePolicy,
+        DisclosurePolicyError,
+        RemoteProjectionError,
+        attach_remote_project_visibility,
+        load_disclosure_policy,
+        prepare_remote_tool_request,
+        project_remote_tool_response,
+        remote_tool_contract,
+    )
+except ModuleNotFoundError:  # Supports import as tools.atlas_mcp_gateway in tests.
+    from tools.atlas_mcp_remote_policy import (
+        REMOTE_PROJECTION_SCHEMA,
+        DisclosurePolicy,
+        DisclosurePolicyError,
+        RemoteProjectionError,
+        attach_remote_project_visibility,
+        load_disclosure_policy,
+        prepare_remote_tool_request,
+        project_remote_tool_response,
+        remote_tool_contract,
+    )
 
 
 DEFAULT_ALLOWED_TOOLS = {
@@ -38,7 +66,12 @@ AUTH_MODE_OAUTH = "oauth"
 DEFAULT_OAUTH_SCOPE = "atlas.read"
 DEFAULT_UNSAFE_BIND_HOSTS = {"0.0.0.0"}
 LOCALHOST_NAMES = {"localhost"}
-MAX_MCP_REQUEST_BYTES = 1024 * 1024
+MAX_MCP_REQUEST_BYTES = 64 * 1024
+MAX_MCP_RESPONSE_BYTES = 64 * 1024
+MAX_RAW_STDIO_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_RAW_STDIO_STDERR_BYTES = 256 * 1024
+MAX_MCP_BATCH_ITEMS = 16
+REMOTE_PROTOCOL_VERSION = "2025-06-18"
 
 SENSITIVE_READ_TOOLS = {
     "get_project_brief",
@@ -146,6 +179,116 @@ def default_exe_path() -> Path:
     )
 
 
+class StdioOutputLimitError(RuntimeError):
+    """Raised after terminating a stdio child that exceeded a hard pipe cap."""
+
+
+def run_process_bounded(
+    command: list[str],
+    stdin_text: str,
+    *,
+    timeout: int,
+    stdout_limit: int,
+    stderr_limit: int,
+) -> tuple[int, str]:
+    """Run one child while draining both pipes incrementally under hard caps."""
+
+    proc = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout_chunks: list[bytes] = []
+    exceeded = threading.Event()
+    kill_lock = threading.Lock()
+
+    def terminate() -> None:
+        with kill_lock:
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+
+    def close_pipes() -> None:
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+
+    def drain(
+        stream: Any,
+        *,
+        limit: int,
+        chunks: list[bytes] | None,
+    ) -> None:
+        total = 0
+        try:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                total += len(chunk)
+                if total > limit:
+                    exceeded.set()
+                    terminate()
+                    return
+                if chunks is not None:
+                    chunks.append(chunk)
+        except OSError:
+            terminate()
+
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+    stdout_thread = threading.Thread(
+        target=drain,
+        kwargs={
+            "stream": proc.stdout,
+            "limit": stdout_limit,
+            "chunks": stdout_chunks,
+        },
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=drain,
+        kwargs={
+            "stream": proc.stderr,
+            "limit": stderr_limit,
+            "chunks": None,
+        },
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    try:
+        assert proc.stdin is not None
+        proc.stdin.write(stdin_text.encode("utf-8"))
+        proc.stdin.close()
+    except OSError:
+        terminate()
+
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        terminate()
+        proc.wait()
+        stdout_thread.join()
+        stderr_thread.join()
+        close_pipes()
+        raise
+
+    stdout_thread.join()
+    stderr_thread.join()
+    close_pipes()
+    if exceeded.is_set():
+        raise StdioOutputLimitError("Local MCP output exceeded its hard limit.")
+    return proc.returncode, b"".join(stdout_chunks).decode("utf-8")
+
+
 class StdioMcpClient:
     def __init__(self, exe: Path, timeout: int) -> None:
         self.exe = exe
@@ -166,20 +309,30 @@ class StdioMcpClient:
 
     def _initialize(self, request: dict[str, Any]) -> dict[str, Any]:
         response = self._run_stdio([request], response_id=request.get("id"))
-        result = (response or {}).get("result")
-        if not isinstance(result, dict):
-            return response or json_rpc_error(
-                request.get("id"), -32603, "Gateway error", "No initialize result."
+        if (
+            not isinstance(response, dict)
+            or "error" in response
+            or not isinstance(response.get("result"), dict)
+        ):
+            return json_rpc_error(
+                request.get("id"), -32603, "Gateway initialization failed", ""
             )
-        result = dict(result)
-        server_info = dict(result.get("serverInfo") or {})
-        server_info["name"] = "project-atlas-gateway"
-        server_info["profile"] = "remote_readonly"
-        result["serverInfo"] = server_info
-        result["instructions"] = GATEWAY_INSTRUCTIONS
-        result["_meta"] = {
-            "gatewayProfile": "remote_readonly",
-            "remoteWritesEnabled": False,
+        result = {
+            "protocolVersion": REMOTE_PROTOCOL_VERSION,
+            "serverInfo": {
+                "name": "project-atlas-gateway",
+                "version": "0.2.0",
+                "profile": "remote_readonly",
+            },
+            "capabilities": {"tools": {"listChanged": False}},
+            "instructions": GATEWAY_INSTRUCTIONS,
+            "_meta": {
+                "gatewayProfile": "remote_readonly",
+                "projectionSchema": REMOTE_PROJECTION_SCHEMA,
+                "denyByDefault": True,
+                "disclosurePolicyLoaded": True,
+                "remoteWritesEnabled": False,
+            },
         }
         return {"jsonrpc": "2.0", "id": request.get("id"), "result": result}
 
@@ -214,36 +367,43 @@ class StdioMcpClient:
         stdin_payload = "\n".join(json.dumps(item) for item in payload) + "\n"
         try:
             with self._lock:
-                proc = subprocess.run(
+                return_code, stdout = run_process_bounded(
                     [str(self.exe), "--mcp-stdio"],
-                    input=stdin_payload,
-                    text=True,
-                    capture_output=True,
+                    stdin_payload,
                     timeout=self.timeout,
+                    stdout_limit=MAX_RAW_STDIO_RESPONSE_BYTES,
+                    stderr_limit=MAX_RAW_STDIO_STDERR_BYTES,
                 )
         except subprocess.TimeoutExpired:
             return json_rpc_error(response_id, -32603, "Gateway timeout", "")
-
-        if proc.returncode != 0:
+        except (OSError, UnicodeError, StdioOutputLimitError):
             return json_rpc_error(
                 response_id,
                 -32603,
                 "Project Atlas MCP failed",
-                proc.stderr.strip()[:2000],
+                "Local MCP process failed.",
+            )
+
+        if return_code != 0:
+            return json_rpc_error(
+                response_id,
+                -32603,
+                "Project Atlas MCP failed",
+                "Local MCP process failed.",
             )
 
         responses: list[dict[str, Any]] = []
-        for line in proc.stdout.splitlines():
+        for line in stdout.splitlines():
             if not line.strip():
                 continue
             try:
                 decoded = json.loads(line)
-            except json.JSONDecodeError as error:
+            except json.JSONDecodeError:
                 return json_rpc_error(
                     response_id,
                     -32603,
                     "Invalid stdio MCP response",
-                    str(error),
+                    "Local MCP response was invalid.",
                 )
             if isinstance(decoded, dict):
                 responses.append(decoded)
@@ -301,7 +461,7 @@ class StaticTokenVerifier(TokenVerifier):
         self.token = token
 
     def verify(self, token: str) -> tuple[bool, str]:
-        if token == self.token:
+        if hmac.compare_digest(token, self.token):
             return True, ""
         return False, "invalid static bearer token"
 
@@ -390,6 +550,55 @@ class OAuthJwksVerifier(TokenVerifier):
         return True, ""
 
 
+class DisclosureAuditLog:
+    """Append-only local audit containing metadata, never MCP payload content."""
+
+    def __init__(self, path: Path, policy_digest: str) -> None:
+        self.path = path
+        self.policy_digest = policy_digest
+        self._lock = threading.Lock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self.path.open("a", encoding="utf-8"):
+                pass
+        except OSError as error:
+            raise RuntimeError("Disclosure audit log is not writable.") from error
+
+    def record(
+        self,
+        *,
+        correlation_id: str,
+        tool: str,
+        project_alias: str | None,
+        decision: str,
+        outcome: str,
+        item_count: int,
+        response_bytes: int,
+        duration_ms: int,
+    ) -> None:
+        event = {
+            "ts": dt.datetime.now(dt.timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
+            "correlationId": correlation_id,
+            "tool": tool,
+            "projectAlias": project_alias,
+            "decision": decision,
+            "projectionSchema": REMOTE_PROJECTION_SCHEMA,
+            "policyDigest": self.policy_digest,
+            "items": max(0, item_count),
+            "responseBytes": max(0, response_bytes),
+            "durationMs": max(0, duration_ms),
+            "outcome": outcome,
+        }
+        encoded = json.dumps(event, separators=(",", ":"), sort_keys=True)
+        try:
+            with self._lock, self.path.open("a", encoding="utf-8") as handle:
+                handle.write(encoded + "\n")
+        except OSError:
+            logging.error("MCP disclosure audit write failed")
+
+
 class GatewayState:
     def __init__(
         self,
@@ -398,6 +607,8 @@ class GatewayState:
         timeout: int,
         auth_mode: str,
         allowed_origins: set[str],
+        disclosure_policy: DisclosurePolicy,
+        disclosure_audit: DisclosureAuditLog,
         oauth_config: OAuthConfig | None = None,
     ) -> None:
         self.client = StdioMcpClient(exe, timeout)
@@ -405,9 +616,15 @@ class GatewayState:
         self.auth_mode = auth_mode
         self.oauth_config = oauth_config
         self.allowed_origins = allowed_origins
+        self.disclosure_policy = disclosure_policy
+        self.disclosure_audit = disclosure_audit
         if auth_mode == AUTH_MODE_OAUTH:
             if oauth_config is None:
                 raise ValueError("oauth_config is required for oauth mode")
+            if bool(oauth_config.jwks_url) == bool(oauth_config.introspection_url):
+                raise ValueError(
+                    "oauth mode requires exactly one token verification endpoint"
+                )
             if oauth_config.jwks_url:
                 self.token_verifier: TokenVerifier = OAuthJwksVerifier(
                     oauth_config, timeout
@@ -592,50 +809,58 @@ def filter_tools(
     allowed_tools: set[str],
     security_schemes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if not isinstance(response, dict) or "error" in response:
+        raise RemoteProjectionError("upstream_error")
     result = response.get("result")
     if not isinstance(result, dict):
-        return response
+        raise RemoteProjectionError("invalid_upstream_shape")
     tools = result.get("tools")
     if not isinstance(tools, list):
-        return response
-    filtered = []
+        raise RemoteProjectionError("invalid_upstream_shape")
+    upstream_names: set[str] = set()
     for tool in tools:
-        if not isinstance(tool, dict):
-            continue
+        if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+            raise RemoteProjectionError("invalid_upstream_shape")
         name = tool.get("name")
-        if name in allowed_tools:
-            filtered.append(_remote_tool_metadata(tool, security_schemes))
-    next_result = dict(result)
-    next_result["tools"] = filtered
-    response = dict(response)
-    response["result"] = next_result
-    return response
+        upstream_names.add(name)
+    if not allowed_tools.issubset(upstream_names):
+        raise RemoteProjectionError("invalid_upstream_shape")
+    filtered = [
+        _remote_tool_metadata({"name": name}, security_schemes)
+        for name in sorted(allowed_tools)
+    ]
+    return {
+        "jsonrpc": "2.0",
+        "id": response.get("id"),
+        "result": {"tools": filtered},
+    }
 
 
 def _remote_tool_metadata(
     tool: dict[str, Any],
     security_schemes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    annotated = dict(tool)
-    annotated.setdefault("annotations", {})
-    annotations = dict(annotated["annotations"])
-    annotations.update(
-        {
+    name = tool.get("name")
+    if not isinstance(name, str):
+        raise RemoteProjectionError("invalid_upstream_shape")
+    contract = remote_tool_contract(name)
+    annotated = {
+        "name": name,
+        "description": contract["description"],
+        "inputSchema": contract["inputSchema"],
+        "annotations": {
             "readOnlyHint": True,
             "destructiveHint": False,
             "idempotentHint": True,
             "openWorldHint": False,
-        }
-    )
-    annotated["annotations"] = annotations
-    meta = dict(annotated.get("_meta") or {})
-    meta.update(
-        {
-            "projectAtlasProfile": "remote_readonly",
-            "requiresHumanApproval": False,
-            "remoteWritesEnabled": False,
-        }
-    )
+        },
+    }
+    meta = {
+        "projectAtlasProfile": "remote_readonly",
+        "projectionSchema": REMOTE_PROJECTION_SCHEMA,
+        "requiresHumanApproval": False,
+        "remoteWritesEnabled": False,
+    }
     if security_schemes:
         annotated["securitySchemes"] = security_schemes
         meta["securitySchemes"] = security_schemes
@@ -665,6 +890,17 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, self._oauth_protected_resource_metadata())
             return
         if request_path == "/.well-known/project-atlas-mcp":
+            expected_policy_digest = self.headers.get(
+                "X-Project-Atlas-Policy-Digest"
+            )
+            policy_matches = bool(
+                isinstance(expected_policy_digest, str)
+                and re.fullmatch(r"[0-9a-f]{64}", expected_policy_digest)
+                and hmac.compare_digest(
+                    expected_policy_digest,
+                    self.state.disclosure_policy.digest,
+                )
+            )
             self._send_json(
                 HTTPStatus.OK,
                 {
@@ -673,6 +909,10 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
                     "mcpEndpoint": "/mcp",
                     "auth": self._auth_metadata(),
                     "profile": "remote_readonly",
+                    "projectionSchema": REMOTE_PROJECTION_SCHEMA,
+                    "denyByDefault": True,
+                    "disclosurePolicyLoaded": True,
+                    "disclosurePolicyMatches": policy_matches,
                     "allowedTools": sorted(self.state.allowed_tools),
                 },
             )
@@ -701,8 +941,12 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         if request_path != "/mcp":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
-        length = int(self.headers.get("Content-Length") or "0")
-        if length > MAX_MCP_REQUEST_BYTES:
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_content_length"})
+            return
+        if length < 0 or length > MAX_MCP_REQUEST_BYTES:
             self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "payload_too_large"})
             return
         raw = self.rfile.read(length)
@@ -715,10 +959,10 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
 
         try:
             decoded = json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError as error:
+        except (UnicodeDecodeError, json.JSONDecodeError):
             self._send_json(
                 HTTPStatus.BAD_REQUEST,
-                json_rpc_error(None, -32700, "Parse error", str(error)),
+                json_rpc_error(None, -32700, "Parse error", ""),
             )
             return
 
@@ -730,10 +974,19 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.close_connection = True
             return
+        if self._encoded_size(responses) > MAX_MCP_RESPONSE_BYTES:
+            responses = json_rpc_error(
+                None,
+                -32603,
+                "Remote projection failed",
+                {"code": "projection_failed"},
+            )
         self._send_json(HTTPStatus.OK, responses)
 
     def _handle_json_rpc(self, decoded: Any) -> Any:
         if isinstance(decoded, list):
+            if not decoded or len(decoded) > MAX_MCP_BATCH_ITEMS:
+                return json_rpc_error(None, -32600, "Invalid Request", "")
             responses = []
             for request in decoded:
                 response = self._handle_one(request)
@@ -755,17 +1008,123 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
                 return json_rpc_error(request_id, -32602, "Invalid params", "")
             name = params.get("name")
             if not isinstance(name, str) or is_write_or_worker_tool(name):
+                self._audit(
+                    correlation_id=str(uuid.uuid4()),
+                    tool="unrecognized",
+                    project_alias=None,
+                    decision="denied",
+                    outcome="tool_not_allowed",
+                )
                 return json_rpc_error(
                     request_id,
                     -32602,
                     "Tool not allowed by gateway profile",
-                    {"profile": "remote_readonly", "tool": name},
+                    {"profile": "remote_readonly"},
                 )
-            logging.info("proxy tools/call %s", name)
+            correlation_id = str(uuid.uuid4())
+            started_at = time.monotonic()
+            try:
+                prepared_request, context = prepare_remote_tool_request(
+                    request,
+                    self.state.disclosure_policy,
+                )
+            except RemoteProjectionError as error:
+                response = self._remote_projection_error(request_id, error)
+                self._audit(
+                    correlation_id=correlation_id,
+                    tool=name,
+                    project_alias=None,
+                    decision="denied",
+                    outcome=error.code,
+                    response_bytes=self._encoded_size(response),
+                    started_at=started_at,
+                )
+                return response
+
+            if name == "atlas.workload_snapshot":
+                visibility_request = {
+                    "jsonrpc": "2.0",
+                    "id": f"gateway-visibility-{uuid.uuid4()}",
+                    "method": "tools/call",
+                    "params": {
+                        "name": "list_projects",
+                        "arguments": {"includeArchived": False},
+                    },
+                }
+                visibility_response = self.state.client.request(visibility_request)
+                try:
+                    if visibility_response is None:
+                        raise RemoteProjectionError("upstream_error")
+                    context = attach_remote_project_visibility(
+                        visibility_response,
+                        context,
+                        self.state.disclosure_policy,
+                    )
+                except RemoteProjectionError as error:
+                    projected_error = self._remote_projection_error(request_id, error)
+                    self._audit(
+                        correlation_id=correlation_id,
+                        tool=name,
+                        project_alias=context.project_alias,
+                        decision="denied",
+                        outcome=error.code,
+                        response_bytes=self._encoded_size(projected_error),
+                        started_at=started_at,
+                    )
+                    return projected_error
+
+            response = self.state.client.request(prepared_request)
+            if response is None:
+                projected_error = self._remote_projection_error(
+                    request_id,
+                    RemoteProjectionError("upstream_error"),
+                )
+                self._audit(
+                    correlation_id=correlation_id,
+                    tool=name,
+                    project_alias=context.project_alias,
+                    decision="allowed",
+                    outcome="upstream_error",
+                    response_bytes=self._encoded_size(projected_error),
+                    started_at=started_at,
+                )
+                return projected_error
+            try:
+                outcome = project_remote_tool_response(
+                    response,
+                    context,
+                    self.state.disclosure_policy,
+                    max_response_bytes=MAX_MCP_RESPONSE_BYTES,
+                    scrubber=redact_gateway_payload,
+                )
+            except RemoteProjectionError as error:
+                projected_error = self._remote_projection_error(request_id, error)
+                self._audit(
+                    correlation_id=correlation_id,
+                    tool=name,
+                    project_alias=context.project_alias,
+                    decision="allowed",
+                    outcome=error.code,
+                    response_bytes=self._encoded_size(projected_error),
+                    started_at=started_at,
+                )
+                return projected_error
+            self._audit(
+                correlation_id=correlation_id,
+                tool=name,
+                project_alias=context.project_alias,
+                decision="allowed",
+                outcome="ok",
+                item_count=outcome.item_count,
+                response_bytes=outcome.response_bytes,
+                started_at=started_at,
+            )
+            return outcome.response
         elif method == "tools/list":
-            logging.info("proxy tools/list")
+            correlation_id = str(uuid.uuid4())
+            started_at = time.monotonic()
         elif method == "initialize":
-            logging.info("proxy initialize")
+            pass
         else:
             return json_rpc_error(request_id, -32601, "Method not found", str(method))
 
@@ -778,12 +1137,91 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
                 if self.state.oauth_config is not None
                 else None
             )
-            response = filter_tools(
-                response,
-                self.state.allowed_tools,
-                security_schemes,
+            try:
+                response = filter_tools(
+                    response,
+                    self.state.allowed_tools,
+                    security_schemes,
+                )
+                response = redact_gateway_payload(response)
+                if self._encoded_size(response) > MAX_MCP_RESPONSE_BYTES:
+                    raise RemoteProjectionError("response_too_large")
+            except RemoteProjectionError as error:
+                response = self._remote_projection_error(
+                    request_id,
+                    error,
+                )
+                outcome = error.code
+            else:
+                outcome = "ok"
+            self._audit(
+                correlation_id=correlation_id,
+                tool="tools/list",
+                project_alias=None,
+                decision="allowed",
+                outcome=outcome,
+                item_count=len(response.get("result", {}).get("tools", [])),
+                response_bytes=self._encoded_size(response),
+                started_at=started_at,
             )
+            return response
         return redact_gateway_payload(response)
+
+    @staticmethod
+    def _encoded_size(value: Any) -> int:
+        return len(json.dumps(value, separators=(",", ":")).encode("utf-8"))
+
+    @staticmethod
+    def _remote_projection_error(
+        request_id: Any,
+        error: RemoteProjectionError,
+    ) -> dict[str, Any]:
+        if error.code == "invalid_params":
+            return json_rpc_error(
+                request_id,
+                -32602,
+                "Invalid params",
+                {"code": "invalid_params"},
+            )
+        if error.code == "not_found":
+            return json_rpc_error(
+                request_id,
+                -32004,
+                "Resource unavailable",
+                {"code": "not_found"},
+            )
+        return json_rpc_error(
+            request_id,
+            -32603,
+            "Remote projection failed",
+            {"code": "projection_failed"},
+        )
+
+    def _audit(
+        self,
+        *,
+        correlation_id: str,
+        tool: str,
+        project_alias: str | None,
+        decision: str,
+        outcome: str,
+        item_count: int = 0,
+        response_bytes: int = 0,
+        started_at: float | None = None,
+    ) -> None:
+        duration_ms = 0
+        if started_at is not None:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+        self.state.disclosure_audit.record(
+            correlation_id=correlation_id,
+            tool=tool,
+            project_alias=project_alias,
+            decision=decision,
+            outcome=outcome,
+            item_count=item_count,
+            response_bytes=response_bytes,
+            duration_ms=duration_ms,
+        )
 
     def _authorized(self) -> bool:
         auth_header = self.headers.get("Authorization") or ""
@@ -792,7 +1230,7 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         token = auth_header.removeprefix("Bearer ").strip()
         ok, reason = self.state.token_verifier.verify(token)
         if not ok:
-            logging.warning("MCP gateway auth rejected: %s", reason)
+            logging.warning("MCP gateway auth rejected")
         return ok
 
     def _origin_allowed(self) -> bool:
@@ -802,10 +1240,10 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         try:
             normalized_origin = _normalize_origin(origin)
         except ValueError:
-            logging.warning("MCP gateway rejected invalid Origin: %s", origin)
+            logging.warning("MCP gateway rejected Origin: invalid")
             return False
         if normalized_origin not in self.state.allowed_origins:
-            logging.warning("MCP gateway rejected Origin: %s", normalized_origin)
+            logging.warning("MCP gateway rejected Origin: not_allowed")
             return False
         return True
 
@@ -868,10 +1306,11 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         body: Any,
         headers: dict[str, str] | None = None,
     ) -> None:
-        encoded = json.dumps(body, indent=2).encode("utf-8")
+        encoded = json.dumps(body, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "close")
         for key, value in (headers or {}).items():
             self.send_header(key, value)
@@ -880,7 +1319,7 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        logging.info("%s - %s", self.address_string(), fmt % args)
+        logging.info("MCP HTTP request completed")
 
 
 class GatewayServer(ThreadingHTTPServer):
@@ -952,6 +1391,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=os.environ.get("ATLAS_MCP_JWKS_URL"),
         help="JWKS endpoint for JWT bearer-token validation, for example Auth0.",
     )
+    policy_from_env = os.environ.get("ATLAS_MCP_DISCLOSURE_POLICY")
+    parser.add_argument(
+        "--disclosure-policy",
+        type=Path,
+        default=Path(policy_from_env) if policy_from_env else None,
+        help="Required ignored JSON policy mapping approved project IDs to remote aliases.",
+    )
+    audit_from_env = os.environ.get("ATLAS_MCP_DISCLOSURE_AUDIT_LOG")
+    parser.add_argument(
+        "--disclosure-audit-log",
+        type=Path,
+        default=(
+            Path(audit_from_env)
+            if audit_from_env
+            else repo_root() / ".local" / "runs" / "atlas-mcp-disclosure-audit.jsonl"
+        ),
+    )
     parser.add_argument("--timeout", type=int, default=45)
     return parser.parse_args(argv)
 
@@ -969,6 +1425,22 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         print(str(error), file=sys.stderr)
         return 2
+    if args.disclosure_policy is None:
+        print(
+            "Refusing to start: pass --disclosure-policy or set "
+            "ATLAS_MCP_DISCLOSURE_POLICY.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        disclosure_policy = load_disclosure_policy(args.disclosure_policy)
+        disclosure_audit = DisclosureAuditLog(
+            args.disclosure_audit_log,
+            disclosure_policy.digest,
+        )
+    except (DisclosurePolicyError, RuntimeError) as error:
+        print(f"Refusing to start: {error}", file=sys.stderr)
+        return 2
     if args.auth_mode == AUTH_MODE_STATIC and not args.token:
         print(
             "Refusing to start: set ATLAS_MCP_GATEWAY_TOKEN or pass --token.",
@@ -984,6 +1456,13 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 "Refusing to start OAuth mode: pass --resource-url and at least "
                 "one --authorization-server.",
+                file=sys.stderr,
+            )
+            return 2
+        if bool(args.jwks_url) == bool(args.introspection_url):
+            print(
+                "Refusing to start OAuth mode: configure exactly one of "
+                "--jwks-url or --introspection-url.",
                 file=sys.stderr,
             )
             return 2
@@ -1018,11 +1497,13 @@ def main(argv: list[str] | None = None) -> int:
         args.timeout,
         args.auth_mode,
         allowed_origins,
+        disclosure_policy,
+        disclosure_audit,
         oauth_config,
     )
     server = GatewayServer((args.host, args.port), McpGatewayHandler, state)
     logging.info("Project Atlas MCP gateway listening on http://%s:%s/mcp", args.host, args.port)
-    logging.info("Proxying read-only MCP calls to %s", args.exe)
+    logging.info("Remote projection policy loaded")
     logging.info("Gateway auth mode: %s", args.auth_mode)
     try:
         server.serve_forever()

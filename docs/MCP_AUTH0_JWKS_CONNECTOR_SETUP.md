@@ -12,6 +12,11 @@ to:
 Do not enable project briefs, queue reads, task context, proposal tools,
 enrichment tools, GitHub refresh, or write tools.
 
+The gateway also requires an ignored, local disclosure policy. OAuth access is
+not disclosure approval by itself: only projects named in that policy can be
+returned, and remote callers address them by policy alias rather than Atlas's
+local project ID.
+
 ## Auth0 Values
 
 Create or use an Auth0 API for Project Atlas.
@@ -29,6 +34,22 @@ for ChatGPT.
 - Add the ChatGPT connector OAuth redirect URL to Auth0 Allowed Callback URLs.
 - Keep Auth0 client secrets out of the repo and chat.
 
+## Disclosure Policy
+
+Create the ignored local policy from the public shape example, then replace the
+placeholder project ID with the real Atlas project ID and choose a non-sensitive
+alias and label:
+
+```powershell
+Copy-Item `
+  docs\examples\atlas_mcp_remote_disclosure.example.json `
+  .local\atlas_mcp_remote_disclosure.json
+```
+
+Do not commit the populated policy. It contains the private mapping from remote
+aliases to local Atlas IDs. A missing, unreadable, or invalid policy makes the
+gateway refuse startup; an empty valid policy exposes no projects.
+
 ## Gateway Window
 
 Run from this checkout:
@@ -41,6 +62,7 @@ $env:ATLAS_MCP_RESOURCE_URL="<Auth0 API Identifier>"
 $env:ATLAS_MCP_AUTHORIZATION_SERVERS="https://<tenant-domain>/"
 $env:ATLAS_MCP_OAUTH_SCOPE="atlas.read"
 $env:ATLAS_MCP_JWKS_URL="https://<tenant-domain>/.well-known/jwks.json"
+$env:ATLAS_MCP_DISCLOSURE_POLICY=".local\atlas_mcp_remote_disclosure.json"
 
 python tools\atlas_mcp_gateway.py `
   --host 127.0.0.1 `
@@ -83,13 +105,21 @@ $env:CONTROL_PLANE_API_KEY="<OpenAI tunnel runtime API key>"
 - Scope: `atlas.read`
 
 First success condition: ChatGPT lists exactly four Project Atlas tools and can
-call `list_projects`.
+call all four through the strict remote projection. Results must contain only
+approved aliases and bounded structured fields; local IDs, paths, free-text
+notes, task bodies, commands, evidence excerpts, and upstream tool metadata must
+not appear.
 
 ## Verification
 
 Before live ChatGPT testing, run:
 
 ```powershell
-python -m py_compile tools\atlas_mcp_gateway.py tools\smoke_mcp_gateway.py
+python -m py_compile `
+  tools\atlas_mcp_gateway.py `
+  tools\atlas_mcp_remote_policy.py `
+  tools\smoke_mcp_gateway.py `
+  tools\test_atlas_mcp_remote_policy.py
+python -m unittest discover -s tools -p "test_*.py" -v
 python tools\smoke_mcp_gateway.py --exe <path-to-project_atlas-release-exe>
 ```

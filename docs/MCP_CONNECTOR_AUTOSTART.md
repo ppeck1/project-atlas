@@ -12,6 +12,10 @@ present and enabled, the desktop app starts:
 The local stdio MCP server is still not a background service. The gateway
 launches `project_atlas.exe --mcp-stdio` per forwarded request.
 
+Remote startup is fail-closed. The gateway also requires an ignored disclosure
+policy that explicitly maps approved local project IDs to remote aliases. A
+missing, unreadable, or invalid policy prevents the gateway from starting.
+
 ## Local Config File
 
 Create this file locally:
@@ -30,6 +34,7 @@ Template:
   "pythonPath": "C:\\Path\\To\\Python311\\python.exe",
   "gatewayScriptPath": "tools\\atlas_mcp_gateway.py",
   "projectAtlasExePath": "build\\windows\\x64\\runner\\Release\\project_atlas.exe",
+  "disclosurePolicyPath": ".local\\atlas_mcp_remote_disclosure.json",
   "host": "127.0.0.1",
   "port": 4874,
   "authMode": "oauth",
@@ -51,7 +56,37 @@ Template:
 
 Use JWKS validation for the current Auth0-style setup. If an OAuth provider
 requires introspection instead, use `introspectionUrl` in place of `jwksUrl`;
-do not place client secrets in tracked files.
+exactly one verifier is allowed. Do not place client secrets in tracked files.
+
+## Remote Disclosure Policy
+
+Create this second ignored file before enabling autostart:
+
+```text
+.local/atlas_mcp_remote_disclosure.json
+```
+
+Start from `docs/examples/atlas_mcp_remote_disclosure.example.json`. Each entry
+contains the private local Atlas project ID plus the alias and label approved
+for remote disclosure:
+
+```json
+{
+  "schema": "project_atlas.remote_disclosure_policy.v1",
+  "projects": [
+    {
+      "projectId": "replace-with-local-atlas-project-id",
+      "alias": "project-atlas",
+      "label": "Project Atlas"
+    }
+  ]
+}
+```
+
+The policy is loaded once at gateway startup. Unknown fields, duplicate IDs or
+aliases, invalid aliases, and unsupported schemas are rejected. An explicit
+empty `projects` array is the deny-all configuration. Policy changes require a
+gateway restart.
 
 ## Tunnel Profile
 
@@ -73,11 +108,18 @@ On normal desktop startup, Project Atlas checks the local config file.
 
 - If the file is missing, startup continues normally.
 - If `"enabled": false`, startup continues normally.
-- If the Atlas gateway is already healthy, the app does not start another one.
+- If a gateway reports the hardened remote projection metadata, the app does
+  not start another one. Health requires the exact four tools, the configured
+  auth mode, scope, OAuth resource/issuer endpoints, and proof that the running
+  gateway loaded the current policy file. Older or mismatched gateway metadata
+  is not accepted.
 - If the tunnel health endpoint is already ready, the app does not start
   another tunnel process.
 - If the gateway or tunnel need to start, the app starts hidden background
   processes and writes logs under `.local/runs/`.
+- After launching the gateway, the app polls the full hardened metadata check
+  for up to 12 seconds. It does not launch the tunnel if the child exits early
+  or reports mismatched tools, auth, or policy identity.
 
 ## Logs
 
@@ -94,6 +136,17 @@ Gateway logs:
 .local/runs/atlas-mcp-gateway-autostart.err.log
 ```
 
+Disclosure audit metadata:
+
+```text
+.local/runs/atlas-mcp-disclosure-audit.jsonl
+```
+
+The disclosure audit contains generated correlation IDs, approved aliases,
+tool names, projection schema and local policy digest, counts, duration, and
+outcome. It does not contain tokens, OAuth claims, local project IDs, arguments,
+payloads, paths, or response content.
+
 Tunnel logs:
 
 ```text
@@ -109,7 +162,12 @@ Tunnel logs:
 After launching the pinned app:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:4874/.well-known/project-atlas-mcp
+$policyDigest = (Get-FileHash `
+  .local\atlas_mcp_remote_disclosure.json `
+  -Algorithm SHA256).Hash.ToLowerInvariant()
+Invoke-RestMethod `
+  http://127.0.0.1:4874/.well-known/project-atlas-mcp `
+  -Headers @{ 'X-Project-Atlas-Policy-Digest' = $policyDigest }
 Invoke-RestMethod http://127.0.0.1:4874/.well-known/oauth-protected-resource
 Get-Content .local\runs\atlas-mcp-connector-autostart.log -Tail 5
 ```
@@ -119,6 +177,14 @@ Expected gateway name:
 ```text
 Project Atlas MCP Gateway
 ```
+
+Also verify `projectionSchema` is `project_atlas.remote_projection.v1`,
+`denyByDefault` is `true`, and `disclosurePolicyLoaded` is `true`. The desktop
+health check sends the current policy SHA-256 in a local request header and
+requires `disclosurePolicyMatches: true`; the digest itself is not returned in
+metadata. It also requires the configured OAuth/static auth metadata and the
+exact four-tool set; OAuth mode additionally checks the protected resource,
+authorization-server set, scope, and configured JWKS/introspection endpoint.
 
 Expected remote tools for connector v0.2:
 
@@ -133,6 +199,8 @@ that does not satisfy the Project Atlas tunnel profile.
 
 ## Safety Boundary
 
-Autostart does not broaden the remote tool surface. The gateway still filters
+Autostart does not broaden the remote tool surface. The gateway filters
 `tools/list`, rejects direct calls to hidden tools, requires OAuth bearer
-validation, and redacts responses before they cross `/mcp`.
+validation, translates only approved aliases, parses the JSON carried inside
+MCP text blocks, and builds fresh per-tool allowlisted output objects. String
+scrubbing remains defense in depth; it is not the primary disclosure boundary.

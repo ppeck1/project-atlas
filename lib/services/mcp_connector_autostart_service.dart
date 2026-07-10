@@ -2,13 +2,24 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
+
+const _remoteMcpTools = <String>{
+  'list_projects',
+  'get_project_status',
+  'atlas.workload_snapshot',
+  'atlas.project_planning_context',
+};
+
+const _policyDigestHeader = 'X-Project-Atlas-Policy-Digest';
 
 class McpConnectorAutostartConfig {
   final bool enabled;
   final String pythonPath;
   final String gatewayScriptPath;
   final String projectAtlasExePath;
+  final String disclosurePolicyPath;
   final String host;
   final int port;
   final String authMode;
@@ -28,6 +39,7 @@ class McpConnectorAutostartConfig {
     required this.pythonPath,
     required this.gatewayScriptPath,
     required this.projectAtlasExePath,
+    required this.disclosurePolicyPath,
     required this.host,
     required this.port,
     required this.authMode,
@@ -52,6 +64,9 @@ class McpConnectorAutostartConfig {
       projectAtlasExePath:
           _string(json['projectAtlasExePath']) ??
           'build/windows/x64/runner/Release/project_atlas.exe',
+      disclosurePolicyPath:
+          _string(json['disclosurePolicyPath']) ??
+          '.local/atlas_mcp_remote_disclosure.json',
       host: _string(json['host']) ?? '127.0.0.1',
       port: _int(json['port']) ?? 4874,
       authMode: _string(json['authMode']) ?? 'oauth',
@@ -73,6 +88,9 @@ class McpConnectorAutostartConfig {
 
   Uri get gatewayMetadataUri =>
       Uri.parse('http://$host:$port/.well-known/project-atlas-mcp');
+
+  Uri get gatewayOAuthMetadataUri =>
+      Uri.parse('http://$host:$port/.well-known/oauth-protected-resource');
 
   static String? _string(Object? value) {
     final text = value?.toString().trim();
@@ -211,10 +229,13 @@ class McpConnectorAutostartService {
         );
       }
 
+      _validateGatewayConfig(config);
+
       final gatewayHealthy = await _projectAtlasGatewayHealthy(config);
       var gatewayStarted = false;
       if (!gatewayHealthy) {
         await _startGateway(config);
+        await _waitForGatewayHealthy(config);
         gatewayStarted = true;
       }
 
@@ -253,8 +274,125 @@ class McpConnectorAutostartService {
   Future<bool> _projectAtlasGatewayHealthy(
     McpConnectorAutostartConfig config,
   ) async {
-    final payload = await _getJson(config.gatewayMetadataUri);
-    return payload?['name'] == 'Project Atlas MCP Gateway';
+    final policyFile = File(_resolve(config.disclosurePolicyPath));
+    if (!await policyFile.exists()) {
+      throw StateError('The configured MCP disclosure policy does not exist.');
+    }
+    final policyDigest = sha256
+        .convert(await policyFile.readAsBytes())
+        .toString();
+    final payload = await _getJson(
+      config.gatewayMetadataUri,
+      headers: {_policyDigestHeader: policyDigest},
+    );
+    if (payload == null) return false;
+    final tools = payload['allowedTools'];
+    final exactTools =
+        tools is List &&
+        tools.length == _remoteMcpTools.length &&
+        tools.every((tool) => tool is String) &&
+        tools.cast<String>().toSet().containsAll(_remoteMcpTools);
+    final auth = payload['auth'];
+    final expectedAuth =
+        auth is Map &&
+        (config.usesOAuth
+            ? auth['type'] == 'oauth2' &&
+                  auth['mode'] == 'oauth' &&
+                  auth['scope'] == config.scope
+            : auth['type'] == 'bearer' && auth['mode'] == 'static-dev');
+    var expectedOAuthAuthority = true;
+    if (config.usesOAuth) {
+      final oauth = await _getJson(config.gatewayOAuthMetadataUri);
+      expectedOAuthAuthority =
+          oauth != null && _oauthMetadataMatches(oauth, config);
+    }
+    final hardened =
+        payload['name'] == 'Project Atlas MCP Gateway' &&
+        payload['profile'] == 'remote_readonly' &&
+        payload['projectionSchema'] == 'project_atlas.remote_projection.v1' &&
+        payload['denyByDefault'] == true &&
+        payload['disclosurePolicyLoaded'] == true &&
+        payload['disclosurePolicyMatches'] == true &&
+        exactTools &&
+        expectedAuth &&
+        expectedOAuthAuthority;
+    if (!hardened) {
+      throw StateError(
+        'An existing service on the MCP gateway port does not report the '
+        'required tool, auth, and current-policy projection boundary. '
+        'Stop it before restart.',
+      );
+    }
+    return true;
+  }
+
+  static bool _oauthMetadataMatches(
+    Map<String, Object?> metadata,
+    McpConnectorAutostartConfig config,
+  ) {
+    final resourceUrl = config.resourceUrl;
+    if (resourceUrl == null ||
+        _normalizeUrl(metadata['resource']) != _normalizeUrl(resourceUrl)) {
+      return false;
+    }
+    final servers = _normalizedStringSet(metadata['authorization_servers']);
+    final expectedServers = config.authorizationServers
+        .map(_normalizeUrl)
+        .toSet();
+    if (servers == null ||
+        servers.length != expectedServers.length ||
+        !servers.containsAll(expectedServers)) {
+      return false;
+    }
+    final scopes = _stringSet(metadata['scopes_supported']);
+    if (scopes == null ||
+        scopes.length != 1 ||
+        !scopes.contains(config.scope)) {
+      return false;
+    }
+    if (config.jwksUrl != null) {
+      if (_normalizeUrl(metadata['jwks_uri']) !=
+              _normalizeUrl(config.jwksUrl!) ||
+          metadata.containsKey('introspection_endpoint')) {
+        return false;
+      }
+    } else {
+      if (_normalizeUrl(metadata['introspection_endpoint']) !=
+              _normalizeUrl(config.introspectionUrl!) ||
+          metadata.containsKey('jwks_uri')) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static Set<String>? _normalizedStringSet(Object? value) {
+    final strings = _stringSet(value);
+    return strings?.map(_normalizeUrl).toSet();
+  }
+
+  static Set<String>? _stringSet(Object? value) {
+    if (value is! List || value.any((item) => item is! String)) return null;
+    return value.cast<String>().toSet();
+  }
+
+  static String _normalizeUrl(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    return text.endsWith('/') ? text.substring(0, text.length - 1) : text;
+  }
+
+  Future<void> _waitForGatewayHealthy(
+    McpConnectorAutostartConfig config,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 12));
+    while (DateTime.now().isBefore(deadline)) {
+      if (await _projectAtlasGatewayHealthy(config)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    throw StateError(
+      'The MCP gateway process did not report the required hardened health '
+      'metadata after launch. The tunnel was not started.',
+    );
   }
 
   Future<bool> _tunnelHealthy() async {
@@ -270,8 +408,11 @@ class McpConnectorAutostartService {
     return response?.startsWith('ready') == true;
   }
 
-  Future<Map<String, Object?>?> _getJson(Uri uri) async {
-    final text = await _getText(uri);
+  Future<Map<String, Object?>?> _getJson(
+    Uri uri, {
+    Map<String, String> headers = const {},
+  }) async {
+    final text = await _getText(uri, headers: headers);
     if (text == null) return null;
     try {
       final decoded = jsonDecode(text);
@@ -281,12 +422,16 @@ class McpConnectorAutostartService {
     }
   }
 
-  Future<String?> _getText(Uri uri) async {
+  Future<String?> _getText(
+    Uri uri, {
+    Map<String, String> headers = const {},
+  }) async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
     try {
       final request = await client
           .getUrl(uri)
           .timeout(const Duration(seconds: 2));
+      headers.forEach(request.headers.set);
       final response = await request.close().timeout(
         const Duration(seconds: 2),
       );
@@ -305,7 +450,6 @@ class McpConnectorAutostartService {
   }
 
   Future<void> _startGateway(McpConnectorAutostartConfig config) async {
-    _validateGatewayConfig(config);
     final runsDir = Directory(p.join(repoRoot.path, '.local', 'runs'));
     await runsDir.create(recursive: true);
     final args = <String>[
@@ -316,6 +460,8 @@ class McpConnectorAutostartService {
       config.port.toString(),
       '--exe',
       _resolve(config.projectAtlasExePath),
+      '--disclosure-policy',
+      _resolve(config.disclosurePolicyPath),
       '--auth-mode',
       config.authMode,
       '--scope',
@@ -382,9 +528,9 @@ class McpConnectorAutostartService {
           'OAuth autostart requires resourceUrl and authorizationServers.',
         );
       }
-      if (config.jwksUrl == null && config.introspectionUrl == null) {
+      if ((config.jwksUrl == null) == (config.introspectionUrl == null)) {
         throw StateError(
-          'OAuth autostart requires jwksUrl or introspectionUrl.',
+          'OAuth autostart requires exactly one of jwksUrl or introspectionUrl.',
         );
       }
     }
