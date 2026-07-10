@@ -33,16 +33,22 @@ explicitly unverified until process attestation exists.
 
 | Field | Value |
 |---|---|
-| Run ID | `20260704-v1.4.0-release-stabilization` |
-| Run State | v1.4.0 release stabilization evidence recorded |
-| Last Verified At | 2026-07-08 |
-| Validation State | complete locally: docs refresh, schema 20 migration checkpoint, screenshot file audit, format, analyze, focused tests, full suite, release build, and Windows ZIP asset |
-| Release Commit | this release stabilization commit |
-| Accepted Public Main Hash | `a62155457bbc8dd001dfc7970722b3c4688dda8f` (PR #5 merged 2026-07-08) |
+| Run ID | `20260710-a0b-disclosure-preview` |
+| Run State | A0b remote MCP disclosure preview merged |
+| Last Verified At | 2026-07-10 |
+| Validation State | complete locally and in CI: independent review, format, analyze, focused preview/autostart tests, Python remote-policy tests, full suite, release build, gateway smoke, and GitHub Actions CI |
+| Release Commit | `c3e056d46fb87ed451f59bd47174ae95a1de0c08` (PR #8 head) |
+| Accepted Public Main Hash | `583928a08058b946a826258ba889626c8d8c8f5f` (PR #8 merged 2026-07-10) |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
 ## Validation Evidence
 
+- A0b remote MCP disclosure preview closeout: PR #8 merged to public `main`
+  at `583928a08058b946a826258ba889626c8d8c8f5f`. GitHub Actions CI run
+  `29114864112` passed. Local validation before merge: `flutter analyze`,
+  focused preview/autostart tests (`14` passed), Python remote-policy tests
+  (`15` passed), full Flutter suite (`262` passed, `1` skipped), Windows
+  release build, gateway smoke on `127.0.0.1:4894`, and `git diff --check`.
 - Real v1.3/schema 19 DB migration checkpoint: `flutter test --dart-define=ATLAS_SCHEMA20_SOURCE_DB=... --dart-define=ATLAS_SCHEMA20_EVIDENCE_PATH=... test\schema20_real_migration_test.dart --concurrency=1 --reporter expanded` passed. Evidence shows `userVersion` 19 -> 20, Workboard columns present on `work_items` and `llm_task_queue`, and existing row counts preserved. Source DB SHA-256: `5524F901414BC67A68BFE4E5C08B1904673C9FDAD7EAACA9BCF4F7CA3EEAE732`. Private evidence JSON SHA-256: `AE73D9F8AF20180F981960559BA2489B1865E4926038184A3B28C636BB6FD96E`.
 - Screenshot file audit and visual spot-check: all README screenshots present under `docs/screenshots/` with July 3, 2026 timestamps (`today.png`, `projects.png`, `operations.png`, `library.png`, `settings.png`); Today and Projects captures show the current v1.4 navigation, Workboard/project detail actions, LLM queue, runtime controls, and Library evidence surfaces.
 - `dart format --output=none --set-exit-if-changed lib test`: pass, 70 files checked, 0 changed.
@@ -78,4 +84,4 @@ Create flows now expose the workload fields consistently from Workboard, Project
 
 ## Next Best Action
 
-After v1.4.0 publication, start restore/import: project bundle ZIP restore first, then operational backup ZIP restore, before deeper agent autonomy.
+After A0b, keep the remaining audit work split into narrow lanes: R0 backup/restore, WO-A1 timestamp/path repair, A2/A3 semantics, and later process binary attestation/supervision.
