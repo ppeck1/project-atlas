@@ -1,0 +1,10 @@
+{
+  "schema": "project_atlas.remote_disclosure_policy.v1",
+  "projects": [
+    {
+      "projectId": "replace-with-local-atlas-project-id",
+      "alias": "project-atlas",
+      "label": "Project Atlas"
+    }
+  ]
+}

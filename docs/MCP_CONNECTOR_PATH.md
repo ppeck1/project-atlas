@@ -38,31 +38,38 @@ mode is for private localhost smoke only:
 $env:ATLAS_MCP_GATEWAY_TOKEN = "<long random token>"
 python tools\atlas_mcp_gateway.py `
   --exe "<release-exe>" `
+  --disclosure-policy ".local\atlas_mcp_remote_disclosure.json" `
   --host 127.0.0.1 `
   --port 4874
 ```
 
 For ChatGPT connector work, use OAuth mode with protected-resource metadata and
-token introspection. The public resource URL should be the HTTPS tunnel or
-hosted origin, not the `/mcp` path:
+exactly one token verifier. The public resource URL should be the HTTPS tunnel
+or hosted origin, not the `/mcp` path. The current Auth0-style path uses JWKS:
 
 ```powershell
 python tools\atlas_mcp_gateway.py `
   --auth-mode oauth `
   --resource-url "https://your-tunnel.example" `
   --authorization-server "https://your-auth.example" `
-  --introspection-url "https://your-auth.example/oauth/introspect" `
+  --jwks-url "https://your-auth.example/.well-known/jwks.json" `
   --scope atlas.read `
   --exe "<release-exe>" `
+  --disclosure-policy ".local\atlas_mcp_remote_disclosure.json" `
   --host 127.0.0.1 `
   --port 4874
 ```
+
+For a provider that requires token introspection, replace `--jwks-url` with
+`--introspection-url "https://your-auth.example/oauth/introspect"`. Supplying
+both is rejected because JWKS and introspection have different revocation and
+authority semantics.
 
 OAuth mode exposes `GET /.well-known/oauth-protected-resource`, returns a
 `WWW-Authenticate` challenge on unauthenticated `/mcp` requests, annotates the
 four remote tools with `securitySchemes: [{ type: "oauth2", scopes:
 ["atlas.read"] }]`, and validates bearer tokens through the configured
-introspection endpoint before forwarding calls to stdio.
+JWKS or introspection verifier before forwarding calls to stdio.
 
 For private development, expose the local OAuth-mode gateway with an HTTPS
 tunnel such as Secure MCP Tunnel, Cloudflare Tunnel, or ngrok. The ChatGPT
@@ -74,7 +81,7 @@ when the normal UI launches.
 
 ## Current Remote Security Boundary
 
-The first remote profile is a tiny, redacted, read-only prototype.
+The first remote profile is a tiny, deny-by-default, read-only projection.
 
 Allowed remotely by default:
 
@@ -96,15 +103,38 @@ The gateway filters `tools/list` and rejects denied `tools/call` requests even
 if a caller sends them directly. ChatGPT permission prompts are not treated as
 authorization.
 
-Gateway responses are scrubbed before crossing `/mcp`. The scrubber masks
-Windows paths, file URIs, email addresses, the known local owner name, draft
-fields, private queue context, and unresolved proposal bodies. This is a
-defense-in-depth layer, not permission to expose broader read tools yet.
+The gateway will not start without an ignored disclosure policy. The policy
+maps explicitly approved local project IDs to remote aliases and labels. Remote
+callers use the alias; local IDs and hidden-project existence are not returned.
+Archived projects are unavailable through every remote tool, even if an alias
+remains in the local policy or an older list caller sends
+`includeArchived=true`. Global workload reads first resolve the current
+non-archived approved-project set and recompute results against it.
+
+Tool results arrive from stdio as JSON encoded inside an MCP text block. The
+gateway parses that inner JSON and constructs a fresh per-tool DTO from exact
+allowed fields. Unknown fields, owners, local IDs, URLs, paths, branches, SHAs,
+raw JSON, commands, notes, and hidden-project aggregates are dropped. Workload
+responses are capped and recompute counts only from approved projects. Regex
+scrubbing remains defense in depth after structural projection.
+
+All remotely returned status, freshness, and workload classification strings
+come from fixed semantic enums. Arbitrary token-shaped values are mapped to a
+fixed `unknown` sentinel or omitted. Freshness action text is reduced to a
+boolean signal. The `initialize` result and `tools/list` metadata are also
+rebuilt from fixed contracts, so upstream metadata and malformed errors cannot
+cross the gateway.
+
+The current containment profile intentionally withholds work-item titles,
+accepted-truth claims, commands, free-text notes, and evidence excerpts until
+their semantics and disclosure preview are hardened.
 
 The v0.1 gateway still launches `project_atlas.exe --mcp-stdio` per forwarded
 request. Calls are serialized with a single-flight lock and protected by a
-timeout, but the pre-ChatGPT-testing hardening path is a long-lived stdio child
-or small process pool with restart/backoff behavior.
+timeout. Stdout and stderr are drained incrementally under separate hard byte
+caps, and the child is terminated on overflow. A long-lived stdio child or
+small process pool with restart/backoff remains a later performance and
+supervision improvement.
 
 ## Remote Smoke Test
 
@@ -127,13 +157,16 @@ The smoke verifies:
 - `initialize`
 - `tools/list`
 - the four-tool remote allowlist, including `atlas.project_planning_context`
-- `list_projects`
+- live calls to all four projected tools through static bearer, OAuth
+  introspection, and OAuth JWKS modes
+- required disclosure-policy startup and approved-alias translation
+- exact projected schemas, hidden-project filtering, and bounded output
 - no non-allowlisted, queue, proposal, write, worker, bootstrap, enrichment, or
   sensitive-read tools exposed remotely
 - direct calls to hidden tools are rejected
-- `/mcp` responses and the gateway redaction self-test do not leak local paths,
-  emails, owner names, draft text, private queue context, or unresolved proposal
-  bodies
+- `/mcp` responses and the gateway projection/redaction tests do not leak local
+  IDs, paths, emails, owner names, URLs, SHAs, commands, notes, raw JSON, draft
+  text, private queue context, or unresolved proposal bodies
 
 The older `.project\verification` folder is local evidence and intentionally
 ignored. Public/reproducible gateway checks should live under `tools\` or

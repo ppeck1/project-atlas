@@ -1,8 +1,9 @@
 # ChatGPT, Codex, and Claude MCP Access
 
-Project Atlas exposes an MCP-compatible JSON-RPC adapter for local agent work.
-The current supported transport is local stdio from the Windows desktop app
-executable. This is not a public remote MCP service.
+Project Atlas exposes an MCP-compatible JSON-RPC adapter for local agent work
+and an optional authenticated remote projection for ChatGPT. The local stdio
+surface is broad and machine-trusted; the remote surface is a separate
+deny-by-default four-tool boundary.
 
 ## Local Stdio Access
 
@@ -26,20 +27,21 @@ OpenAI products, or to browsers.
 ChatGPT access requires a separate authenticated remote or tunneled adapter.
 Do not expose the raw stdio process directly to the public internet.
 
-A remote/tunneled adapter must provide all of the following before it is
-considered supported:
+The tracked remote/tunneled adapter provides the following boundary:
 
 - Authenticated users or service principals.
 - A role allowlist that is enforced before forwarding any `tools/call`.
-- Explicit user approval for non-read tool classes.
-- Redaction or policy review for local paths and private project context.
+- No non-read tool classes.
+- A required ignored project disclosure policy with approved aliases.
+- Strict per-tool output projection plus defense-in-depth text scrubbing.
 - Transport security appropriate for the tunnel or hosted endpoint.
-- Logs that distinguish read calls, queue operations, enrichment runs, and
-  proposal creation.
+- A metadata-only disclosure audit for allowed and denied remote reads. Queue,
+  enrichment, and proposal activity remains on the broader local audit paths
+  because those operations are not remotely exposed.
 
-Until that adapter exists, ChatGPT should be treated as having no direct Atlas
-MCP access. ChatGPT can still prepare work orders for a local operator, Codex,
-or Claude client that has explicit local stdio access.
+Without the authenticated gateway, HTTPS tunnel, and valid disclosure policy,
+ChatGPT has no direct Atlas MCP access. The local stdio registration alone does
+not enable ChatGPT access.
 
 ## Role Allowlists
 
@@ -78,16 +80,17 @@ local paths or private project packet content.
 
 The tracked gateway prototype narrows that first profile to `list_projects`,
 `get_project_status`, `atlas.workload_snapshot`, and
-`atlas.project_planning_context` only. The planning-context tool returns a
-compact redacted packet for one project; broader reads such as project briefs,
-work item bundles, proposals, queue reads, raw bootstrap packets, and task
-context remain blocked until their outputs have explicit disclosure review.
+`atlas.project_planning_context` only. It requires a local ignored mapping of
+approved project IDs to remote aliases. Tool results are parsed from their MCP
+text blocks and rebuilt from exact output allowlists. Planning free text,
+accepted-truth claims, commands, notes, evidence excerpts, and broader reads
+remain blocked until their semantics and disclosure preview are hardened.
 
 For ChatGPT connector work, the gateway should run in OAuth mode. OAuth mode
 publishes protected-resource metadata, challenges unauthenticated MCP requests,
 adds per-tool `oauth2` security schemes, and verifies bearer tokens through the
-configured introspection endpoint before forwarding any call. This does not
-expand the tool allowlist.
+configured JWKS or introspection verifier before forwarding any call. Exactly
+one verifier must be configured; this does not expand the tool allowlist.
 
 No client role should be treated as permission to delete projects, push or
 fetch Git repositories, overwrite manifests, bypass Library proposal review, or
