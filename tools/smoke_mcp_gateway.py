@@ -509,8 +509,15 @@ def assert_hardened_initialize(response: Any) -> None:
         "denyByDefault",
         "disclosurePolicyLoaded",
         "remoteWritesEnabled",
+        "disclosureScope",
+        "absenceDoesNotProveUnregistered",
     }:
         raise AssertionError(f"initialize metadata drifted: {response}")
+    if (
+        meta.get("disclosureScope") != "operator_approved_subset"
+        or meta.get("absenceDoesNotProveUnregistered") is not True
+    ):
+        raise AssertionError(f"initialize disclosure scope drifted: {response}")
 
 
 def assert_four_remote_tool_calls(
