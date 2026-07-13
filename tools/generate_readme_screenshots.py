@@ -214,7 +214,7 @@ def make_today():
     draw_text(draw, (924, 366), "Operator signals", COLORS["ink"], FONT_H2)
     signals = [
         ("Human-in-loop AI", "Ollama drafts are advisory until reviewed."),
-        ("Local storage", "SQLite via Drift, schema version 19."),
+        ("Local storage", "SQLite via Drift, schema version 20."),
         ("Outbound only", "Telegram sends task lists and logs attempts."),
         ("Attention filters", "Blocked, overdue, doing, and high priority stay visible."),
     ]
@@ -294,9 +294,9 @@ def make_operations():
     for label, color in chips:
         x = pill(draw, x, 432, label, color, COLORS["sky"] if label == "Needs action" else COLORS["panel_alt"])
     candidates = [
-        ("B:/dev/dev.launchpad", "Strong root: README, pubspec, .git. Import as project or link to existing record.", "candidate"),
-        ("B:/dev/Project_Atlas/project-atlas-main", "Already linked. Refresh docs, media, source rows, and runtime profile.", "linked"),
-        ("B:/dev/ops_capsule", "Capsule metadata present. Mark as governed support project after review.", "needs review"),
+        ("C:/Projects/dev-launchpad", "Strong root: README, pubspec, .git. Import as project or link to existing record.", "candidate"),
+        ("C:/Projects/project-atlas", "Already linked. Refresh docs, media, source rows, and runtime profile.", "linked"),
+        ("C:/Projects/project-ops-capsule", "Capsule metadata present. Mark as governed support project after review.", "needs review"),
     ]
     y = 500
     for path, detail, state in candidates:

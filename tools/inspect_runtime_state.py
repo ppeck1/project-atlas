@@ -1,4 +1,9 @@
-"""Print recent Project Atlas runtime rows for launch troubleshooting."""
+"""Print recent Project Atlas runtime rows for launch troubleshooting.
+
+Pass --db-path with the SQLite file for the local profile you want to inspect.
+The default points at an ignored repo-local placeholder so this script remains
+safe in the public repository.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +12,7 @@ import sqlite3
 from pathlib import Path
 
 
-DEFAULT_DB_PATH = Path(
-    r"C:\Users\peckm\AppData\Roaming\Paul Peck\Project Atlas\project_atlas.sqlite"
-)
+DEFAULT_DB_PATH = Path(".local/project_atlas.sqlite")
 
 
 def _short(value: object, limit: int = 1200) -> str:
@@ -25,6 +28,12 @@ def main() -> int:
     parser.add_argument("--project", action="append")
     parser.add_argument("--limit", type=int, default=12)
     args = parser.parse_args()
+
+    if not args.db_path.exists():
+        parser.error(
+            f"database not found: {args.db_path}. "
+            "Pass --db-path pointing at your local Project Atlas SQLite file."
+        )
 
     con = sqlite3.connect(args.db_path)
     con.row_factory = sqlite3.Row

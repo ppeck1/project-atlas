@@ -31,6 +31,11 @@ repositories.
 ChatGPT needs a reachable HTTPS MCP endpoint. Do not expose the desktop app,
 SQLite database, Flutter VM service, or app-data directory directly.
 
+This repository does not provide a hosted Project Atlas connector. The gateway
+is a self-hosted sidecar: each operator supplies their own release executable,
+`.local` disclosure policy, HTTPS tunnel, OAuth provider, and connector
+registration.
+
 The tracked gateway script provides a small sidecar endpoint. Static bearer
 mode is for private localhost smoke only:
 
@@ -44,8 +49,9 @@ python tools\atlas_mcp_gateway.py `
 ```
 
 For ChatGPT connector work, use OAuth mode with protected-resource metadata and
-exactly one token verifier. The public resource URL should be the HTTPS tunnel
-or hosted origin, not the `/mcp` path. The current Auth0-style path uses JWKS:
+exactly one token verifier. The public resource URL should be the operator's
+HTTPS tunnel or hosted origin, not the `/mcp` path. A common Auth0-style path
+uses JWKS:
 
 ```powershell
 python tools\atlas_mcp_gateway.py `
@@ -116,7 +122,9 @@ gateway parses that inner JSON and constructs a fresh per-tool DTO from exact
 allowed fields. Unknown fields, owners, local IDs, URLs, paths, branches, SHAs,
 raw JSON, commands, notes, and hidden-project aggregates are dropped. Workload
 responses are capped and recompute counts only from approved projects. Regex
-scrubbing remains defense in depth after structural projection.
+scrubbing remains defense in depth after structural projection. Set
+`ATLAS_MCP_PRIVATE_NAME_PATTERN` locally if upstream text could contain an
+operator name that should be scrubbed as `[redacted:person]`.
 
 All remotely returned status, freshness, and workload classification strings
 come from fixed semantic enums. Arbitrary token-shaped values are mapped to a

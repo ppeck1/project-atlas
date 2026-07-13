@@ -121,13 +121,13 @@ void main() {
           'description': AppDb.kGeneralTasksProjectDescription,
         });
         await db.saveContact(
-          id: 'duplicate-paul-1',
-          name: 'Paul Peck',
+          id: 'duplicate-owner-1',
+          name: 'Project Owner',
           notes: 'Existing duplicate A',
         );
         await db.saveContact(
-          id: 'duplicate-paul-2',
-          name: 'Paul Peck',
+          id: 'duplicate-owner-2',
+          name: 'Project Owner',
           notes: 'Existing duplicate B',
         );
         final state = AppState(db, enableBackgroundSummaryRefresh: false);
@@ -150,20 +150,23 @@ void main() {
         expect(result.projectOwnersUpdated, 2);
         expect(result.projectPeopleAdded, 2);
         expect(result.duplicateContactsRemoved, 1);
-        expect(alpha!.owner, 'Paul Peck');
-        expect(beta!.owner, 'Paul Peck');
+        expect(alpha!.owner, 'Project Owner');
+        expect(beta!.owner, 'Project Owner');
         expect(hidden!.owner, isNull);
         expect(
           alphaPeople.map((person) => '${person.name}:${person.role}'),
-          contains('Paul Peck:Owner'),
+          contains('Project Owner:Owner'),
         );
         expect(
           betaPeople.map((person) => '${person.name}:${person.authority}'),
-          contains('Paul Peck:Accountable'),
+          contains('Project Owner:Accountable'),
         );
-        expect(contacts.map((contact) => contact.name), contains('Paul Peck'));
         expect(
-          contacts.where((contact) => contact.name == 'Paul Peck'),
+          contacts.map((contact) => contact.name),
+          contains('Project Owner'),
+        );
+        expect(
+          contacts.where((contact) => contact.name == 'Project Owner'),
           hasLength(1),
         );
         expect(contacts.map((contact) => contact.name), contains('Atlas'));

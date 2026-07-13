@@ -29,10 +29,10 @@ settings:
   health_timeout_seconds: 2
 apps:
 - name: Project Atlas
-  path: B:\dev\Project_Atlas\project-atlas-main
+  path: C:\Projects\Project_Atlas\project-atlas-main
   start: powershell -NoProfile -ExecutionPolicy Bypass -File launch.ps1
   stop: taskkill /IM project_atlas.exe /F
-  tests: B:\dev\flutter\bin\flutter.bat test
+  tests: C:\Tools\flutter\bin\flutter.bat test
   ports: []
   urls:
   - label: Docs
@@ -53,10 +53,13 @@ apps:
       expect(draft!.enabled, isTrue);
       expect(
         draft.workingDirectory,
-        r'B:\dev\Project_Atlas\project-atlas-main',
+        r'C:\Projects\Project_Atlas\project-atlas-main',
       );
       expect(draft.launchCommand, contains('launch.ps1'));
-      expect(draft.testCommands.single, r'B:\dev\flutter\bin\flutter.bat test');
+      expect(
+        draft.testCommands.single,
+        r'C:\Tools\flutter\bin\flutter.bat test',
+      );
       expect(draft.urls.single.label, 'Docs');
       expect(draft.healthUrls.single, 'http://localhost/health');
       expect(draft.capsuleSourcePath, defaultProjectOpsCapsulePath);
@@ -76,7 +79,7 @@ apps:
     File(yamlPath).writeAsStringSync(r'''
 apps:
 - name: Project Atlas
-  path: B:\dev\Project_Atlas\project-atlas-main
+  path: C:\Projects\Project_Atlas\project-atlas-main
   start: .\launch.ps1
   stop: ''
   tests: flutter test
@@ -97,7 +100,10 @@ apps:
     expect(profile, isNotNull);
     expect(saved, isNotNull);
     expect(saved!.enabled, isTrue);
-    expect(saved.workingDirectory, r'B:\dev\Project_Atlas\project-atlas-main');
+    expect(
+      saved.workingDirectory,
+      r'C:\Projects\Project_Atlas\project-atlas-main',
+    );
     expect(saved.launchCommand, r'.\launch.ps1');
     expect(decodeStringList(saved.testCommandsJson), ['flutter test']);
     expect(decodeIntList(saved.portsJson), [5174]);
@@ -126,25 +132,25 @@ apps:
         devLaunchpadYamlPath: yamlPath,
         capsuleEnabled: false,
         capsuleMode: 'strict_check',
-        capsuleSourcePath: r'B:\Capsules\Project_Ops_Capsule',
+        capsuleSourcePath: r'C:\Projects\Project_Ops_Capsule',
         capsuleProfile: 'public_repo',
       ),
     );
 
     final loaded = await state.loadProjectRuntimeDefaultsSettings();
     final draft = await state.defaultProjectRuntimeProfileDraft(
-      workingDirectory: r'B:\dev\example',
+      workingDirectory: r'C:\Projects\example',
     );
 
     expect(loaded.resolvedDevLaunchpadYamlPath, yamlPath);
     expect(loaded.capsuleEnabled, isFalse);
     expect(loaded.capsuleMode, 'strict_check');
-    expect(loaded.capsuleSourcePath, r'B:\Capsules\Project_Ops_Capsule');
+    expect(loaded.capsuleSourcePath, r'C:\Projects\Project_Ops_Capsule');
     expect(loaded.capsuleProfile, 'public_repo');
-    expect(draft.workingDirectory, r'B:\dev\example');
+    expect(draft.workingDirectory, r'C:\Projects\example');
     expect(draft.capsuleEnabled, isFalse);
     expect(draft.capsuleMode, 'strict_check');
-    expect(draft.capsuleSourcePath, r'B:\Capsules\Project_Ops_Capsule');
+    expect(draft.capsuleSourcePath, r'C:\Projects\Project_Ops_Capsule');
     expect(draft.capsuleProfile, 'public_repo');
   });
 
@@ -163,7 +169,7 @@ apps:
       File(yamlPath).writeAsStringSync(r'''
 apps:
 - name: Project Atlas
-  path: B:\dev\Project_Atlas\project-atlas-main
+  path: C:\Projects\Project_Atlas\project-atlas-main
   start: .\launch.ps1
   tests:
   - flutter test
@@ -178,7 +184,7 @@ apps:
           devLaunchpadYamlPath: yamlPath,
           capsuleEnabled: false,
           capsuleMode: 'strict_check',
-          capsuleSourcePath: r'B:\Capsules\Project_Ops_Capsule',
+          capsuleSourcePath: r'C:\Projects\Project_Ops_Capsule',
           capsuleProfile: 'public_repo',
         ),
       );
@@ -190,7 +196,7 @@ apps:
       expect(saved, isNotNull);
       expect(
         saved!.workingDirectory,
-        r'B:\dev\Project_Atlas\project-atlas-main',
+        r'C:\Projects\Project_Atlas\project-atlas-main',
       );
       expect(saved.launchCommand, r'.\launch.ps1');
       expect(decodeStringList(saved.testCommandsJson), ['flutter test']);
@@ -198,7 +204,7 @@ apps:
       expect(saved.importSource, yamlPath);
       expect(saved.capsuleEnabled, isFalse);
       expect(saved.capsuleMode, 'strict_check');
-      expect(saved.capsuleSourcePath, r'B:\Capsules\Project_Ops_Capsule');
+      expect(saved.capsuleSourcePath, r'C:\Projects\Project_Ops_Capsule');
       expect(saved.capsuleProfile, 'public_repo');
     },
   );

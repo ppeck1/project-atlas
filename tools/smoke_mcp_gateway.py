@@ -54,7 +54,7 @@ SENSITIVE_TEXT_PATTERNS = {
     "windows_path": re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/](?!\")"),
     "file_uri": re.compile(r"file:///[A-Za-z]:/", re.IGNORECASE),
     "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
-    "owner_name": re.compile(r"\bPaul\s+Peck\b", re.IGNORECASE),
+    "owner_name": re.compile(r"\bExample\s+Owner\b", re.IGNORECASE),
 }
 
 HTTP_TIMEOUT_SECONDS = 75
@@ -70,26 +70,26 @@ SENSITIVE_FIXTURE = {
             {
                 "type": "text",
                 "text": (
-                    "Manual fixture from B:\\Projects\\LLM_Modules\\Project_Ops_Capsule "
-                    "owned by Paul Peck at atlas.owner@example.com."
+                    "Manual fixture from C:\\Private\\Project_Ops_Capsule "
+                    "owned by Example Owner at atlas.owner@example.com."
                 ),
             }
         ],
         "draftText": "DRAFT_FIXTURE_SHOULD_NOT_LEAK",
         "proposalBody": "PROPOSAL_BODY_FIXTURE_SHOULD_NOT_LEAK",
         "queueContext": {
-            "repoPath": "B:\\dev\\Project_Atlas\\project-atlas-main",
+            "repoPath": "C:\\Private\\Project_Atlas\\project-atlas-main",
             "detail": "QUEUE_CONTEXT_FIXTURE_SHOULD_NOT_LEAK",
         },
     }
 }
 
 SENSITIVE_FIXTURE_FORBIDDEN = {
-    "B:",
+    "C:\\Private",
     "Project_Ops_Capsule",
     "project-atlas-main",
     "atlas.owner@example.com",
-    "Paul Peck",
+    "Example Owner",
     "DRAFT_FIXTURE_SHOULD_NOT_LEAK",
     "PROPOSAL_BODY_FIXTURE_SHOULD_NOT_LEAK",
     "QUEUE_CONTEXT_FIXTURE_SHOULD_NOT_LEAK",

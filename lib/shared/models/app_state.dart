@@ -2061,16 +2061,16 @@ class AppState extends ChangeNotifier {
   Future<List<Contact>> getContacts() => db.getContacts();
 
   Future<ContactContinuityResult> ensureContactContinuity({
-    String ownerName = 'Paul Peck',
+    String ownerName = 'Project Owner',
     String? ownerEmail,
     bool assignVisibleProjectsToOwner = true,
     bool ensureOwnerPeopleRows = true,
     bool seedSystemActors = true,
   }) async {
-    final cleanOwnerName = _metaString(ownerName) ?? 'Paul Peck';
+    final cleanOwnerName = _metaString(ownerName) ?? 'Project Owner';
     final seeds = <_ContactSeed>[
       _ContactSeed(
-        id: 'contact_operator_paul_peck',
+        id: 'contact_operator_project_owner',
         name: cleanOwnerName,
         title: 'Owner / Operator',
         email: ownerEmail,

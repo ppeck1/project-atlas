@@ -218,7 +218,7 @@ void main() {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
       await db.updateProjectMeta('atlas', {
         'description':
-            r'Planning surface for B:\dev\Project_Atlas with token=abc123456789.',
+            r'Planning surface for C:\Projects\Project_Atlas with token=abc123456789.',
         'phase': 'build',
         'priority': 'high',
       });
@@ -229,7 +229,7 @@ void main() {
       await db.addProjectObservation(
         id: 'obs-atlas',
         scanRunId: scanId,
-        observedPath: r'B:\private\SecretProject',
+        observedPath: r'C:\Private\SecretProject',
         classificationGuess: 'software',
         confidence: 95,
         branch: 'main',
@@ -239,7 +239,7 @@ void main() {
         warningsJson: '[]',
         rawJson: jsonEncode({
           'displayName': 'Atlas',
-          'gitRoot': r'B:\private\SecretProject',
+          'gitRoot': r'C:\Private\SecretProject',
         }),
         observedAt: DateTime(2026, 7, 8),
       );
@@ -340,7 +340,7 @@ void main() {
         workItemId,
       );
       final encodedPlanning = jsonEncode(planning);
-      expect(encodedPlanning, isNot(contains(r'B:\')));
+      expect(encodedPlanning, isNot(contains(r'C:\')));
       expect(encodedPlanning, isNot(contains('abc123456789')));
       expect(encodedPlanning, isNot(contains('private-redaction-fixture')));
       expect(encodedPlanning, isNot(contains('git@example.com')));
@@ -500,7 +500,7 @@ void main() {
         projectId: 'atlas',
         title: 'Screenshot',
         originalFilename: 'screenshot.png',
-        storedPath: r'B:\tmp\screenshot.png',
+        storedPath: r'C:\Temp\screenshot.png',
         mediaType: 'image',
         mimeType: 'image/png',
         extension: 'png',
@@ -523,7 +523,7 @@ void main() {
       expect((media.single as Map)['id'], mediaId);
       expect((media.single as Map)['originalFilename'], 'screenshot.png');
       expect((media.single as Map)['mediaType'], 'image');
-      expect((media.single as Map)['storedPath'], r'B:\tmp\screenshot.png');
+      expect((media.single as Map)['storedPath'], r'C:\Temp\screenshot.png');
     });
 
     test('dispatches queue-bound bootstrap context for an LLM task', () async {

@@ -49,7 +49,7 @@ Key-value store for all runtime settings and active-state flags.
 | `projects_tab::pinned_projects` | JSON string array | `ProjectsScreen` | `ProjectsScreen` | Project IDs pinned above unpinned projects within each category before the selected project sort is applied. |
 | `setting::telegram_bot_token` | bot token | `SettingsScreen → setSetting()` | `sendTodayToTelegram()` | Stored plaintext. Personal desktop use only. |
 | `setting::telegram_chat_id` | chat ID | `SettingsScreen → setSetting()` | `sendTodayToTelegram()` | Can be personal or group chat. |
-| `setting::telegram_enabled` | `'1'` or `'0'` | `SettingsScreen` | Informational (UI toggle), not enforced in send path | Toggle exists but `sendTodayToTelegram()` does not gate on this flag. |
+| `setting::telegram_enabled` | `'1'` or `'0'` | `SettingsScreen` | `sendTodayToTelegram()` | Sending is blocked unless this flag is enabled. |
 | `setting::ollama_host` | URL string | `SettingsScreen → setSetting()` | `_buildOllama()` in `AppState` | Defaults to `http://localhost:11434` if null. |
 | `setting::ollama_model` | model name | `SettingsScreen → setSetting()` | `_buildOllama()` in `AppState` | Defaults to `qwen3.5:9b` if null (Settings UI shows `mistral` as hint). |
 | `setting::project_ai_summaries_enabled` | `'1'` or `'0'` | Settings -> AI Summaries | `ProjectDetailScreen`, `summarizeProjectFull()` | Default off. Gates manual project summary controls and generation. |
@@ -263,7 +263,7 @@ Key-value store for all runtime settings and active-state flags.
 6. For `.html`/`.htm`: raw HTML stored in `renderedMarkdown`; `extractHtmlText()` result (tags stripped) stored in `extractedText`. This dual-storage allows rich rendering and full-text search from the same document.
 7. For `.eml`: `stripEmlBody(raw)` result stored in `extractedText`; `renderedMarkdown` is null.
 8. For `.docx`: calls `extractDocxText(destPath)` from `document_extractor.dart`; stores result in `extractedText`.
-9. Binary types (`.pdf`, `.doc`, `.rtf`, `.svg`, images): no extraction; both text columns remain null.
+9. Binary/imported non-text types (`.pdf`, `.doc`, images): no extraction; both text columns remain null. Preview code also has external-viewer branches for `.rtf` and `.svg`, but those extensions are not currently in the Library picker allowlist.
 
 **Library entry model behavior:** `_LibraryEntry.fromDocument` in `library_screen.dart` sets `content = extractedText ?? renderedMarkdown`. (Note: `extractedText` is preferred so HTML search/copy uses stripped text, not raw markup.) If `content` is null and the entry has a `document` reference, `_EntryViewer` delegates rendering to `DocumentPreview`. `DocumentPreview` uses `renderedMarkdown ?? extractedText` for display — which means HTML renders via `flutter_html` on the raw HTML stored in `renderedMarkdown`. Image extensions (`jpg`, `jpeg`, `png`, `gif`, `webp`, `bmp`) additionally receive `isMedia: true` + `mediaType: 'image'`, routing them to the `InteractiveViewer` image path.
 
@@ -1023,7 +1023,7 @@ metadata does not attest the process binary.
 | Export | Type / Signature | Notes |
 |--------|-----------------|-------|
 | `ProjectRuntimeDefaultsSettings` | class | Settings-backed defaults for Dev Launchpad YAML path and Project Ops Capsule fields. Does not store launch/test command defaults. |
-| `AppState.loadProjectRuntimeDefaultsSettings()` | `Future<ProjectRuntimeDefaultsSettings>` | Reads AppMeta defaults, falling back to the historical Dev Launchpad YAML and Project Ops Capsule constants. |
+| `AppState.loadProjectRuntimeDefaultsSettings()` | `Future<ProjectRuntimeDefaultsSettings>` | Reads AppMeta defaults, falling back to ignored `.local` public-safe placeholders until the operator configures machine paths. |
 | `AppState.saveProjectRuntimeDefaultsSettings(settings)` | `Future<void>` | Persists runtime defaults to AppMeta and notifies listeners. |
 | `AppState.defaultProjectRuntimeProfileDraft({workingDirectory})` | `Future<ProjectRuntimeProfileDraft>` | Creates a manual profile draft seeded with settings-backed capsule defaults. |
 | `AppState.importRuntimeProfileFromDevLaunchpad(projectId, {yamlPath})` | `Future<ProjectRuntimeProfile?>` | Uses configured Dev Launchpad YAML when `yamlPath` is omitted, then overlays settings-backed capsule defaults without overwriting imported commands/ports/URLs. |
@@ -1133,7 +1133,7 @@ Executes operator-configured runtime actions for a project and records each run 
 | Launch | Starts the launch command in a visible `powershell.exe` window via `Start-Process`, then polls configured health URLs (default 90s window) before marking the run healthy. |
 | Test | Runs each test command headless through `powershell.exe` with a timeout (default up to 30 minutes) and captures output/exit code. |
 | Capsule | Invokes the Project Ops Capsule tooling with the configured mode/profile and records capsule status/output on the run row. |
-| Dev Launchpad import | Parses a local `dev_launchpad.yaml` to prefill a profile draft; default source paths are machine-specific constants and must be reconfigured per machine. |
+| Dev Launchpad import | Parses a local `dev_launchpad.yaml` to prefill a profile draft; default source paths are ignored `.local` placeholders and should be configured per machine. |
 
 **Boundary:** commands come from the operator-edited profile only. The service does not schedule, watch, or restart anything in the background; `autostart` is stored but unused.
 
@@ -1331,8 +1331,8 @@ Settings → Workforce → select contact → _ContactDetail
 ```
 LibraryScreen → _importByPath()
   → FilePicker.platform.pickFiles(allowedExtensions:
-      [txt,md,json,csv,log,xml,yaml,yml,ini,toml,rst,rtf,
-       pdf,docx,doc,html,htm,eml,jpg,jpeg,png,gif,webp,bmp,svg])
+      [textDocumentExtensions, codeDocumentExtensions,
+       pdf,docx,doc,jpg,jpeg,png,gif,webp,bmp])
   → AppState.importDocumentFromPath(path)
     → AppDb.importDocumentFromPath(path, {projectId})
       → File(path).existsSync()  ← throws FileSystemException if missing
@@ -1368,7 +1368,7 @@ LibraryScreen → _importByPath()
           → ext='html'/'htm'       → Html widget (flutter_html) on renderedMarkdown
           → ext='eml'              → _CodeBlock(body) — body already stripped at import
           → ext in text extensions → _CodeBlock(body)
-          → ext='pdf'/'rtf'/'svg'  → _ExternalViewerPrompt (url_launcher)
+          → ext='pdf'             → _ExternalViewerPrompt (url_launcher)
           → ext='docx'/'doc'       → _CodeBlock(body) if content, else _ExternalViewerPrompt
 ```
 
@@ -1520,7 +1520,7 @@ ProjectsScreen project tile -> merge action
 | `event_log` audit durability | Clearable operator log | Correlation IDs are persisted for multi-step traces, but Settings can still clear event rows; this is provenance, not immutable audit. |
 | `stages.is_bottleneck` vs `app_meta` | Dual storage | GovernanceScreen reads `app_meta`; table column is historical. |
 | Document/media file cleanup | Stored media files not deleted on media record delete | Manual via Open app data folder. `deleteDocument()` removes the copied document file; `deleteProjectMedia()` removes DB/link rows but leaves the copied media file. |
-| `telegram_enabled` flag | Set but not enforced | `sendTodayToTelegram()` does not check this flag before sending. |
-| Runtime profile defaults | Machine-specific constants | `project_runtime_service.dart` ships Dev Launchpad / capsule / Python default paths for the original development machine. Configure per-machine values in the project metadata dialog; a settings-backed default is future work. |
+| `telegram_enabled` flag | Enforced send gate | `sendTodayToTelegram()` blocks sends until Telegram is enabled in Settings. |
+| Runtime profile defaults | Ignored `.local` placeholders | `project_runtime_service.dart` ships public-safe placeholder defaults. Configure per-machine values in Settings or the project metadata dialog. |
 | PDF in-app rendering | External viewer only | `DocumentPreview` shows an "Open in system viewer" button for `.pdf`. `pdfx`/PDFium integration is a planned future milestone. |
 | `.doc` (legacy Word) | External viewer only | No text extraction for binary `.doc` format. Only `.docx` (OOXML) supports paragraph text extraction. |

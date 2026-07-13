@@ -6,7 +6,7 @@
     "status": "active",
     "phase": "build",
     "priority": "high",
-    "owner": "Paul Peck",
+    "owner": "Project Owner",
     "desiredOutcome": "Validate end-to-end Library import for all supported file types.",
     "successCriteria": "All 13 file type demos import without error and preview correctly."
   },

@@ -15,7 +15,7 @@ Sample files for all text-based formats are in the `demo/` directory.
 
 ## Part 1 — Library File Import
 
-The Library accepts 25 file extensions via a native Windows file picker.
+The Library accepts common text, code/config, document, PDF, and image formats via a native Windows file picker. The exact allowlist lives in `lib/db/document_extractor.dart` and the Library picker.
 Click **Import** in the Library header to open the picker.
 
 ---
@@ -187,13 +187,13 @@ All three are imported and displayed as plain selectable text. Try importing any
 
 ---
 
-### 1.13 RTF (`.rtf`)
+### 1.13 RTF (`.rtf`) - preview branch only
 
-**Requires:** any `.rtf` file (created in WordPad, Word, or LibreOffice).
+**Status:** `.rtf` is not currently in the Library picker allowlist. Existing or manually seeded `.rtf` document rows route to the external viewer prompt.
 
 | Step | What to do |
 |------|-----------|
-| 1 | Click **Import**, select an `.rtf` file |
+| 1 | Open an existing `.rtf` Library row |
 | 2 | Click the entry — the preview shows an **"Open in system viewer"** button |
 | 3 | Click the button — the file opens in your system's default RTF viewer (WordPad on Windows) |
 
@@ -201,13 +201,13 @@ All three are imported and displayed as plain selectable text. Try importing any
 
 ---
 
-### 1.14 SVG (`.svg`)
+### 1.14 SVG (`.svg`) - preview branch only
 
-**Requires:** any `.svg` file (e.g. exported from Figma, Inkscape, or a browser).
+**Status:** `.svg` is not currently in the Library picker allowlist. Existing or manually seeded `.svg` document rows route to the external viewer prompt.
 
 | Step | What to do |
 |------|-----------|
-| 1 | Click **Import**, select an `.svg` file |
+| 1 | Open an existing `.svg` Library row |
 | 2 | Click the entry — the preview shows an **"Open in system viewer"** button |
 | 3 | Click the button — the SVG opens in your default browser or vector viewer |
 
@@ -298,9 +298,9 @@ Media items also appear in **Library → Media** and **Library → Images** filt
 | Email | `.eml` | Body only (headers stripped) | Yes → `extracted_text` |
 | Word (OOXML) | `.docx` | Extracted paragraph text | Yes → `extracted_text` |
 | Word (legacy) | `.doc` | Open in system viewer | No |
-| RTF | `.rtf` | Open in system viewer | No |
+| RTF preview branch | `.rtf` | Open in system viewer for existing rows; not in current picker allowlist | No |
 | PDF | `.pdf` | Open in system viewer | No |
-| SVG | `.svg` | Open in system viewer | No |
+| SVG preview branch | `.svg` | Open in system viewer for existing rows; not in current picker allowlist | No |
 | Images | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp` | Inline pan/zoom viewer | No |
 
 All imported files are copied to `atlas_documents/` inside the app data directory.

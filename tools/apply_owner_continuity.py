@@ -5,10 +5,13 @@ import sqlite3
 from datetime import datetime, timezone
 
 
+DEFAULT_OWNER_NAME = "Project Owner"
+
+
 OWNER_CONTACTS = [
     (
-        "contact_operator_paul_peck",
-        "Paul Peck",
+        "contact_operator_project_owner",
+        DEFAULT_OWNER_NAME,
         "Owner / Operator",
         "Primary Project Atlas owner. Seeded for project ownership continuity.",
     ),
@@ -214,10 +217,10 @@ def apply(db_path: str):
             people_added = 0
             people_updated = 0
             for project_id, _title, owner in projects:
-                if clean(owner) != "Paul Peck":
+                if clean(owner) != DEFAULT_OWNER_NAME:
                     conn.execute(
                         "UPDATE projects SET owner = ? WHERE id = ?",
-                        ("Paul Peck", project_id),
+                        (DEFAULT_OWNER_NAME, project_id),
                     )
                     owners_updated += 1
                     log_event(
@@ -230,7 +233,7 @@ def apply(db_path: str):
                             "agent": "Operator",
                             "actor": {"type": "operator", "displayName": "Operator"},
                             "changedFieldCount": 1,
-                            "changedFields": {"owner": {"from": owner, "to": "Paul Peck"}},
+                            "changedFields": {"owner": {"from": owner, "to": DEFAULT_OWNER_NAME}},
                         },
                     )
 
@@ -241,7 +244,7 @@ def apply(db_path: str):
                     WHERE project_id = ? AND lower(name) = lower(?)
                     LIMIT 1
                     """,
-                    (project_id, "Paul Peck"),
+                    (project_id, DEFAULT_OWNER_NAME),
                 ).fetchone()
                 if person is None:
                     conn.execute(
@@ -249,7 +252,7 @@ def apply(db_path: str):
                         INSERT INTO project_people (id, project_id, name, role, authority, created_at)
                         VALUES (?, ?, ?, ?, ?, ?)
                         """,
-                        (micros_id("person"), project_id, "Paul Peck", "Owner", "Accountable", now_ms()),
+                        (micros_id("person"), project_id, DEFAULT_OWNER_NAME, "Owner", "Accountable", now_ms()),
                     )
                     people_added += 1
                     log_event(
@@ -259,8 +262,8 @@ def apply(db_path: str):
                         "project",
                         project_id,
                         {
-                            "actor": {"type": "operator", "displayName": "Paul Peck"},
-                            "person": "Paul Peck",
+                            "actor": {"type": "operator", "displayName": DEFAULT_OWNER_NAME},
+                            "person": DEFAULT_OWNER_NAME,
                             "role": "Owner",
                             "authority": "Accountable",
                         },
