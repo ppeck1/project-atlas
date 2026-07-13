@@ -28,13 +28,13 @@ jobs:
         run: flutter pub get
 
       - name: Install MCP gateway Python dependencies
-        run: python -m pip install "PyJWT[crypto]"
+        run: python -m pip install "PyJWT[crypto]" PyYAML
 
       - name: Generate Drift code
         run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Compile MCP gateway scripts
-        run: python -m py_compile tools\atlas_mcp_gateway.py tools\atlas_mcp_remote_policy.py tools\smoke_mcp_gateway.py tools\test_atlas_mcp_remote_policy.py
+        run: python -m py_compile tools\atlas_mcp_gateway.py tools\atlas_mcp_remote_policy.py tools\smoke_mcp_gateway.py tools\repair_drift_timestamps.py tools\apply_owner_continuity.py tools\import_dev_launchpad_runtime.py tools\test_atlas_mcp_remote_policy.py tools\test_timestamp_integrity.py
 
       - name: Test MCP remote disclosure policy
         run: python -m unittest discover -s tools -p "test_*.py" -v
