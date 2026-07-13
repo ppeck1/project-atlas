@@ -684,7 +684,7 @@ Per-project software runtime configuration. Added v19; current database schema i
 
 **Written by:** `AppState.saveProjectRuntimeProfileDraft()` (project metadata dialog "Software runtime" section) and `AppState.importRuntimeProfileFromDevLaunchpad()`.
 **Read by:** `watchProjectRuntimeProfile()` / `getProjectRuntimeProfile()` — Project Detail > Runtime section and the Projects list runtime quick actions.
-**Quirks:** Commands are operator-entered local shell commands executed through `powershell.exe` by `ProjectRuntimeService`; the app does not invent or auto-run commands (autostart is stored but not acted on). Dev Launchpad import defaults reference machine-specific paths and must be reconfigured per machine.
+**Quirks:** Commands are operator-entered local shell commands executed through `powershell.exe` by `ProjectRuntimeService`; the app does not invent or auto-run commands (autostart is stored but not acted on). Dev Launchpad import defaults reference machine-specific paths and must be reconfigured per machine. For the operator's Bag of Holding project, the launch command should be `python launcher.py` or an explicit Python executable plus `launcher.py`, without `--no-mcp`, so BOH consumes its own ignored MCP autostart config. Atlas records the run but does not host BOH MCP, provide tunnel credentials, or register ChatGPT connectors for other users.
 
 ---
 

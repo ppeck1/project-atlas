@@ -241,6 +241,15 @@ Each project can opt into a **software runtime profile**: working directory, lau
 
 Every action is recorded in a per-project run history (status, exit code, output). All commands are operator-entered; Atlas never generates or auto-runs commands, and the stored `autostart` flag is not acted on. Default Dev Launchpad YAML and Project Ops Capsule settings are machine-specific and can be set in Settings -> Integrations -> Project runtime defaults.
 
+For Bag of Holding, the operator-owned runtime profile should launch BOH with
+`python launcher.py` or an explicit Python executable plus `launcher.py`,
+without `--no-mcp`. BOH itself owns MCP startup through its ignored local
+`.local/boh_mcp_connector_autostart.json`; Atlas only runs the configured BOH
+launch command and records the run. Anyone setting up BOH MCP must provide
+their own OpenAI tunnel, runtime key, ChatGPT connector registration, OAuth
+tenant if used, and local BOH database. Atlas does not provide a hosted BOH MCP
+service.
+
 ## Telegram
 
 Telegram is outbound only.
