@@ -123,7 +123,10 @@ WINDOWS_PATH_RE = re.compile(
 UNC_PATH_RE = re.compile(r"\\\\[A-Za-z0-9_.-]+\\[^\s\"'<>|]+")
 FILE_URI_RE = re.compile(r"file:///[A-Za-z]:/[^\s\"'<>]+", re.IGNORECASE)
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
-PERSON_NAME_RE = re.compile(r"\bPaul\s+Peck\b", re.IGNORECASE)
+PERSON_NAME_RE = re.compile(
+    os.environ.get("ATLAS_MCP_PRIVATE_NAME_PATTERN", r"\bExample\s+Owner\b"),
+    re.IGNORECASE,
+)
 PRIVATE_CONTEXT_KEYS = {
     "absolutePath",
     "context",

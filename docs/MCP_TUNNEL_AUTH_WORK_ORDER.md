@@ -1,7 +1,7 @@
 # Secure MCP Tunnel And OAuth Work Order
 
-Status: prepared only. Do not execute this work order until the read-only
-gateway PR has been reviewed and merged.
+Status: historical/self-hosted setup work order. Execute only against an
+operator-owned gateway, tunnel, OAuth provider, and disclosure policy.
 
 ## Goal
 

@@ -9,6 +9,7 @@ AND COALESCE(status, '') != 'deleted'
 AND id != 'atlas-general-tasks'
 AND COALESCE(description, '') != '__atlas_hidden_general_tasks_project__'
 """
+DEFAULT_OWNER_NAME = "Project Owner"
 
 
 def verify(db_path: str):
@@ -17,15 +18,16 @@ def verify(db_path: str):
         visible_projects = conn.execute(
             f"SELECT COUNT(*) FROM projects WHERE {VISIBLE_PROJECTS_WHERE}"
         ).fetchone()[0]
-        non_paul_owner_projects = conn.execute(
+        non_default_owner_projects = conn.execute(
             f"""
             SELECT COUNT(*)
             FROM projects
             WHERE {VISIBLE_PROJECTS_WHERE}
-              AND COALESCE(trim(owner), '') != 'Paul Peck'
-            """
+              AND COALESCE(trim(owner), '') != ?
+            """,
+            (DEFAULT_OWNER_NAME,),
         ).fetchone()[0]
-        visible_without_paul_people = conn.execute(
+        visible_without_owner_people = conn.execute(
             f"""
             SELECT COUNT(*)
             FROM projects p
@@ -34,9 +36,10 @@ def verify(db_path: str):
                 SELECT 1
                 FROM project_people pp
                 WHERE pp.project_id = p.id
-                  AND lower(pp.name) = lower('Paul Peck')
+                  AND lower(pp.name) = lower(?)
               )
-            """
+            """,
+            (DEFAULT_OWNER_NAME,),
         ).fetchone()[0]
         continuity_contacts = [
             row[0]
@@ -44,16 +47,17 @@ def verify(db_path: str):
                 """
                 SELECT name
                 FROM contacts
-                WHERE name IN ('Paul Peck', 'Atlas', 'Atlas Agent', 'Codex')
+                WHERE name IN (?, 'Atlas', 'Atlas Agent', 'Codex')
                    OR name LIKE 'Model: %'
                 ORDER BY name
-                """
+                """,
+                (DEFAULT_OWNER_NAME,),
             ).fetchall()
         ]
         return {
             "visibleProjects": visible_projects,
-            "nonPaulOwnerProjects": non_paul_owner_projects,
-            "visibleWithoutPaulPeopleRows": visible_without_paul_people,
+            "nonDefaultOwnerProjects": non_default_owner_projects,
+            "visibleWithoutOwnerPeopleRows": visible_without_owner_people,
             "continuityContacts": continuity_contacts,
         }
     finally:

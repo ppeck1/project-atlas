@@ -7,7 +7,7 @@ The app now supports an opt-in local autostart file. When this ignored file is
 present and enabled, the desktop app starts:
 
 1. the local OAuth HTTP MCP gateway on `127.0.0.1:4874`
-2. the OpenAI tunnel client profile that forwards to that gateway
+2. the operator's configured tunnel-client profile that forwards to that gateway
 
 The local stdio MCP server is still not a background service. The gateway
 launches `project_atlas.exe --mcp-stdio` per forwarded request.
@@ -15,6 +15,8 @@ launches `project_atlas.exe --mcp-stdio` per forwarded request.
 Remote startup is fail-closed. The gateway also requires an ignored disclosure
 policy that explicitly maps approved local project IDs to remote aliases. A
 missing, unreadable, or invalid policy prevents the gateway from starting.
+Project Atlas does not provide or host a shared tunnel, OAuth tenant, connector
+registration, or populated disclosure policy for other users.
 
 ## Local Config File
 
@@ -54,7 +56,7 @@ Template:
 }
 ```
 
-Use JWKS validation for the current Auth0-style setup. If an OAuth provider
+Use JWKS validation when your OAuth provider issues JWT access tokens. If an OAuth provider
 requires introspection instead, use `introspectionUrl` in place of `jwksUrl`;
 exactly one verifier is allowed. Do not place client secrets in tracked files.
 
@@ -209,7 +211,7 @@ Expected remote tools for connector v0.2:
 - `atlas.project_planning_context`
 
 If `127.0.0.1:4874` is down, the Atlas connector cannot work from ChatGPT even
-when Auth0 login succeeds. If another local gateway is running on another port,
+when OAuth login succeeds. If another local gateway is running on another port,
 that does not satisfy the Project Atlas tunnel profile.
 
 ## Safety Boundary

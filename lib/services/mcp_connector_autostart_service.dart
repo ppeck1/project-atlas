@@ -554,7 +554,9 @@ if (-not [string]::IsNullOrWhiteSpace(\$processPath)) {
   [Environment]::SetEnvironmentVariable('PATH', \$null, 'Process')
   [Environment]::SetEnvironmentVariable('Path', \$processPath, 'Process')
 }
-Start-Process -FilePath ${_psQuote(executable)} -ArgumentList @($psArgs) -WorkingDirectory ${_psQuote(workingDirectory)} -WindowStyle Hidden -RedirectStandardOutput ${_psQuote(stdoutPath)} -RedirectStandardError ${_psQuote(stderrPath)}
+New-Item -ItemType File -Force -Path ${_psQuote(stdoutPath)} | Out-Null
+New-Item -ItemType File -Force -Path ${_psQuote(stderrPath)} | Out-Null
+Start-Process -FilePath ${_psQuote(executable)} -ArgumentList @($psArgs) -WorkingDirectory ${_psQuote(workingDirectory)} -WindowStyle Hidden
 ''';
     final result = await Process.run('powershell.exe', [
       '-NoProfile',

@@ -36,7 +36,7 @@ The core problem it solves: on any given morning, what am I doing, what is block
    - `.html`/`.htm` → raw HTML into `rendered_markdown`; `extractHtmlText()` result (tags stripped) into `extracted_text` (dual storage: renders rich, searches clean)
    - `.eml` → `stripEmlBody()` result into `extracted_text`
    - `.docx` → `extracted_text` (DOCX XML parsed by `extractDocxTextFromBytes` in `document_extractor.dart`)
-5. Binary types (`.pdf`, `.doc`, `.rtf`, `.svg`, images) get no extraction; both text columns remain null.
+5. Binary/imported non-text types (`.pdf`, `.doc`, images) get no extraction; both text columns remain null. Preview code has external-viewer branches for `.rtf` and `.svg`, but those extensions are not currently in the Library picker allowlist.
 
 `document_extractor.dart` exports a `textDocumentExtensions` const Set and `shouldLoadDocumentText(ext)` function as the single source of truth used by the picker allowlist, the importer, and `DocumentPreview`.
 
@@ -64,7 +64,7 @@ The extraction helpers live in `lib/db/document_extractor.dart` as standalone pu
 
 **Read-only GitHub Remote Metadata.** Project Detail > Local Repo can refresh cached GitHub metadata for a linked project when the latest local observation has a GitHub `origin` remote. `GithubRemoteMetadataService` parses HTTPS/SSH GitHub remotes, sanitizes credential-bearing URLs before storing, and calls `gh api` only for read-only repository metadata and default-branch HEAD. Results are saved in `project_git_remotes` with visibility, default branch, online HEAD SHA, timestamps, and any access/error message. This is a cache, not a publish/sync engine: Atlas does not push, create repos, clone, change visibility, or mutate GitHub.
 
-**Project runtime profiles are operator-configured, never inferred.** `ProjectRuntimeService` (v19) executes launch/test/capsule actions using only commands the operator typed into the profile (or explicitly imported from a local Dev Launchpad YAML). Launch opens a visible PowerShell window via `Start-Process` and polls configured health URLs; tests run headless with timeouts; every action writes a `project_runtime_runs` history row with status, exit code, and output. There is no background supervisor: `autostart` is stored but unused, and Atlas does not watch, restart, or kill processes outside the recorded run. The default Dev Launchpad/capsule/Python paths in `project_runtime_service.dart` are machine-specific constants from the original development machine and must be reconfigured per machine.
+**Project runtime profiles are operator-configured, never inferred.** `ProjectRuntimeService` (v19) executes launch/test/capsule actions using only commands the operator typed into the profile (or explicitly imported from a local Dev Launchpad YAML). Launch opens a visible PowerShell window via `Start-Process` and polls configured health URLs; tests run headless with timeouts; every action writes a `project_runtime_runs` history row with status, exit code, and output. There is no background supervisor: `autostart` is stored but unused, and Atlas does not watch, restart, or kill processes outside the recorded run. The default Dev Launchpad/capsule/Python paths in `project_runtime_service.dart` are public-safe `.local` placeholders and should be configured per machine. The live Bag of Holding runtime profile launches `launcher.py` without `--no-mcp`, so BOH consumes its own ignored MCP autostart config when the operator has enabled it; Atlas does not host or share a BOH MCP server, tunnel, runtime key, OAuth tenant, or ChatGPT connector registration.
 
 **Project merge is source-to-target reassignment.** The Projects list exposes a merge action. `AppDb.mergeProjects()` moves source-linked stages, documents, people, risks, decisions, media, drafts, registry links, and unique tag assignments to the target project, preserves app-owned file paths, updates active project/stage metadata where needed, then marks the source project `status='deleted'` with a merge reason and logs `projects/merge_projects`.
 
@@ -216,7 +216,7 @@ Full column-level documentation with write/read sites and quirks: `VARIABLE_MAP.
 - Bot token + chat ID stored in `app_meta` as plaintext (personal desktop use)
 - `sendTodayToTelegram()` fetches today's items, formats as HTML, posts to Bot API
 - Outbox records every attempt with status (`pending` → `sent` / `failed`)
-- Note: the `telegram_enabled` toggle in Settings is informational — the send path does not check it
+- Note: the `telegram_enabled` toggle in Settings is enforced by `sendTodayToTelegram()` before any outbound Bot API call.
 
 ---
 
@@ -236,14 +236,14 @@ The contact name is stored as a plain string in the owner column (no FK). `getCo
 | Issue | Detail |
 |-------|--------|
 | Encryption not active | Database is plaintext SQLite. No encryption library is currently included. Encryption is planned for a future release. |
-| `telegram_enabled` not enforced | The toggle is UI-only; the send path ignores it. |
+| `telegram_enabled` enforced | The send path blocks outbound Telegram messages until the toggle is enabled. |
 | `stages.is_bottleneck` vs `app_meta` | Duplicate bottleneck state. GovernanceScreen reads `app_meta`. Table column is legacy. |
 | Drafts no first-class route | Drafts exist in Library under type filter. No dedicated `/drafts` route yet. |
 | Media file cleanup | Deleting `project_media` removes DB/link rows but leaves the copied file in app data. Document deletion removes the copied document file. |
 | `completed` boolean on work items | Legacy. `status='done'` is canonical. Both are kept in sync but only `status` should be used in logic. |
 | `accepted` on drafts | Schema column exists but is never set or checked. |
 | `project_risks`/`project_decisions` legacy `updated_at` | Resolved: startup repair adds missing columns; INSERT methods fall back to `customStatement` with explicit timestamp when `updated_at NOT NULL` constraint is present on older databases. |
-| Runtime profile defaults | Dev Launchpad/capsule/Python default paths in `project_runtime_service.dart` are machine-specific constants; configure per-machine values in the project metadata dialog. |
+| Runtime profile defaults | Dev Launchpad/capsule/Python default paths in `project_runtime_service.dart` are public-safe `.local` placeholders; configure per-machine values in Settings or the project metadata dialog. |
 | PDF in-app rendering | PDF files open in the system viewer. No in-app PDF rendering; `pdfx`/PDFium integration is a future milestone. |
 | DOC (legacy Word) | `.doc` files show the external viewer button; no text extraction. Only `.docx` (OOXML ZIP format) supports text extraction. |
 
@@ -269,7 +269,7 @@ operational backup restore/import before expanding deeper agent autonomy.
 
 Windows: `%APPDATA%\<company>\project_atlas\project_atlas.sqlite`
 
-The exact company segment depends on the `CompanyName` field in `windows/runner/Runner.rc` at build time. This was changed from `com.example` to `Paul Peck` in v1.3.0. **If you have an existing database at the `com.example` path, copy it to the new path before launching a rebuilt binary to avoid starting fresh.**
+The exact company segment depends on the `CompanyName` field in `windows/runner/Runner.rc` at build time. This was changed from the Flutter template value in v1.3.0. **If you have an existing database at the old template path, copy it to the new path before launching a rebuilt binary to avoid starting fresh.**
 
 Access directly: Settings → Admin → Open app data folder.
 

@@ -16,13 +16,9 @@ from typing import Any
 import yaml
 
 
-DEFAULT_YAML_PATH = Path(
-    r"B:\dev\dev.launchpad\dev_launchpad_v0_3_public\dist\dev_launchpad.yaml"
-)
-DEFAULT_DB_PATH = Path(
-    r"C:\Users\peckm\AppData\Roaming\Paul Peck\Project Atlas\project_atlas.sqlite"
-)
-DEFAULT_CAPSULE_PATH = Path(r"B:\Projects\LLM_Modules\Project_Ops_Capsule")
+DEFAULT_YAML_PATH = Path(".local/dev_launchpad.yaml")
+DEFAULT_DB_PATH = Path(".local/project_atlas.sqlite")
+DEFAULT_CAPSULE_PATH = Path(".local/Project_Ops_Capsule")
 
 
 def _blank_to_none(value: Any) -> str | None:

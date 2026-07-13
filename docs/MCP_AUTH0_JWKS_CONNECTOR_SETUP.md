@@ -1,8 +1,9 @@
 # Project Atlas MCP Auth0 JWKS Connector Setup
 
-This note is for the first ChatGPT custom connector smoke using OpenAI Secure
-MCP Tunnel and Auth0-style JWT validation. Keep the remote tool allowlist frozen
-to:
+This note is a self-hosted setup example for a ChatGPT custom connector smoke
+using OpenAI Secure MCP Tunnel and Auth0-style JWT validation. The public repo
+does not provide a shared Project Atlas endpoint, tunnel, Auth0 tenant, or
+populated disclosure policy. Keep the remote tool allowlist frozen to:
 
 - `list_projects`
 - `get_project_status`

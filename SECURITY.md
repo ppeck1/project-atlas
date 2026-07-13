@@ -10,7 +10,7 @@ selected data outside the machine.
 - **Telegram notifications** - messages are sent to a bot/chat you configure. Transmission occurs only when you trigger a notification.
 - **Ollama AI summaries** - requests go to `localhost:11434` by default. Data leaves the machine if Ollama is configured to use a remote host.
 - **GitHub metadata refresh** - explicitly requested refreshes read repository metadata from GitHub for linked projects.
-- **ChatGPT MCP connector** - when the ignored local gateway and HTTPS tunnel configuration are enabled, the four approved read tools transmit structurally projected project data to the authenticated remote client.
+- **ChatGPT MCP connector** - when an operator enables their own ignored local gateway, HTTPS tunnel, OAuth configuration, and disclosure policy, the four approved read tools transmit structurally projected project data to the authenticated remote client. This repository does not host a shared connector service.
 
 ## Remote MCP Boundary
 

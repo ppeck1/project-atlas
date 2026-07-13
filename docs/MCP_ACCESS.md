@@ -26,6 +26,9 @@ OpenAI products, or to browsers.
 
 ChatGPT access requires a separate authenticated remote or tunneled adapter.
 Do not expose the raw stdio process directly to the public internet.
+This repository ships the code and examples for a self-hosted adapter only; it
+does not include a shared hosted endpoint, tunnel ID, OAuth tenant, connector
+registration, or populated disclosure policy.
 
 The tracked remote/tunneled adapter provides the following boundary:
 

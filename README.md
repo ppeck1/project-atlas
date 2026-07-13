@@ -36,6 +36,8 @@ This public repository contains source, tests, documentation, synthetic sample f
 
 It is portfolio-safe rather than fully anonymous: public identity, project-ecosystem names such as Project Ops Capsule and Dev Launchpad, and local-only path examples remain where they explain the system. Demo/store content uses placeholders such as `example-store.test`.
 
+This repo does not host or provide a shared Project Atlas MCP endpoint. Anyone who wants ChatGPT connector access must build/run their own local release executable, gateway, tunnel, OAuth provider, and ignored `.local` disclosure policy. The checked-in MCP code is the self-hosted boundary implementation, not a service operated for other users.
+
 ## What This Demonstrates
 
 - A desktop operations console that keeps records local while still supporting evidence-rich summaries, exports, and review queues
@@ -121,13 +123,17 @@ The Library screen unifies three content types: imported **documents**, project 
 | Extension(s) | Preview | Content at import |
 |---|---|---|
 | `.txt`, `.log`, `.csv`, `.xml`, `.yaml`, `.yml`, `.ini`, `.toml`, `.rst` | Plain text (selectable, monospace) | Extracted to `extracted_text` column |
-| `.md` | Rendered Markdown (`flutter_markdown`) | Stored in `rendered_markdown` column |
+| `.md`, `.mdx` | Rendered Markdown (`flutter_markdown`) | Stored in `rendered_markdown` column |
 | `.json` | Pretty-printed, indented (monospace) | Extracted to `extracted_text` column |
+| `.jsonc` | Monospace text | Extracted to `extracted_text` column |
 | `.html`, `.htm` | Rendered HTML (`flutter_html`) | Raw HTML stored in `rendered_markdown`; tag-stripped text in `extracted_text` (searchable) |
 | `.eml` | RFC-2822 headers stripped, body as plain text | Body extracted to `extracted_text` at import |
+| common source/config files such as `.dart`, `.py`, `.js`, `.ts`, `.css`, `.sql`, `.ps1`, `.sh`, `.yaml`, `.toml`, `.dockerfile` | Monospace text | Extracted to `extracted_text` column |
 | `.docx` | Extracted paragraph text (plain) | Word XML parsed at import; stored in `extracted_text` |
-| `.doc`, `.rtf`, `.pdf`, `.svg` | "Open in system viewer" button | No extraction |
+| `.doc`, `.pdf` | "Open in system viewer" button | No extraction |
 | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp` | Inline `InteractiveViewer` with pan/zoom | None (binary) |
+
+The picker allowlist is source-controlled in `lib/db/document_extractor.dart` plus the Library picker. `.rtf` and `.svg` preview prompts exist in shared preview code, but those extensions are not currently in the Library import picker.
 
 All imported files are **copied** into the app data directory (`atlas_documents/` subfolder). Moving or deleting the original has no effect on the stored copy. Deleting a document record via the Library UI also deletes the app-owned copy from disk.
 
@@ -220,6 +226,7 @@ When enabled, the connection should load local credentials from environment vari
 - Project Detail lets the operator edit, move, cancel, requeue, and attach media to LLM tasks. `get_project_bootstrap_context` returns the fuller local project startup packet; `get_llm_task_bootstrap` returns a task plus its project startup packet; `get_llm_task` returns attached media metadata for harness context. Queue completion can attach a proposed handoff as a reviewable draft, and `propose_closeout` records validation/git/packet evidence for review instead of directly mutating project state.
 - Local stdio access is separate from ChatGPT remote or tunneled access. Tool metadata advertises Atlas access classes and role allowlists for client/gateway filtering, but local stdio is not an authentication boundary by itself. See `docs/MCP_ACCESS.md` for the Codex/Claude local path, ChatGPT remote boundary, and role allowlist defaults.
 - MCP connector v0.2 is a narrow ChatGPT planning profile, not a public hosted automation service. It exposes only `list_projects`, `get_project_status`, `atlas.workload_snapshot`, and `atlas.project_planning_context` through the OAuth read-only gateway. The gateway requires an ignored deny-by-default project-alias policy and builds strict bounded per-tool projections from the JSON carried inside MCP text results; broad local DTOs and hidden-project aggregates never cross the remote boundary. Settings -> Integrations includes a local-only disclosure preview for approved aliases, disclosed field groups, OAuth scope/verifier shape, policy fingerprint, recent audit metadata, and synthetic redacted samples. ChatGPT has no execution, queue mutation, proposal, GitHub refresh, shell, raw-file, or write authority. See `docs/MCP_ACCESS.md` and `docs/MCP_CONNECTOR_PATH.md` for the connector boundary.
+- No hosted connector, tunnel ID, OAuth tenant, or populated disclosure policy is included. Operators must provide and secure their own `.local` MCP configuration.
 - Shopify SEO review is intentionally queued through the existing LLM task queue. The first supported approval unit is one product per batch, with allowed fields limited in task context and live Admin API writes left out of the public app until explicit supervised apply tooling is added.
 - The service does not delete projects, overwrite manifests, push/fetch Git, or mutate discovered repositories. Human review remains the approval boundary.
 - Workboard MCP tools are read-only planning views. `atlas.suggest_next_work` returns ready execution candidates only; decision/context/review/blocked items stay in planning or review buckets. These tools do not claim tasks, complete work, run harness jobs, or mutate queue state.
@@ -233,6 +240,15 @@ Each project can opt into a **software runtime profile**: working directory, lau
 - **Capsule** runs the Project Ops Capsule tooling for the project when enabled.
 
 Every action is recorded in a per-project run history (status, exit code, output). All commands are operator-entered; Atlas never generates or auto-runs commands, and the stored `autostart` flag is not acted on. Default Dev Launchpad YAML and Project Ops Capsule settings are machine-specific and can be set in Settings -> Integrations -> Project runtime defaults.
+
+For Bag of Holding, the operator-owned runtime profile should launch BOH with
+`python launcher.py` or an explicit Python executable plus `launcher.py`,
+without `--no-mcp`. BOH itself owns MCP startup through its ignored local
+`.local/boh_mcp_connector_autostart.json`; Atlas only runs the configured BOH
+launch command and records the run. Anyone setting up BOH MCP must provide
+their own OpenAI tunnel, runtime key, ChatGPT connector registration, OAuth
+tenant if used, and local BOH database. Atlas does not provide a hosted BOH MCP
+service.
 
 ## Telegram
 
@@ -305,6 +321,7 @@ Generated files and build products are intentionally ignored:
 - SQLite is plaintext. Do not store passwords, API keys, or sensitive private notes in project fields.
 - There is no cloud sync or background project watcher. Operations scans, enrichment, GitHub checks, and workload review remain explicit operator actions.
 - The remote MCP gateway is a narrow read-only planning prototype. It does not execute tasks, mutate queues, approve proposals, refresh GitHub state, run shell commands, or expose raw local files. The Settings disclosure preview is an inspector only; it does not start the gateway or tunnel, and active executable identity remains reported as unverified until process attestation exists.
+- The repository does not host a shared MCP service; every remote connector setup is self-hosted with operator-supplied OAuth, tunnel, and disclosure policy configuration.
 - Freshness and Workboard signals are decision support, not proof that a repository or external service is globally current.
 - Shopify Admin API sync is planned as read-only catalog import. Live Shopify writes are intentionally not implemented.
 
@@ -313,7 +330,7 @@ Generated files and build products are intentionally ignored:
 - In-app PDF rendering (currently opens in system viewer)
 - Drafts screen as a first-class route
 - Inbound Telegram commands such as `/done`, `/snooze`, and `/add`
-- Remote MCP gateway hardening, deployment packaging, and broader reviewed read surfaces
+- Self-hosted MCP packaging, disclosure preview tooling, and broader reviewed read surfaces
 - Restore/import flow for project bundles and operational backups before deeper agent autonomy
 - SQLCipher encrypted storage path before broader distribution
 - Review history browser — `watchRecentDailyReviews()` exists in the DB layer; no history screen yet

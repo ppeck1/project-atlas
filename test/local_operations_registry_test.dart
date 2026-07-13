@@ -1614,7 +1614,7 @@ Pressure flakes a useful edge.
       await state.dismissProjectEnrichmentFinding(
         findingId: finding.id,
         ignoreRegistryEntry: true,
-        actor: 'Paul Peck',
+        actor: 'Project Owner',
         note: 'No longer part of this project.',
       );
       final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
@@ -1630,7 +1630,7 @@ Pressure flakes a useful edge.
       expect(updatedRun?.openFindings, openBefore - 1);
       expect(registry?.reviewState, 'ignored');
       expect(registry?.atlasProjectId, isNull);
-      expect(registry?.notes, contains('Paul Peck'));
+      expect(registry?.notes, contains('Project Owner'));
       expect(
         events.map((event) => event.action),
         contains('project_health_registry_finding_ignored'),
@@ -1666,7 +1666,7 @@ Pressure flakes a useful edge.
 
     final reviewed = await state.markProjectHealthRegistryFindingsReviewed(
       findingIds: findings.map((finding) => finding.id),
-      actor: 'Paul Peck',
+      actor: 'Project Owner',
       note: 'Looks intentional.',
     );
     final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
@@ -1722,7 +1722,7 @@ Pressure flakes a useful edge.
       final projectId = await state.linkProjectHealthRegistryFindingToProject(
         findingId: finding.id,
         projectId: 'target-project',
-        actor: 'Paul Peck',
+        actor: 'Project Owner',
       );
       final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
       final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
@@ -1759,7 +1759,7 @@ Pressure flakes a useful edge.
 
     final projectId = await state.importProjectHealthRegistryFindingAsProject(
       findingId: finding.id,
-      actor: 'Paul Peck',
+      actor: 'Project Owner',
     );
     final project = await db.getProjectFull(projectId);
     final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
@@ -1834,7 +1834,7 @@ Pressure flakes a useful edge.
           .replaceProjectHealthRegistryFindingFolder(
             findingId: finding.id,
             selectedPath: replacementPath,
-            actor: 'Paul Peck',
+            actor: 'Project Owner',
           );
       final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);
       final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
@@ -1846,7 +1846,7 @@ Pressure flakes a useful edge.
       expect(updatedFinding?.status, 'dismissed');
       expect(updatedRun?.openFindings, result.run.openFindings - 1);
       expect(project?.scopeIncluded, contains(replacementPath));
-      expect(updatedRegistry.notes, contains('Paul Peck'));
+      expect(updatedRegistry.notes, contains('Project Owner'));
       expect(
         events.map((event) => event.action),
         contains('project_health_registry_folder_replaced'),
@@ -1869,7 +1869,7 @@ Pressure flakes a useful edge.
 
     await state.dismissProjectEnrichmentFindings(
       findingIds: targets.map((finding) => finding.id),
-      actor: 'Paul Peck',
+      actor: 'Project Owner',
       note: 'Batch cleanup.',
     );
     final updatedRun = await db.getProjectEnrichmentRun(result.run.id);
@@ -1912,7 +1912,7 @@ Pressure flakes a useful edge.
 
       final suppression = await state.suppressProjectHealthFinding(
         findingId: finding.id,
-        actor: 'Paul Peck',
+        actor: 'Project Owner',
         note: 'Known registry row.',
       );
       final updatedFinding = await db.getProjectEnrichmentFinding(finding.id);

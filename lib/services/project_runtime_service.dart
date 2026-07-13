@@ -7,12 +7,9 @@ import 'package:yaml/yaml.dart';
 
 import '../db/app_db.dart';
 
-const defaultDevLaunchpadYamlPath =
-    r'B:\dev\dev.launchpad\dev_launchpad_v0_3_public\dist\dev_launchpad.yaml';
-const defaultProjectOpsCapsulePath =
-    r'B:\Projects\LLM_Modules\Project_Ops_Capsule';
-const defaultCapsulePythonPath =
-    r'C:\Users\peckm\AppData\Local\Programs\Python\Python311\python.exe';
+const defaultDevLaunchpadYamlPath = r'.local\dev_launchpad.yaml';
+const defaultProjectOpsCapsulePath = r'.local\Project_Ops_Capsule';
+const defaultCapsulePythonPath = 'python';
 
 class RuntimeUrl {
   final String label;

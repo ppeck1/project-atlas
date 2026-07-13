@@ -28,7 +28,7 @@ void main() {
       final eventAt = DateTime(2026, 6, 30, 14, 45);
 
       await db.createProject('project-a', 'Alpha', createdAt);
-      await db.updateProjectMeta('project-a', {'owner': 'Pat Peck'});
+      await db.updateProjectMeta('project-a', {'owner': 'Ops Lead'});
       await db
           .into(db.eventLog)
           .insert(
@@ -51,7 +51,7 @@ void main() {
       expect(attribution!.updatedAt, eventAt);
       expect(attribution.updatedBy, 'Codex');
       expect(attribution.source, 'event_log');
-      expect(attribution.contactName, 'Pat Peck');
+      expect(attribution.contactName, 'Ops Lead');
     },
   );
 
@@ -68,14 +68,14 @@ void main() {
         title: 'Follow up',
       );
 
-      await state.updateProjectMeta('project-a', {'owner': 'Pat Peck'});
+      await state.updateProjectMeta('project-a', {'owner': 'Ops Lead'});
       await db.logEvent(
         area: 'work',
         action: 'work_item_updated',
         entityType: 'work_item',
         entityId: workItemId,
         outputJson: jsonEncode({
-          'actor': {'displayName': 'Pat Peck'},
+          'actor': {'displayName': 'Ops Lead'},
         }),
       );
       await db.logEvent(
@@ -114,16 +114,16 @@ void main() {
       );
 
       await state.updateProjectMeta('project-a', {
-        'owner': 'Paul Peck',
+        'owner': 'Project Owner',
         'status': 'active',
-      }, actor: 'Paul Peck');
+      }, actor: 'Project Owner');
       await db.logEvent(
         area: 'work',
         action: 'work_item_updated',
         entityType: 'work_item',
         entityId: workItemId,
         outputJson: jsonEncode({
-          'actor': {'type': 'operator', 'displayName': 'Pat Peck'},
+          'actor': {'type': 'operator', 'displayName': 'Ops Lead'},
         }),
       );
 
@@ -135,13 +135,13 @@ void main() {
         (change) => change.action == 'work_item_updated',
       );
 
-      expect(metadataChange.actor, 'Paul Peck');
+      expect(metadataChange.actor, 'Project Owner');
       expect(metadataChange.actorType, 'operator');
       expect(metadataChange.changedFields.keys, contains('owner'));
       expect(metadataChange.beforeJson['owner'], isNull);
-      expect(metadataChange.afterJson['owner'], 'Paul Peck');
+      expect(metadataChange.afterJson['owner'], 'Project Owner');
       expect(metadataChange.summary, contains('Owner'));
-      expect(workChange.actor, 'Pat Peck');
+      expect(workChange.actor, 'Ops Lead');
       expect(workChange.actorType, 'operator');
       expect(workChange.summary, contains('Call supplier'));
       expect(changes.map((change) => change.projectId).toSet(), {'project-a'});
@@ -204,8 +204,8 @@ void main() {
       await db.createProject('project-b', 'Beta', createdAt);
 
       await state.updateProjectMeta('project-a', {
-        'owner': 'Paul Peck',
-      }, actor: 'Paul Peck');
+        'owner': 'Project Owner',
+      }, actor: 'Project Owner');
       await db.logEvent(
         area: 'projects',
         action: 'project_metadata_updated',
@@ -228,14 +228,14 @@ void main() {
       expect(project['title'], 'Alpha');
       expect(packet['changeCount'], 1);
       expect(firstChange['projectId'], 'project-a');
-      expect(firstChange['actor'], 'Paul Peck');
+      expect(firstChange['actor'], 'Project Owner');
       expect(firstChange['action'], 'project_metadata_updated');
     },
   );
 
   test('project change summary saves review draft with evidence', () async {
     final fake = await _FakeOllama.start(
-      '## Summary\nOwner changed to Paul Peck.',
+      '## Summary\nOwner changed to Project Owner.',
     );
     addTearDown(fake.close);
 
@@ -245,8 +245,8 @@ void main() {
     );
     await db.createProject('project-a', 'Alpha', DateTime(2026, 1, 1, 9));
     await state.updateProjectMeta('project-a', {
-      'owner': 'Paul Peck',
-    }, actor: 'Paul Peck');
+      'owner': 'Project Owner',
+    }, actor: 'Project Owner');
 
     final result = await state.summarizeProjectChanges('project-a', limit: 5);
     final draft = await state.getLatestProjectChangeSummaryDraft('project-a');
@@ -288,8 +288,8 @@ void main() {
       );
       await db.createProject('project-a', 'Alpha', DateTime(2026, 1, 1, 9));
       await state.updateProjectMeta('project-a', {
-        'owner': 'Paul Peck',
-      }, actor: 'Paul Peck');
+        'owner': 'Project Owner',
+      }, actor: 'Project Owner');
 
       final future = state.startProjectChangeSummary('project-a', limit: 5);
       expect(
