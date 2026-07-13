@@ -71,6 +71,25 @@ String? cleanWorkloadText(String? value) {
   return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 
+bool workloadBlocksProgress({
+  required String readiness,
+  required String status,
+  String? blockerReason,
+}) {
+  final normalizedStatus = status.trim().toLowerCase();
+  if ({
+    'done',
+    'archived',
+    'completed',
+    'cancelled',
+  }.contains(normalizedStatus)) {
+    return false;
+  }
+  return normalizeWorkloadReadiness(readiness) == 'blocked' ||
+      normalizedStatus == 'waiting' ||
+      cleanWorkloadText(blockerReason) != null;
+}
+
 String _normalizeOption(String? value, List<String> allowed, String fallback) {
   final raw = (value ?? '').trim().toLowerCase().replaceAll(' ', '_');
   return allowed.contains(raw) ? raw : fallback;
@@ -83,6 +102,7 @@ class WorkloadFilters {
   final String? risk;
   final String? size;
   final bool blockedOnly;
+  final bool blocksProgressOnly;
   final bool reviewNeededOnly;
   final bool staleOnly;
   final bool highPriorityOnly;
@@ -94,6 +114,7 @@ class WorkloadFilters {
     this.risk,
     this.size,
     this.blockedOnly = false,
+    this.blocksProgressOnly = false,
     this.reviewNeededOnly = false,
     this.staleOnly = false,
     this.highPriorityOnly = false,
@@ -111,6 +132,7 @@ class WorkloadFilters {
     String? size,
     bool clearSize = false,
     bool? blockedOnly,
+    bool? blocksProgressOnly,
     bool? reviewNeededOnly,
     bool? staleOnly,
     bool? highPriorityOnly,
@@ -122,6 +144,7 @@ class WorkloadFilters {
       risk: clearRisk ? null : risk ?? this.risk,
       size: clearSize ? null : size ?? this.size,
       blockedOnly: blockedOnly ?? this.blockedOnly,
+      blocksProgressOnly: blocksProgressOnly ?? this.blocksProgressOnly,
       reviewNeededOnly: reviewNeededOnly ?? this.reviewNeededOnly,
       staleOnly: staleOnly ?? this.staleOnly,
       highPriorityOnly: highPriorityOnly ?? this.highPriorityOnly,
@@ -135,6 +158,7 @@ class WorkloadFilters {
     'risk': risk,
     'size': size,
     'blockedOnly': blockedOnly,
+    'blocksProgressOnly': blocksProgressOnly,
     'reviewNeededOnly': reviewNeededOnly,
     'staleOnly': staleOnly,
     'highPriorityOnly': highPriorityOnly,
@@ -218,6 +242,11 @@ class WorkloadCard {
   bool get isWorkItem => kind == workItemKind;
   bool get isLlmQueueItem => kind == llmQueueKind;
   bool get isBlocked => boardGroup == 'blocked';
+  bool get blocksProgress => workloadBlocksProgress(
+    readiness: readiness,
+    status: status,
+    blockerReason: blockerReason,
+  );
   bool get isReviewNeeded => boardGroup == 'review_needed';
   bool get isHighPriority => priority == 'high' || priority == 'urgent';
 
@@ -264,6 +293,7 @@ class WorkloadCard {
       'verificationNeeded': verificationNeeded,
       'priority': priority,
       'status': status,
+      'blocksProgress': blocksProgress,
       'dueAt': dueAt?.toIso8601String(),
       'workItemId': workItemId,
       'llmTaskId': llmTaskId,
@@ -316,6 +346,9 @@ class WorkloadSnapshot {
 
   int get readyTasks => countsByGroup['ready'] ?? 0;
   int get blockedTasks => countsByGroup['blocked'] ?? 0;
+  int get blockedBoardGroupTasks => blockedTasks;
+  int get blocksProgressTasks =>
+      cards.where((card) => card.blocksProgress).length;
   int get reviewNeededTasks => countsByGroup['review_needed'] ?? 0;
 
   Map<String, Object?> toJson() => {
@@ -326,6 +359,8 @@ class WorkloadSnapshot {
       'total': cards.length,
       'ready': readyTasks,
       'blocked': blockedTasks,
+      'blockedBoardGroup': blockedBoardGroupTasks,
+      'blocksProgress': blocksProgressTasks,
       'reviewNeeded': reviewNeededTasks,
       'stale': staleTasks,
       'byGroup': countsByGroup,
@@ -588,6 +623,7 @@ class WorkloadPlanner {
             return false;
           }
           if (filters.blockedOnly && !card.isBlocked) return false;
+          if (filters.blocksProgressOnly && !card.blocksProgress) return false;
           if (filters.reviewNeededOnly && !card.isReviewNeeded) return false;
           if (filters.staleOnly && !card.isStale(generatedAt)) return false;
           if (filters.highPriorityOnly && !card.isHighPriority) return false;

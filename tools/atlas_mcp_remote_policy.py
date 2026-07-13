@@ -38,6 +38,14 @@ PROJECT_STATUSES = frozenset(
     }
 )
 REMOTE_VISIBLE_PROJECT_STATUSES = PROJECT_STATUSES - {"archived"}
+ATTENTION_PROJECT_STATUSES = frozenset(
+    {"stale", "needs_update", "needs_review", "local_only", "public_mismatch", "blocked"}
+)
+REMOTE_SCOPE_NOTICE = {
+    "scope": "operator_approved_subset",
+    "denyByDefault": True,
+    "absenceDoesNotProveUnregistered": True,
+}
 PROJECT_PHASES = frozenset({"idea", "design", "build", "test", "ship", "stabilize"})
 PRIORITIES = frozenset({"low", "normal", "high", "urgent"})
 FRESHNESS_STATUSES = frozenset({"current", "stale", "unknown"})
@@ -183,7 +191,8 @@ REMOTE_TOOL_CONTRACTS: dict[str, dict[str, Any]] = {
     "list_projects": {
         "description": (
             "List operator-approved remote project aliases with compact lifecycle, "
-            "workload, and freshness signals."
+            "workload, and freshness signals. Results are an operator-approved "
+            "deny-by-default subset; absence does not prove a project is unregistered."
         ),
         "inputSchema": {
             "type": "object",
@@ -240,6 +249,7 @@ REMOTE_TOOL_CONTRACTS: dict[str, dict[str, Any]] = {
                     "enum": sorted(WORKLOAD_SIZE_VALUES),
                 },
                 "blockedOnly": {"type": "boolean"},
+                "blocksProgressOnly": {"type": "boolean"},
                 "reviewNeededOnly": {"type": "boolean"},
                 "staleOnly": {"type": "boolean"},
                 "highPriorityOnly": {"type": "boolean"},
@@ -389,6 +399,7 @@ def prepare_remote_tool_request(
             "risk",
             "size",
             "blockedOnly",
+            "blocksProgressOnly",
             "reviewNeededOnly",
             "staleOnly",
             "highPriorityOnly",
@@ -407,6 +418,7 @@ def prepare_remote_tool_request(
                 )
         for key in (
             "blockedOnly",
+            "blocksProgressOnly",
             "reviewNeededOnly",
             "staleOnly",
             "highPriorityOnly",
@@ -571,6 +583,7 @@ def _project_list_projects(
             "total": total,
             "truncated": context.offset + len(page) < total,
         },
+        "disclosure": dict(REMOTE_SCOPE_NOTICE),
     }
     return projected, len(page)
 
@@ -603,15 +616,22 @@ def _project_status_summary(
 ) -> dict[str, Any]:
     if row.get("id", row.get("projectId")) != project.local_project_id:
         raise RemoteProjectionError("invalid_upstream_shape")
+    status = _safe_enum(row.get("status"), PROJECT_STATUSES)
+    freshness = _freshness_summary(row.get("freshness"))
+    blocked = _safe_optional_count(row.get("blockedWorkItems"))
+    blocks_progress = _safe_optional_count(row.get("blocksProgressWorkItems"))
+    if blocks_progress is None:
+        blocks_progress = blocked
     return {
         "projectId": project.alias,
         "title": project.label,
-        "status": _safe_enum(row.get("status"), PROJECT_STATUSES),
+        "status": status,
         "phase": _safe_enum(row.get("phase"), PROJECT_PHASES),
         "priority": _safe_enum(row.get("priority"), PRIORITIES),
         "workItems": {
             "active": _safe_optional_count(row.get("activeWorkItems")),
-            "blocked": _safe_optional_count(row.get("blockedWorkItems")),
+            "blocked": blocked,
+            "blocksProgress": blocks_progress,
         },
         "records": {
             "documents": _safe_optional_count(row.get("documents")),
@@ -619,28 +639,32 @@ def _project_status_summary(
             "risks": _safe_optional_count(row.get("risks")),
             "decisions": _safe_optional_count(row.get("decisions")),
         },
-        "freshness": _freshness_summary(row.get("freshness")),
-        "needsAttention": row.get("needsAttention")
-        if isinstance(row.get("needsAttention"), bool)
-        else None,
+        "freshness": freshness,
+        "needsAttention": (
+            status in ATTENTION_PROJECT_STATUSES
+            or bool(freshness["staleReasons"])
+            or bool(freshness["attentionReasons"])
+            or bool(blocks_progress)
+        ),
     }
 
 
 def _freshness_summary(value: Any) -> dict[str, Any]:
     source = value if isinstance(value, dict) else {}
+    status = _safe_enum(source.get("status"), FRESHNESS_STATUSES)
+    stale_reasons = _safe_enum_list(
+        source.get("staleReasons"), FRESHNESS_REASON_VALUES
+    )
+    attention_reasons = _safe_enum_list(
+        source.get("attentionReasons"), FRESHNESS_REASON_VALUES
+    )
     return {
-        "status": _safe_enum(source.get("status"), FRESHNESS_STATUSES),
+        "status": status,
         "confidence": _safe_enum(source.get("confidence"), CONFIDENCE_VALUES),
-        "staleReasons": _safe_enum_list(
-            source.get("staleReasons"), FRESHNESS_REASON_VALUES
-        ),
-        "attentionReasons": _safe_enum_list(
-            source.get("attentionReasons"), FRESHNESS_REASON_VALUES
-        ),
-        "planningActionRequired": isinstance(
-            source.get("actionRequiredBeforePlanning"), str
-        )
-        and bool(source["actionRequiredBeforePlanning"].strip()),
+        "staleReasons": stale_reasons,
+        "attentionReasons": attention_reasons,
+        "planningActionRequired": status in {"stale", "unknown"}
+        or bool(stale_reasons),
     }
 
 
@@ -751,6 +775,11 @@ def _project_card(
         ),
         "priority": _safe_enum(row.get("priority"), PRIORITIES),
         "status": _safe_enum(row.get("status"), WORKLOAD_STATUS_VALUES),
+        "blocksProgress": (
+            row.get("blocksProgress")
+            if isinstance(row.get("blocksProgress"), bool)
+            else None
+        ),
         "stale": row.get("stale") if isinstance(row.get("stale"), bool) else None,
         "staleReasons": _safe_enum_list(
             row.get("staleReasons"), WORKLOAD_STALE_REASON_VALUES
@@ -769,6 +798,10 @@ def _recomputed_workload_counts(
         "total": len(rows),
         "ready": sum(row.get("boardGroup") == "ready" for row in rows),
         "blocked": sum(row.get("boardGroup") == "blocked" for row in rows),
+        "blockedBoardGroup": sum(
+            row.get("boardGroup") == "blocked" for row in rows
+        ),
+        "blocksProgress": sum(row.get("blocksProgress") is True for row in rows),
         "reviewNeeded": sum(
             row.get("boardGroup") == "review_needed" for row in rows
         ),
@@ -863,6 +896,8 @@ def _project_planning_context(
                     "total",
                     "ready",
                     "blocked",
+                    "blockedBoardGroup",
+                    "blocksProgress",
                     "reviewNeeded",
                     "stale",
                     "demotedImportedChecklist",
@@ -879,6 +914,7 @@ def _project_planning_context(
                 )
                 or _count_exceeds(counts.get("ready"), len(ready))
                 or _count_exceeds(counts.get("blocked"), len(blocked))
+                or _count_exceeds(counts.get("blocksProgress"), len(blocked))
                 or _count_exceeds(counts.get("reviewNeeded"), len(review))
             ),
         },

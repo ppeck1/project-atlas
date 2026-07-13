@@ -12,6 +12,7 @@ import 'document_extractor.dart';
 
 import 'db_open.dart';
 import 'tables.dart';
+import 'timestamp_contract.dart';
 
 part 'app_db.g.dart';
 
@@ -704,7 +705,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 20;
+  int get schemaVersion => 21;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -873,6 +874,9 @@ class AppDb extends _$AppDb {
           } catch (_) {}
         }
       }
+      if (from < 21) {
+        await _repairLegacyMillisecondTimestamps();
+      }
     },
     beforeOpen: (_) async {
       await _ensureProjectCompatibilityColumns();
@@ -882,9 +886,79 @@ class AppDb extends _$AppDb {
       await _ensureProjectGitRemotesTable();
       await _ensureProjectEnrichmentTables();
       await _ensureLlmTaskQueueTable();
+      await _ensureTimestampUnitTriggers();
       await recoverStaleProjectEnrichmentRuns();
     },
   );
+
+  /// Repairs only values that are unambiguously millisecond-scale dates in
+  /// the supported 2000-2100 window. The explicit manifest excludes custom
+  /// tables whose documented storage contract is milliseconds.
+  Future<void> _repairLegacyMillisecondTimestamps() async {
+    for (final field in driftTimestampFields) {
+      if (!await _timestampFieldExists(field)) continue;
+      await customStatement('''
+        UPDATE "${field.table}"
+        SET "${field.column}" = CAST("${field.column}" / 1000 AS INTEGER)
+        WHERE typeof("${field.column}") = 'integer'
+          AND ABS("${field.column}") >= $driftEpochSecondThreshold
+          AND ABS("${field.column}") < $legacyMillisecondUpperBound
+          AND CAST("${field.column}" / 1000 AS INTEGER)
+              >= $legacyRepairMinEpochSeconds
+          AND CAST("${field.column}" / 1000 AS INTEGER)
+              < $legacyRepairMaxEpochSeconds
+      ''');
+    }
+  }
+
+  /// Rejects raw SQLite writes that bypass Drift's DateTime conversion.
+  /// Separate update triggers ensure an unrelated update can still repair or
+  /// retain a legacy row until its timestamp column is explicitly touched.
+  Future<void> _ensureTimestampUnitTriggers() async {
+    for (final field in driftTimestampFields) {
+      if (!await _timestampFieldExists(field)) continue;
+      final message =
+          'timestamp_unit_violation:${field.table}.${field.column}:'
+          'expected_epoch_seconds';
+      final invalid =
+          '''
+        NEW."${field.column}" IS NOT NULL AND (
+          typeof(NEW."${field.column}") != 'integer' OR
+          ABS(NEW."${field.column}") >= $driftEpochSecondThreshold
+        )
+      ''';
+      await customStatement('''
+        CREATE TRIGGER IF NOT EXISTS
+          "guard_${field.triggerStem}_insert"
+        BEFORE INSERT ON "${field.table}"
+        FOR EACH ROW WHEN $invalid
+        BEGIN
+          SELECT RAISE(ABORT, '$message');
+        END
+      ''');
+      await customStatement('''
+        CREATE TRIGGER IF NOT EXISTS
+          "guard_${field.triggerStem}_update"
+        BEFORE UPDATE OF "${field.column}" ON "${field.table}"
+        FOR EACH ROW WHEN $invalid
+        BEGIN
+          SELECT RAISE(ABORT, '$message');
+        END
+      ''');
+    }
+  }
+
+  Future<bool> _timestampFieldExists(DriftTimestampField field) async {
+    final table = await customSelect(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+      variables: [Variable<String>(field.table)],
+    ).getSingleOrNull();
+    if (table == null) return false;
+    final columns = await customSelect(
+      'PRAGMA table_info("${field.table}")',
+    ).get();
+    return columns.any((row) => row.data['name'] == field.column);
+  }
 
   /// Repairs older or partially migrated local databases that already report
   /// schemaVersion 5 but are missing nullable project columns used by the
@@ -1063,7 +1137,7 @@ class AppDb extends _$AppDb {
           await customStatement(
             "INSERT INTO project_people_new (id, project_id, name, role, authority, created_at) "
             "SELECT id, project_id, name, $roleExpr, $authorityExpr, "
-            "COALESCE(created_at, CAST(strftime('%s','now') AS INTEGER) * 1000) "
+            "COALESCE(created_at, CAST(strftime('%s','now') AS INTEGER)) "
             "FROM project_people",
           );
 
@@ -1087,7 +1161,7 @@ class AppDb extends _$AppDb {
       // Prevent null-mapping crashes for non-null Drift stage fields
       "UPDATE stages SET title = 'Tasks' WHERE title IS NULL OR TRIM(title) = ''",
       "UPDATE stages SET position = 0 WHERE position IS NULL",
-      "UPDATE stages SET created_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE created_at IS NULL",
+      "UPDATE stages SET created_at = CAST(strftime('%s','now') AS INTEGER) WHERE created_at IS NULL",
       "UPDATE stages SET is_bottleneck = 0 WHERE is_bottleneck IS NULL",
     ];
 
@@ -1951,12 +2025,12 @@ class AppDb extends _$AppDb {
     } on SqliteException catch (e) {
       // Some databases were created when ProjectRisks had an updatedAt field.
       if (!e.message.contains('updated_at')) rethrow;
-      final ms = now.millisecondsSinceEpoch;
+      final seconds = now.millisecondsSinceEpoch ~/ 1000;
       await customStatement(
         'INSERT INTO project_risks '
         '(id, project_id, title, "desc", severity, created_at, updated_at) '
         'VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [id, projectId, title, desc, severity, ms, ms],
+        [id, projectId, title, desc, severity, seconds, seconds],
       );
     }
     return id;
@@ -1995,12 +2069,12 @@ class AppDb extends _$AppDb {
       // That column was later removed from the Drift schema, so generated INSERTs
       // no longer include it — triggering NOT NULL failures on legacy DBs.
       if (!e.message.contains('updated_at')) rethrow;
-      final ms = now.millisecondsSinceEpoch;
+      final seconds = now.millisecondsSinceEpoch ~/ 1000;
       await customStatement(
         'INSERT INTO project_decisions '
         '(id, project_id, title, ctx, decider, created_at, updated_at) '
         'VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [id, projectId, title, ctx, decider, ms, ms],
+        [id, projectId, title, ctx, decider, seconds, seconds],
       );
     }
     return id;

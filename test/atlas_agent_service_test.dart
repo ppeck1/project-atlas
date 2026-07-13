@@ -85,12 +85,16 @@ void main() {
         status: 'doing',
         priority: 'urgent',
         blockedReason: 'Waiting on scan',
+        readiness: 'review_needed',
       );
       final brief = await service.getProjectBrief('atlas');
 
       expect(brief, isNotNull);
       expect(brief!.status.status, 'needs_update');
       expect(brief.status.blockedWorkItems, 1);
+      expect(brief.status.blocksProgressWorkItems, 1);
+      expect(brief.status.needsAttention, isTrue);
+      expect((brief.status.toJson())['blocksProgressWorkItems'], 1);
       expect(brief.tags.single['name'], 'desktop');
       expect(brief.people.single['name'], 'Pat');
       expect(brief.risks.single['title'], 'Index drift');
@@ -640,7 +644,9 @@ Future<void> _insertProjectRegistry(
   required String localPath,
   required String gitRoot,
 }) async {
-  final now = DateTime(2026, 1, 1).millisecondsSinceEpoch;
+  final now =
+      DateTime(2026, 1, 1).millisecondsSinceEpoch ~/
+      Duration.millisecondsPerSecond;
   await db.customStatement(
     '''INSERT INTO project_registry (
        id, atlas_project_id, display_name, local_path, git_root,

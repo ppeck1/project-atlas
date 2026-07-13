@@ -7,9 +7,10 @@ import 'package:path/path.dart' as p;
 import 'mcp_connector_autostart_service.dart';
 
 const mcpDisclosurePreviewSchema =
-    'project_atlas.operator_disclosure_preview.v1';
+    'project_atlas.operator_disclosure_preview.v2';
 const _policySchema = 'project_atlas.remote_disclosure_policy.v1';
 const _projectionSchema = 'project_atlas.remote_projection.v1';
+const _policyMode = 'deny_by_default';
 const _policyDigestHeader = 'X-Project-Atlas-Policy-Digest';
 const _maxConfigBytes = 64 * 1024;
 const _maxPolicyBytes = 64 * 1024;
@@ -87,6 +88,8 @@ typedef McpPreviewJsonReader =
       Map<String, String> headers,
     );
 
+typedef McpLocalProjectIdsReader = Future<Set<String>> Function();
+
 class McpDisclosureProject {
   final String alias;
   final String label;
@@ -153,7 +156,14 @@ class McpDisclosurePreview {
   final String policyState;
   final String policySchema;
   final String? policyFingerprint;
+  final String policyMode;
   final List<McpDisclosureProject> approvedProjects;
+  final String inventoryState;
+  final int registeredProjects;
+  final int policyApprovedProjects;
+  final int remotelyVisibleProjects;
+  final int notAllowlistedProjects;
+  final int unresolvedOrRemoteIneligibleEntries;
   final String gatewayState;
   final String activeBinaryState;
   final String authMode;
@@ -177,7 +187,14 @@ class McpDisclosurePreview {
     required this.policyState,
     required this.policySchema,
     required this.policyFingerprint,
+    required this.policyMode,
     required this.approvedProjects,
+    required this.inventoryState,
+    required this.registeredProjects,
+    required this.policyApprovedProjects,
+    required this.remotelyVisibleProjects,
+    required this.notAllowlistedProjects,
+    required this.unresolvedOrRemoteIneligibleEntries,
     required this.gatewayState,
     required this.activeBinaryState,
     required this.authMode,
@@ -203,6 +220,13 @@ class McpDisclosurePreview {
     'policyState': policyState,
     'policySchema': policySchema,
     if (policyFingerprint != null) 'policyFingerprint': policyFingerprint,
+    'policyMode': policyMode,
+    'inventoryState': inventoryState,
+    'registeredProjects': registeredProjects,
+    'policyApprovedProjects': policyApprovedProjects,
+    'remotelyVisibleProjects': remotelyVisibleProjects,
+    'notAllowlistedProjects': notAllowlistedProjects,
+    'unresolvedOrRemoteIneligibleEntries': unresolvedOrRemoteIneligibleEntries,
     'approvedProjects': approvedProjects.map((item) => item.toJson()).toList(),
     'gateway': {
       'state': gatewayState,
@@ -237,7 +261,14 @@ class McpDisclosurePreview {
       policyState: policyState,
       policySchema: _policySchema,
       policyFingerprint: null,
+      policyMode: _policyMode,
       approvedProjects: const [],
+      inventoryState: 'not_checked',
+      registeredProjects: 0,
+      policyApprovedProjects: 0,
+      remotelyVisibleProjects: 0,
+      notAllowlistedProjects: 0,
+      unresolvedOrRemoteIneligibleEntries: 0,
       gatewayState: 'not_checked',
       activeBinaryState: 'not_checked',
       authMode: 'unavailable',
@@ -261,8 +292,31 @@ class McpDisclosurePreview {
 class _PolicySnapshot {
   final String digest;
   final List<McpDisclosureProject> projects;
+  final Set<String> localProjectIds;
 
-  const _PolicySnapshot({required this.digest, required this.projects});
+  const _PolicySnapshot({
+    required this.digest,
+    required this.projects,
+    required this.localProjectIds,
+  });
+}
+
+class _InventorySnapshot {
+  final String state;
+  final int registeredProjects;
+  final int policyApprovedProjects;
+  final int remotelyVisibleProjects;
+  final int notAllowlistedProjects;
+  final int unresolvedOrRemoteIneligibleEntries;
+
+  const _InventorySnapshot({
+    required this.state,
+    required this.registeredProjects,
+    required this.policyApprovedProjects,
+    required this.remotelyVisibleProjects,
+    required this.notAllowlistedProjects,
+    required this.unresolvedOrRemoteIneligibleEntries,
+  });
 }
 
 class _AuditSnapshot {
@@ -299,11 +353,13 @@ class McpDisclosurePreviewService {
   final Directory repoRoot;
   final File configFile;
   final McpPreviewJsonReader _jsonReader;
+  final McpLocalProjectIdsReader? _localProjectIdsReader;
 
   McpDisclosurePreviewService({
     Directory? repoRoot,
     File? configFile,
     McpPreviewJsonReader? jsonReader,
+    McpLocalProjectIdsReader? localProjectIdsReader,
   }) : repoRoot = repoRoot ?? Directory.current,
        configFile =
            configFile ??
@@ -314,7 +370,8 @@ class McpDisclosurePreviewService {
                'atlas_mcp_connector_autostart.json',
              ),
            ),
-       _jsonReader = jsonReader ?? _readJson;
+       _jsonReader = jsonReader ?? _readJson,
+       _localProjectIdsReader = localProjectIdsReader;
 
   Future<McpDisclosurePreview> inspect() async {
     if (!await configFile.exists()) {
@@ -385,6 +442,7 @@ class McpDisclosurePreviewService {
       );
     }
 
+    final inventory = await _inspectInventory(policy);
     final gateway = await _inspectGateway(config, policy.digest);
     final auditFile = File(
       p.join(
@@ -410,7 +468,9 @@ class McpDisclosurePreviewService {
         audit.state == 'unreadable' ||
         audit.malformed > 0;
     final overallState =
-        gateway.state == 'identity_mismatch' || auditNeedsAttention
+        gateway.state == 'identity_mismatch' ||
+            auditNeedsAttention ||
+            inventory.state == 'unreadable'
         ? 'attention'
         : 'unverified';
 
@@ -420,7 +480,15 @@ class McpDisclosurePreviewService {
       policyState: 'valid',
       policySchema: _policySchema,
       policyFingerprint: policy.digest.substring(0, 12),
+      policyMode: _policyMode,
       approvedProjects: policy.projects,
+      inventoryState: inventory.state,
+      registeredProjects: inventory.registeredProjects,
+      policyApprovedProjects: inventory.policyApprovedProjects,
+      remotelyVisibleProjects: inventory.remotelyVisibleProjects,
+      notAllowlistedProjects: inventory.notAllowlistedProjects,
+      unresolvedOrRemoteIneligibleEntries:
+          inventory.unresolvedOrRemoteIneligibleEntries,
       gatewayState: gateway.state,
       activeBinaryState: 'unverified',
       authMode: config.authMode,
@@ -438,6 +506,44 @@ class McpDisclosurePreviewService {
       recentAuditEvents: audit.events,
       contracts: _contracts(alias, label),
     );
+  }
+
+  Future<_InventorySnapshot> _inspectInventory(_PolicySnapshot policy) async {
+    final reader = _localProjectIdsReader;
+    if (reader == null) {
+      return _InventorySnapshot(
+        state: 'not_checked',
+        registeredProjects: 0,
+        policyApprovedProjects: policy.localProjectIds.length,
+        remotelyVisibleProjects: 0,
+        notAllowlistedProjects: 0,
+        unresolvedOrRemoteIneligibleEntries: 0,
+      );
+    }
+    try {
+      final registeredIds = Set<String>.unmodifiable(await reader());
+      final remotelyVisible = policy.localProjectIds
+          .where(registeredIds.contains)
+          .length;
+      return _InventorySnapshot(
+        state: 'readable',
+        registeredProjects: registeredIds.length,
+        policyApprovedProjects: policy.localProjectIds.length,
+        remotelyVisibleProjects: remotelyVisible,
+        notAllowlistedProjects: registeredIds.length - remotelyVisible,
+        unresolvedOrRemoteIneligibleEntries:
+            policy.localProjectIds.length - remotelyVisible,
+      );
+    } catch (_) {
+      return _InventorySnapshot(
+        state: 'unreadable',
+        registeredProjects: 0,
+        policyApprovedProjects: policy.localProjectIds.length,
+        remotelyVisibleProjects: 0,
+        notAllowlistedProjects: 0,
+        unresolvedOrRemoteIneligibleEntries: 0,
+      );
+    }
   }
 
   Future<_GatewaySnapshot> _inspectGateway(
@@ -753,6 +859,7 @@ class McpDisclosurePreviewService {
     return _PolicySnapshot(
       digest: sha256.convert(bytes).toString(),
       projects: List.unmodifiable(projects),
+      localProjectIds: Set.unmodifiable(localIds),
     );
   }
 

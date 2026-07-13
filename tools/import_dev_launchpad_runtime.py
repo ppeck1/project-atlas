@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sqlite3
 import time
 from pathlib import Path
@@ -75,7 +74,9 @@ def _load_apps(yaml_path: Path) -> list[dict[str, Any]]:
     return [app for app in apps if isinstance(app, dict)]
 
 
-def _profile_from_app(app: dict[str, Any], yaml_path: Path, now_ms: int) -> dict[str, Any]:
+def _profile_from_app(
+    app: dict[str, Any], yaml_path: Path, now_seconds: int
+) -> dict[str, Any]:
     return {
         "enabled": 1,
         "working_directory": _blank_to_none(app.get("path")),
@@ -92,16 +93,20 @@ def _profile_from_app(app: dict[str, Any], yaml_path: Path, now_ms: int) -> dict
         "capsule_source_path": str(DEFAULT_CAPSULE_PATH),
         "capsule_profile": "software_project",
         "import_source": str(yaml_path),
-        "last_imported_at": now_ms,
+        "last_imported_at": now_seconds,
     }
 
 
-def _backup_db(db_path: Path) -> Path:
+def _backup_db(con: sqlite3.Connection, db_path: Path) -> Path:
     backup_dir = Path.cwd() / ".project" / "db_backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
     backup_path = backup_dir / f"project_atlas_before_runtime_import_{stamp}.sqlite"
-    shutil.copy2(db_path, backup_path)
+    backup = sqlite3.connect(backup_path)
+    try:
+        con.backup(backup)
+    finally:
+        backup.close()
     return backup_path
 
 
@@ -129,7 +134,7 @@ def _verify_profiles(
     ]
     failures = 0
     for app, project, _action in matched:
-        expected = _profile_from_app(app, yaml_path, now_ms=0)
+        expected = _profile_from_app(app, yaml_path, now_seconds=0)
         row = con.execute(
             "SELECT * FROM project_runtime_profiles WHERE project_id = ?",
             (project["id"],),
@@ -156,7 +161,7 @@ def _verify_profiles(
 
 def import_runtime(yaml_path: Path, db_path: Path, apply: bool, verify: bool) -> int:
     apps = _load_apps(yaml_path)
-    now_ms = int(time.time() * 1000)
+    now_seconds = int(time.time())
     con = sqlite3.connect(db_path, timeout=30)
     con.row_factory = sqlite3.Row
     try:
@@ -200,19 +205,21 @@ def import_runtime(yaml_path: Path, db_path: Path, apply: bool, verify: bool) ->
             print("DRY_RUN|no database changes written")
             return 0
 
-        backup_path = _backup_db(db_path)
+        backup_path = _backup_db(con, db_path)
         print(f"BACKUP|{backup_path}")
 
         with con:
             for app, project, _action in matched:
-                profile = _profile_from_app(app, yaml_path, now_ms)
+                profile = _profile_from_app(app, yaml_path, now_seconds)
                 current = existing.get(project["id"])
                 profile_id = (
                     current["id"]
                     if current is not None
                     else f"runtime_{int(time.time() * 1000000)}"
                 )
-                created_at = current["created_at"] if current is not None else now_ms
+                created_at = (
+                    current["created_at"] if current is not None else now_seconds
+                )
                 con.execute(
                     """
                     INSERT INTO project_runtime_profiles (
@@ -253,7 +260,7 @@ def import_runtime(yaml_path: Path, db_path: Path, apply: bool, verify: bool) ->
                         "id": profile_id,
                         "project_id": project["id"],
                         "created_at": created_at,
-                        "updated_at": now_ms,
+                        "updated_at": now_seconds,
                     },
                 )
                 time.sleep(0.000001)

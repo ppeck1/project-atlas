@@ -302,6 +302,12 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
     });
   }
 
+  Future<Set<String>> _readMcpLocalProjectIds() async {
+    final state = AppStateScope.of(context);
+    final projects = await state.getProjectsFull();
+    return projects.map((project) => project.id).toSet();
+  }
+
   @override
   void dispose() {
     _tgTokenCtrl.dispose();
@@ -430,7 +436,9 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
         const Divider(color: _line),
         const SizedBox(height: 24),
 
-        const McpDisclosurePreviewPanel(),
+        McpDisclosurePreviewPanel(
+          localProjectIdsReader: _readMcpLocalProjectIds,
+        ),
         const SizedBox(height: 28),
         const Divider(color: _line),
         const SizedBox(height: 24),

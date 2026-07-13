@@ -34,6 +34,7 @@ except ModuleNotFoundError:
 try:
     from atlas_mcp_gateway import (
         DisclosureAuditLog,
+        McpGatewayHandler,
         StdioMcpClient,
         StdioOutputLimitError,
         filter_tools,
@@ -42,6 +43,7 @@ try:
 except ModuleNotFoundError:
     from tools.atlas_mcp_gateway import (
         DisclosureAuditLog,
+        McpGatewayHandler,
         StdioMcpClient,
         StdioOutputLimitError,
         filter_tools,
@@ -166,6 +168,13 @@ class RemotePolicyTest(unittest.TestCase):
         self.assertEqual(set(contract), {"description", "inputSchema"})
         self.assertNotIn("includeArchived", contract["inputSchema"]["properties"])
         self.assertFalse(contract["inputSchema"]["additionalProperties"])
+        self.assertIn("absence does not prove", contract["description"].lower())
+
+        workload_contract = remote_tool_contract("atlas.workload_snapshot")
+        self.assertIn(
+            "blocksProgressOnly",
+            workload_contract["inputSchema"]["properties"],
+        )
 
         projected = filter_tools(
             {
@@ -235,6 +244,22 @@ class RemotePolicyTest(unittest.TestCase):
             },
         )
         self.assertNotIn("PRIVATE", json.dumps(response))
+
+    def test_not_found_error_explains_remote_subset_without_counts(self) -> None:
+        response = McpGatewayHandler._remote_projection_error(
+            4, RemoteProjectionError("not_found")
+        )
+        data = response["error"]["data"]
+        self.assertEqual(
+            data,
+            {
+                "code": "not_found",
+                "scope": "operator_approved_subset",
+                "denyByDefault": True,
+                "absenceDoesNotProveUnregistered": True,
+            },
+        )
+        self.assertNotIn("hidden", json.dumps(data).lower())
 
     def test_stdio_runner_enforces_stdout_and_stderr_caps(self) -> None:
         commands = [
@@ -336,7 +361,15 @@ class RemotePolicyTest(unittest.TestCase):
         )
         projected = decode_projected(outcome.response)
         self.assertEqual(
-            set(projected), {"schema", "projects", "page"}
+            set(projected), {"schema", "projects", "page", "disclosure"}
+        )
+        self.assertEqual(
+            projected["disclosure"],
+            {
+                "scope": "operator_approved_subset",
+                "denyByDefault": True,
+                "absenceDoesNotProveUnregistered": True,
+            },
         )
         self.assertEqual(len(projected["projects"]), 1)
         project = projected["projects"][0]
@@ -413,6 +446,35 @@ class RemotePolicyTest(unittest.TestCase):
         encoded = json.dumps(projected)
         self.assertNotIn("abc123", encoded)
         self.assertNotIn("PRIVATE_STATUS_ACTION", encoded)
+        self.assertIs(projected["project"]["needsAttention"], True)
+
+    def test_freshness_does_not_treat_no_action_sentence_as_required(self) -> None:
+        payload = {
+            "id": "local-approved",
+            "status": "active",
+            "phase": "build",
+            "priority": "normal",
+            "blockedWorkItems": 0,
+            "blocksProgressWorkItems": 0,
+            "freshness": {
+                "status": "current",
+                "confidence": "high",
+                "staleReasons": [],
+                "attentionReasons": [],
+                "actionRequiredBeforePlanning": (
+                    "No freshness preflight action is required."
+                ),
+            },
+        }
+        outcome = project_remote_tool_response(
+            wire(payload),
+            RemoteCallContext("get_project_status", project=self.approved),
+            self.policy,
+            max_response_bytes=65_536,
+        )
+        project = decode_projected(outcome.response)["project"]
+        self.assertIs(project["freshness"]["planningActionRequired"], False)
+        self.assertIs(project["needsAttention"], False)
 
     def test_workload_projection_recomputes_approved_counts_and_omits_text(self) -> None:
         approved_card = {
@@ -429,20 +491,28 @@ class RemotePolicyTest(unittest.TestCase):
             "verificationNeeded": "tests",
             "priority": "high",
             "status": "next",
+            "blocksProgress": False,
             "stale": False,
             "staleReasons": [],
             "originKind": "manual",
             "notes": "token=PRIVATE_TOKEN",
         }
+        review_blocker = dict(
+            approved_card,
+            id="private-review-id",
+            readiness="review_needed",
+            boardGroup="review_needed",
+            blocksProgress=True,
+        )
         hidden_card = dict(approved_card, projectId="hidden-local", title="Hidden")
         payload = {
             "schema": "atlas.workload_snapshot.v1",
             "generatedAt": "2026-07-09T22:00:00Z",
             "counts": {"total": 999, "ready": 999},
-            "cards": [approved_card, hidden_card],
+            "cards": [approved_card, review_blocker, hidden_card],
             "executionCandidates": [approved_card, hidden_card],
             "planningCandidateItems": [],
-            "reviewNeededItems": [],
+            "reviewNeededItems": [review_blocker],
             "suggestedNextItems": [approved_card],
         }
         context = RemoteCallContext(
@@ -454,9 +524,15 @@ class RemotePolicyTest(unittest.TestCase):
             wire(payload), context, self.policy, max_response_bytes=65_536
         )
         projected = decode_projected(outcome.response)
-        self.assertEqual(projected["counts"]["total"], 1)
+        self.assertEqual(projected["counts"]["total"], 2)
         self.assertEqual(projected["counts"]["ready"], 1)
+        self.assertEqual(projected["counts"]["blocked"], 0)
+        self.assertEqual(projected["counts"]["blockedBoardGroup"], 0)
+        self.assertEqual(projected["counts"]["blocksProgress"], 1)
         self.assertEqual(len(projected["executionCandidates"]), 1)
+        self.assertIs(
+            projected["reviewNeededItems"][0]["blocksProgress"], True
+        )
         encoded = json.dumps(projected)
         for forbidden in (
             "private-item-id",
@@ -482,6 +558,7 @@ class RemotePolicyTest(unittest.TestCase):
             "verificationNeeded": "tests",
             "priority": "high",
             "status": "next",
+            "blocksProgress": False,
             "stale": False,
             "staleReasons": [],
             "originKind": "manual",

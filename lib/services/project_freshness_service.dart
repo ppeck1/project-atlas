@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../db/app_db.dart';
+import '../shared/models/project_metadata.dart' as project_meta;
 import 'project_identity_resolver.dart';
 
 class AtlasProjectFreshnessSnapshot {
@@ -451,5 +452,5 @@ class ProjectFreshnessService {
   }
 
   static bool _needsAttentionStatus(String status) =>
-      {'needs_review', 'needs_update', 'stale'}.contains(status);
+      project_meta.isAttentionProjectStatus(status);
 }

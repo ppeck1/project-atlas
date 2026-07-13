@@ -48,9 +48,9 @@ void main() {
   });
 
   test(
-    'schema v20 creates local operations, runtime, git remote, enrichment, and queue tables',
+    'schema v21 creates local operations, runtime, git remote, enrichment, and queue tables',
     () async {
-      expect(db.schemaVersion, 20);
+      expect(db.schemaVersion, 21);
 
       final tables = await db
           .customSelect(
@@ -2038,7 +2038,9 @@ Pressure flakes a useful edge.
         'Duplicate Project',
         DateTime(2026),
       );
-      final now = DateTime(2026, 6, 29).millisecondsSinceEpoch;
+      final now =
+          DateTime(2026, 6, 29).millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
       for (final entry in [
         ('registry_duplicate_1', 'Duplicate One', first.path),
         ('registry_duplicate_2', 'Duplicate Two', second.path),
@@ -2345,7 +2347,9 @@ Pressure flakes a useful edge.
       final child = Directory(p.join(outer.path, 'public_repo'))
         ..createSync(recursive: true);
       await _initCleanGitRepo(child);
-      final now = DateTime.now().millisecondsSinceEpoch;
+      final now =
+          DateTime.now().millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
       await _insertProjectRegistry(
         db,
         id: 'outer_registry',
@@ -2353,7 +2357,7 @@ Pressure flakes a useful edge.
         displayName: 'Outer Project',
         localPath: outer.path,
         gitRoot: null,
-        updatedAtMillis: now + 1000,
+        updatedAtSeconds: now + 1,
       );
       await _insertProjectRegistry(
         db,
@@ -2362,7 +2366,7 @@ Pressure flakes a useful edge.
         displayName: 'Public Repo',
         localPath: child.path,
         gitRoot: child.path,
-        updatedAtMillis: now,
+        updatedAtSeconds: now,
       );
 
       final preview = await state.previewProjectBundleExport(
@@ -2410,7 +2414,9 @@ Pressure flakes a useful edge.
         displayName: 'Outer Project',
         localPath: outer.path,
         gitRoot: null,
-        updatedAtMillis: DateTime.now().millisecondsSinceEpoch,
+        updatedAtSeconds:
+            DateTime.now().millisecondsSinceEpoch ~/
+            Duration.millisecondsPerSecond,
       );
       await db.upsertProjectGitRemoteStatus(
         projectId: projectId,
@@ -2674,7 +2680,7 @@ Future<void> _insertProjectRegistry(
   required String displayName,
   required String localPath,
   required String? gitRoot,
-  required int updatedAtMillis,
+  required int updatedAtSeconds,
 }) async {
   await db.customStatement(
     '''INSERT INTO project_registry (
@@ -2691,9 +2697,9 @@ Future<void> _insertProjectRegistry(
       'software',
       'linked',
       null,
-      updatedAtMillis,
-      updatedAtMillis,
-      updatedAtMillis,
+      updatedAtSeconds,
+      updatedAtSeconds,
+      updatedAtSeconds,
     ],
   );
 }

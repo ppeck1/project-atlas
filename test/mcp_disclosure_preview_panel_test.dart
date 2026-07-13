@@ -36,6 +36,11 @@ void main() {
     expect(find.text('Gateway: metadata matched'), findsOneWidget);
     expect(find.textContaining('atlas.read'), findsOneWidget);
     expect(find.textContaining('abc123def456'), findsOneWidget);
+    expect(find.text('deny by default'), findsOneWidget);
+    expect(find.text('49 registered'), findsOneWidget);
+    expect(find.text('2 policy-approved - 2 visible'), findsOneWidget);
+    expect(find.text('47 not allowlisted'), findsOneWidget);
+    expect(find.text('0 unresolved or remote-ineligible'), findsOneWidget);
     for (final tool in mcpRemoteTools) {
       expect(find.text(tool), findsOneWidget);
     }
@@ -68,9 +73,20 @@ McpDisclosurePreview _preview() => McpDisclosurePreview(
   policyState: 'valid',
   policySchema: 'project_atlas.remote_disclosure_policy.v1',
   policyFingerprint: 'abc123def456',
+  policyMode: 'deny_by_default',
   approvedProjects: const [
     McpDisclosureProject(alias: 'project-atlas', label: 'Project Atlas'),
+    McpDisclosureProject(
+      alias: 'project-capsule',
+      label: 'New Project Capsule Template',
+    ),
   ],
+  inventoryState: 'readable',
+  registeredProjects: 49,
+  policyApprovedProjects: 2,
+  remotelyVisibleProjects: 2,
+  notAllowlistedProjects: 47,
+  unresolvedOrRemoteIneligibleEntries: 0,
   gatewayState: 'metadata_matched',
   activeBinaryState: 'unverified',
   authMode: 'oauth',
