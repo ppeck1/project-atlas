@@ -8,8 +8,13 @@ typedef McpDisclosurePreviewLoader = Future<McpDisclosurePreview> Function();
 
 class McpDisclosurePreviewPanel extends StatefulWidget {
   final McpDisclosurePreviewLoader? loader;
+  final McpLocalProjectIdsReader? localProjectIdsReader;
 
-  const McpDisclosurePreviewPanel({super.key, this.loader});
+  const McpDisclosurePreviewPanel({
+    super.key,
+    this.loader,
+    this.localProjectIdsReader,
+  });
 
   @override
   State<McpDisclosurePreviewPanel> createState() =>
@@ -30,8 +35,12 @@ class _McpDisclosurePreviewPanelState extends State<McpDisclosurePreviewPanel> {
     setState(() => _loading = true);
     McpDisclosurePreview preview;
     try {
-      preview =
-          await (widget.loader ?? McpDisclosurePreviewService().inspect)();
+      final loader = widget.loader;
+      preview = loader != null
+          ? await loader()
+          : await McpDisclosurePreviewService(
+              localProjectIdsReader: widget.localProjectIdsReader,
+            ).inspect();
     } catch (_) {
       preview = McpDisclosurePreview.unavailable(
         overallState: 'attention',
@@ -118,6 +127,19 @@ class _McpDisclosurePreviewPanelState extends State<McpDisclosurePreviewPanel> {
               ),
               const SizedBox(height: 14),
               _FactRows(preview: preview),
+              const SizedBox(height: 16),
+              const Text(
+                'Local inventory versus remote disclosure',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'A project can be registered locally but absent remotely because '
+                'the connector is deny-by-default.',
+                style: TextStyle(fontSize: 12, color: Colors.white60),
+              ),
+              const SizedBox(height: 8),
+              _VisibilityFacts(preview: preview),
               const SizedBox(height: 16),
               Text(
                 'Approved remote projects (${preview.approvedProjects.length})',
@@ -245,6 +267,45 @@ class _McpDisclosurePreviewPanelState extends State<McpDisclosurePreviewPanel> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _VisibilityFacts extends StatelessWidget {
+  final McpDisclosurePreview preview;
+
+  const _VisibilityFacts({required this.preview});
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 24,
+      runSpacing: 8,
+      children: [
+        _Fact(label: 'Disclosure policy', value: _words(preview.policyMode)),
+        _Fact(
+          label: 'Local inventory',
+          value: preview.inventoryState == 'readable'
+              ? '${preview.registeredProjects} registered'
+              : _words(preview.inventoryState),
+        ),
+        _Fact(
+          label: 'Remote visibility',
+          value:
+              '${preview.policyApprovedProjects} policy-approved - '
+              '${preview.remotelyVisibleProjects} visible',
+        ),
+        _Fact(
+          label: 'Policy exclusions',
+          value: '${preview.notAllowlistedProjects} not allowlisted',
+        ),
+        _Fact(
+          label: 'Unresolved entries',
+          value:
+              '${preview.unresolvedOrRemoteIneligibleEntries} unresolved or '
+              'remote-ineligible',
+        ),
+      ],
     );
   }
 }

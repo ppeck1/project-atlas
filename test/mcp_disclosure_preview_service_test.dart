@@ -18,6 +18,11 @@ void main() {
       final preview = await McpDisclosurePreviewService(
         repoRoot: fixture.root,
         configFile: fixture.configFile,
+        localProjectIdsReader: () async => const {
+          _Fixture.localId,
+          'local-hidden-project-id-one',
+          'local-hidden-project-id-two',
+        },
         jsonReader: (uri, headers) async {
           calls.add(uri);
           if (uri.path == '/.well-known/project-atlas-mcp') {
@@ -39,12 +44,21 @@ void main() {
       expect(preview.contracts.map((item) => item.tool), mcpRemoteTools);
       expect(preview.approvedProjects.single.alias, 'project-atlas');
       expect(preview.approvedProjects.single.label, 'Project Atlas');
+      expect(preview.policyMode, 'deny_by_default');
+      expect(preview.inventoryState, 'readable');
+      expect(preview.registeredProjects, 3);
+      expect(preview.policyApprovedProjects, 1);
+      expect(preview.remotelyVisibleProjects, 1);
+      expect(preview.notAllowlistedProjects, 2);
+      expect(preview.unresolvedOrRemoteIneligibleEntries, 0);
       expect(preview.recentAuditEvents.single.outcome, 'ok');
       expect(calls, hasLength(2));
 
       final serialized = jsonEncode(preview.toJson());
       for (final forbidden in [
         _Fixture.localId,
+        'local-hidden-project-id-one',
+        'local-hidden-project-id-two',
         _Fixture.secretPath,
         'https://tenant-sentinel.example/',
         'https://resource-sentinel.example/mcp',
@@ -58,6 +72,50 @@ void main() {
       expect(serialized, contains(policyDigest.substring(0, 12)));
     },
   );
+
+  test(
+    'reports unresolved policy entries without exposing local IDs',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+
+      final preview = await McpDisclosurePreviewService(
+        repoRoot: fixture.root,
+        configFile: fixture.configFile,
+        localProjectIdsReader: () async => const {
+          'registered-private-project-id',
+        },
+        jsonReader: (uri, headers) async =>
+            uri.path.contains('oauth') ? _oauthMetadata() : _gatewayMetadata(),
+      ).inspect();
+
+      expect(preview.registeredProjects, 1);
+      expect(preview.policyApprovedProjects, 1);
+      expect(preview.remotelyVisibleProjects, 0);
+      expect(preview.notAllowlistedProjects, 1);
+      expect(preview.unresolvedOrRemoteIneligibleEntries, 1);
+      final serialized = jsonEncode(preview.toJson());
+      expect(serialized, isNot(contains(_Fixture.localId)));
+      expect(serialized, isNot(contains('registered-private-project-id')));
+    },
+  );
+
+  test('marks an unreadable local inventory for operator attention', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+
+    final preview = await McpDisclosurePreviewService(
+      repoRoot: fixture.root,
+      configFile: fixture.configFile,
+      localProjectIdsReader: () => throw StateError('database unavailable'),
+      jsonReader: (uri, headers) async =>
+          uri.path.contains('oauth') ? _oauthMetadata() : _gatewayMetadata(),
+    ).inspect();
+
+    expect(preview.overallState, 'attention');
+    expect(preview.inventoryState, 'unreadable');
+    expect(preview.policyApprovedProjects, 1);
+  });
 
   test('rejects a non-loopback config without issuing a request', () async {
     final fixture = await _Fixture.create(host: 'attacker.example');

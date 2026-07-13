@@ -103,7 +103,11 @@ void main() {
         title: 'Review generated handoff',
         priority: 'normal',
       );
-      await db.updateWorkItem(id: reviewId, readiness: 'review_needed');
+      await db.updateWorkItem(
+        id: reviewId,
+        readiness: 'review_needed',
+        blockedReason: 'Needs PR approval.',
+      );
       final queueId = await db.enqueueLlmTask(
         projectId: 'atlas',
         workItemId: readyId,
@@ -126,13 +130,28 @@ void main() {
         filters: const WorkloadFilters(blockedOnly: true),
         now: now,
       );
+      final blocksProgressOnly = await state.getWorkloadSnapshot(
+        filters: const WorkloadFilters(blocksProgressOnly: true),
+        now: now,
+      );
 
       expect(snapshot.readyTasks, 1);
       expect(snapshot.blockedTasks, 1);
+      expect(snapshot.blockedBoardGroupTasks, 1);
+      expect(snapshot.blocksProgressTasks, 2);
       expect(snapshot.reviewNeededTasks, 1);
       expect(snapshot.staleTasks, 5);
       expect(codexOnly.cards.map((card) => card.id), [readyId]);
       expect(blockedOnly.cards.map((card) => card.id), [blockedId]);
+      expect(
+        blocksProgressOnly.cards.map((card) => card.id),
+        containsAll([blockedId, reviewId]),
+      );
+      final reviewCard = snapshot.cards.singleWhere(
+        (card) => card.id == reviewId,
+      );
+      expect(reviewCard.boardGroup, 'review_needed');
+      expect(reviewCard.blocksProgress, isTrue);
       expect(snapshot.suggestedNextItems.first.id, readyId);
       expect(snapshot.suggestedNextItems.map((card) => card.id), [readyId]);
       expect(
@@ -140,6 +159,10 @@ void main() {
         containsAll([decisionId, queueId]),
       );
       final json = snapshot.toJson();
+      final counts = json['counts'] as Map;
+      expect(counts['blocked'], 1);
+      expect(counts['blockedBoardGroup'], 1);
+      expect(counts['blocksProgress'], 2);
       expect(
         ((json['executionCandidates'] as List).first as Map)['id'],
         readyId,

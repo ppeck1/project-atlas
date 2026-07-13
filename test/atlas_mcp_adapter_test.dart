@@ -576,7 +576,9 @@ Future<void> _insertProjectRegistry(
   required String localPath,
   required String gitRoot,
 }) async {
-  final now = DateTime(2026, 1, 1).millisecondsSinceEpoch;
+  final now =
+      DateTime(2026, 1, 1).millisecondsSinceEpoch ~/
+      Duration.millisecondsPerSecond;
   await db.customStatement(
     '''INSERT INTO project_registry (
        id, atlas_project_id, display_name, local_path, git_root,

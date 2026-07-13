@@ -2,7 +2,9 @@ import argparse
 import json
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 DEFAULT_OWNER_NAME = "Project Owner"
@@ -38,8 +40,9 @@ OWNER_CONTACTS = [
 _last_micros = 0
 
 
-def now_ms() -> int:
-    return int(datetime.now(timezone.utc).timestamp() * 1000)
+def epoch_seconds() -> int:
+    """Return the storage unit required by Drift DateTime columns."""
+    return int(datetime.now(timezone.utc).timestamp())
 
 
 def micros_id(prefix: str) -> str:
@@ -72,7 +75,7 @@ def upsert_contact(conn: sqlite3.Connection, contact_id: str, name: str, title: 
         "SELECT id, title, notes, created_at FROM contacts WHERE id = ? OR lower(name) = lower(?) LIMIT 1",
         (contact_id, name),
     ).fetchone()
-    current_ms = now_ms()
+    current_seconds = epoch_seconds()
     if existing:
         existing_id, existing_title, existing_notes, created_at = existing
         merged_notes = clean(existing_notes)
@@ -84,7 +87,13 @@ def upsert_contact(conn: sqlite3.Connection, contact_id: str, name: str, title: 
             SET name = ?, title = ?, notes = ?, updated_at = ?
             WHERE id = ?
             """,
-            (name, clean(existing_title) or title, merged_notes, current_ms, existing_id),
+            (
+                name,
+                clean(existing_title) or title,
+                merged_notes,
+                current_seconds,
+                existing_id,
+            ),
         )
         return existing_id
     conn.execute(
@@ -95,7 +104,7 @@ def upsert_contact(conn: sqlite3.Connection, contact_id: str, name: str, title: 
         )
         VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, ?)
         """,
-        (contact_id, name, title, notes, current_ms, current_ms),
+        (contact_id, name, title, notes, current_seconds, current_seconds),
     )
     return contact_id
 
@@ -120,7 +129,7 @@ def dedupe_contact_name(conn: sqlite3.Connection, name: str, preferred_id: str) 
             merged_notes = f"{merged_notes}\n\n{extra}" if merged_notes else extra
     conn.execute(
         "UPDATE contacts SET title = COALESCE(title, ?), notes = ?, updated_at = ? WHERE id = ?",
-        (clean(keep_title), merged_notes, now_ms(), keep_id),
+        (clean(keep_title), merged_notes, epoch_seconds(), keep_id),
     )
     for duplicate_id, _title, _notes in rows[1:]:
         conn.execute("DELETE FROM contacts WHERE id = ?", (duplicate_id,))
@@ -144,7 +153,7 @@ def visible_projects(conn: sqlite3.Connection):
 def log_event(conn: sqlite3.Connection, area: str, action: str, entity_type=None, entity_id=None, output=None):
     columns = table_columns(conn, "event_log")
     event_id = micros_id("event")
-    timestamp = now_ms()
+    timestamp = epoch_seconds()
     base = {
         "id": event_id,
         "timestamp": timestamp,
@@ -168,8 +177,30 @@ def log_event(conn: sqlite3.Connection, area: str, action: str, entity_type=None
     )
 
 
-def apply(db_path: str):
-    conn = sqlite3.connect(db_path)
+def _online_backup(conn: sqlite3.Connection, db_path: Path) -> Path:
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    backup_path = db_path.with_name(
+        f"{db_path.stem}.before_owner_continuity_{stamp}{db_path.suffix}"
+    )
+    backup = sqlite3.connect(backup_path)
+    try:
+        conn.backup(backup)
+    finally:
+        backup.close()
+    return backup_path
+
+
+def apply(db_path: str, *, write: bool = True):
+    path = Path(db_path)
+    source = sqlite3.connect(path)
+    backup_path = None
+    if write:
+        conn = source
+        backup_path = _online_backup(conn, path)
+    else:
+        conn = sqlite3.connect(":memory:")
+        source.backup(conn)
+        source.close()
     try:
         conn.execute("PRAGMA busy_timeout = 30000")
         conn.execute("PRAGMA foreign_keys = ON")
@@ -252,7 +283,14 @@ def apply(db_path: str):
                         INSERT INTO project_people (id, project_id, name, role, authority, created_at)
                         VALUES (?, ?, ?, ?, ?, ?)
                         """,
-                        (micros_id("person"), project_id, DEFAULT_OWNER_NAME, "Owner", "Accountable", now_ms()),
+                        (
+                            micros_id("person"),
+                            project_id,
+                            DEFAULT_OWNER_NAME,
+                            "Owner",
+                            "Accountable",
+                            epoch_seconds(),
+                        ),
                     )
                     people_added += 1
                     log_event(
@@ -280,6 +318,8 @@ def apply(db_path: str):
                         people_updated += 1
 
             result = {
+                "dryRun": not write,
+                "backup": str(backup_path) if backup_path else None,
                 "contactsSeeded": len(seeded),
                 "projectsConsidered": len(projects),
                 "projectOwnersUpdated": owners_updated,
@@ -303,8 +343,13 @@ def apply(db_path: str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("db_path")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write after creating an online SQLite backup (default: dry run).",
+    )
     args = parser.parse_args()
-    print(json.dumps(apply(args.db_path), indent=2))
+    print(json.dumps(apply(args.db_path, write=args.apply), indent=2))
 
 
 if __name__ == "__main__":

@@ -651,10 +651,10 @@ class _FiltersBar extends StatelessWidget {
               ),
             ),
             FilterChip(
-              label: const Text('Blocked'),
-              selected: filters.blockedOnly,
+              label: const Text('Blocks progress'),
+              selected: filters.blocksProgressOnly,
               onSelected: (value) =>
-                  onChanged(filters.copyWith(blockedOnly: value)),
+                  onChanged(filters.copyWith(blocksProgressOnly: value)),
             ),
             FilterChip(
               label: const Text('Review'),
@@ -700,7 +700,14 @@ class _SnapshotPanel extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.start,
         children: [
           _SnapshotMetric(label: 'Ready', value: snapshot.readyTasks),
-          _SnapshotMetric(label: 'Blocked', value: snapshot.blockedTasks),
+          _SnapshotMetric(
+            label: 'Blocked group',
+            value: snapshot.blockedBoardGroupTasks,
+          ),
+          _SnapshotMetric(
+            label: 'Blocks progress',
+            value: snapshot.blocksProgressTasks,
+          ),
           _SnapshotMetric(label: 'Review', value: snapshot.reviewNeededTasks),
           _SnapshotMetric(label: 'Stale', value: snapshot.staleTasks),
           _Breakdown(label: 'Actor', values: snapshot.tasksByActor),
@@ -1009,6 +1016,7 @@ class _WorkloadCardTile extends StatelessWidget {
                   _ChipText(card.verificationNeeded),
                   _ChipText(card.priority),
                   _ChipText(card.status),
+                  if (card.blocksProgress) const _ChipText('blocks progress'),
                   if (card.owner != null) _ChipText(card.owner!),
                   if (card.dueAt != null)
                     _ChipText('${card.dueAt!.month}/${card.dueAt!.day}'),

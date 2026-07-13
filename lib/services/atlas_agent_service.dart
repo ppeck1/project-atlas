@@ -50,9 +50,9 @@ class AtlasProjectStatus {
     required this.freshness,
   });
 
-  bool get needsAttention =>
-      AtlasAgentService.attentionProjectStatuses.contains(status) ||
-      blockedWorkItems > 0;
+  int get blocksProgressWorkItems => blockedWorkItems;
+
+  bool get needsAttention => freshness.attentionReasons.isNotEmpty;
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -65,6 +65,7 @@ class AtlasProjectStatus {
     'createdAt': createdAt.toIso8601String(),
     'activeWorkItems': activeWorkItems,
     'blockedWorkItems': blockedWorkItems,
+    'blocksProgressWorkItems': blocksProgressWorkItems,
     'documents': documents,
     'media': media,
     'risks': risks,
@@ -678,7 +679,7 @@ class AtlasAgentService {
         'freshnessReasons': freshness.staleReasons,
         'actionRequiredBeforePlanning': freshness.actionRequiredBeforePlanning,
         'blockedOrDeferredItems': workload.cards
-            .where((card) => card.isBlocked)
+            .where((card) => card.blocksProgress)
             .take(5)
             .map(_planningCardDigest)
             .toList(growable: false),
@@ -690,7 +691,7 @@ class AtlasAgentService {
             .map(_planningCardDigest)
             .toList(growable: false),
         'blockedItems': workload.cards
-            .where((card) => card.isBlocked)
+            .where((card) => card.blocksProgress)
             .take(5)
             .map(_planningCardDigest)
             .toList(growable: false),
@@ -1695,7 +1696,13 @@ class AtlasAgentService {
       project.id,
     );
     final blockedWorkItems = activeItems
-        .where((item) => _clean(item.blockedReason) != null)
+        .where(
+          (item) => workloadBlocksProgress(
+            readiness: item.readiness,
+            status: item.status,
+            blockerReason: item.blockedReason,
+          ),
+        )
         .length;
     final freshness = const ProjectFreshnessService().build(
       project: project,
@@ -2000,6 +2007,7 @@ class AtlasAgentService {
     'verificationNeeded': card.verificationNeeded,
     'priority': card.priority,
     'status': card.status,
+    'blocksProgress': card.blocksProgress,
     'nextAction': _planningSafeString(card.nextAction),
     'blockerReason': _planningSafeString(card.blockerReason),
     'planningNotes': _planningSafeString(card.planningNotes),
