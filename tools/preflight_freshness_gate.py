@@ -1,7 +1,7 @@
 """Project Atlas preflight freshness gate.
 
 Checks the local checkout, public GitHub main, latest CI, portfolio docs, and
-synthetic README screenshots before release work begins.
+real application README screenshots before release work begins.
 The gate is intentionally fail-closed: missing evidence is a blocked result,
 not a model assertion.
 """
@@ -19,18 +19,19 @@ from typing import Any
 
 REQUIRED_DOCS = (
     "README.md",
+    "HANDOFF.md",
     "SECURITY.md",
     "docs/ARCHITECTURE.md",
     "docs/DATA_MODEL.md",
     "docs/MCP_SECURITY_MODEL.md",
+    "docs/VARIABLE_MATRIX.md",
 )
 
 README_SCREENSHOTS = (
-    "docs/screenshots/today.png",
-    "docs/screenshots/projects.png",
-    "docs/screenshots/operations.png",
-    "docs/screenshots/library.png",
-    "docs/screenshots/settings.png",
+    "docs/screenshots/today.jpg",
+    "docs/screenshots/projects.jpg",
+    "docs/screenshots/workboard.jpg",
+    "docs/screenshots/library.jpg",
 )
 
 @dataclass(frozen=True)
