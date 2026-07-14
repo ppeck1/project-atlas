@@ -234,7 +234,7 @@ void main() {
         confidence: 95,
         branch: 'main',
         dirtyCount: 0,
-        remoteUrl: 'git@example.com:owner/private-redaction-fixture.git',
+        remoteUrl: 'git@example.invalid:owner/private-redaction-fixture.git',
         markerFilesJson: '[]',
         warningsJson: '[]',
         rawJson: jsonEncode({
@@ -343,7 +343,7 @@ void main() {
       expect(encodedPlanning, isNot(contains(r'C:\')));
       expect(encodedPlanning, isNot(contains('abc123456789')));
       expect(encodedPlanning, isNot(contains('private-redaction-fixture')));
-      expect(encodedPlanning, isNot(contains('git@example.com')));
+      expect(encodedPlanning, isNot(contains('git@example.invalid')));
       expect(encodedPlanning, contains('[redacted:path]'));
       expect(encodedPlanning, contains('[redacted:secret]'));
       expect(suggestions.isError, isFalse);

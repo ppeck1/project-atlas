@@ -673,6 +673,16 @@ class AppState extends ChangeNotifier {
   }) : _githubArchiveFetcher =
            githubArchiveFetcher ?? _downloadPublicGithubArchive {
     _watchProjectAiSummarySettings();
+    unawaited(
+      _migrateRuntimeManifestPathSetting().catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        debugPrint('[Atlas] runtime manifest setting migration failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+        return null;
+      }),
+    );
     _activeProjectSub = db.watchActiveProject().listen(
       (p) {
         _activeProject = p;
@@ -1512,7 +1522,7 @@ class AppState extends ChangeNotifier {
 
   Future<ProjectRuntimeDefaultsSettings>
   loadProjectRuntimeDefaultsSettings() async {
-    final yamlPath = await getSetting(AppDb.kProjectRuntimeDefaultManifestPath);
+    final yamlPath = await _migrateRuntimeManifestPathSetting();
     final capsuleEnabled = await getSetting(
       AppDb.kProjectRuntimeDefaultCapsuleEnabled,
     );
@@ -1532,6 +1542,12 @@ class AppState extends ChangeNotifier {
       capsuleSourcePath:
           _metaString(capsuleSourcePath) ?? defaultProjectProtocolPath,
       capsuleProfile: _metaString(capsuleProfile) ?? 'software_project',
+    );
+  }
+
+  Future<String?> _migrateRuntimeManifestPathSetting() async {
+    return _metaString(
+      await db.migrateLegacyRuntimeManifestPathIfUnambiguous(),
     );
   }
 
@@ -4352,7 +4368,7 @@ class AppState extends ChangeNotifier {
             'unchangedProjects': identityResult.unchanged,
             'skippedProjects': identityResult.skipped,
             'sources': [
-              '.project/runtime_manifest.json',
+              'linked project metadata manifest',
               'CURRENT_STATE.md',
               'README.md',
               'local git observation',

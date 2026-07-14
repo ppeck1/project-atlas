@@ -65,12 +65,12 @@ const _queuePlanningColumns = <String>[
 ];
 
 void main() {
-  const sourcePath = String.fromEnvironment('ATLAS_SCHEMA20_SOURCE_DB');
-  const evidencePath = String.fromEnvironment('ATLAS_SCHEMA20_EVIDENCE_PATH');
+  const sourcePath = String.fromEnvironment('ATLAS_SCHEMA21_SOURCE_DB');
+  const evidencePath = String.fromEnvironment('ATLAS_SCHEMA21_EVIDENCE_PATH');
   const shouldRun = sourcePath != '';
 
   test(
-    'real v1.3 schema 19 database migrates to schema 20',
+    'real v1.3 schema 19 database migrates to schema 21',
     () async {
       final source = File(sourcePath);
       expect(source.existsSync(), isTrue, reason: source.path);
@@ -80,8 +80,8 @@ void main() {
           : File(evidencePath);
       final workDir = Directory(
         evidenceFile == null
-            ? p.join(Directory.systemTemp.path, 'atlas_schema20_migration')
-            : p.join(evidenceFile.parent.path, 'schema20_migration_work'),
+            ? p.join(Directory.systemTemp.path, 'atlas_schema21_migration')
+            : p.join(evidenceFile.parent.path, 'schema21_migration_work'),
       )..createSync(recursive: true);
       evidenceFile?.parent.createSync(recursive: true);
 
@@ -91,16 +91,16 @@ void main() {
       );
       final copyPath = p.join(
         workDir.path,
-        '${p.basenameWithoutExtension(source.path)}_schema20_$stamp.sqlite',
+        '${p.basenameWithoutExtension(source.path)}_schema21_$stamp.sqlite',
       );
       // This test is normally skipped; progress prints make explicit release
       // runs diagnosable for large private DB copies.
       // ignore: avoid_print
-      print('schema20 checkpoint: copying ${source.path}');
+      print('schema21 checkpoint: copying ${source.path}');
       await source.copy(copyPath);
 
       // ignore: avoid_print
-      print('schema20 checkpoint: inspecting schema 19 copy');
+      print('schema21 checkpoint: inspecting schema 19 copy');
       final before = _inspectSqlite(copyPath);
       expect(before.userVersion, 19);
       expect(
@@ -109,7 +109,7 @@ void main() {
       );
 
       // ignore: avoid_print
-      print('schema20 checkpoint: opening copy through AppDb migration');
+      print('schema21 checkpoint: opening copy through AppDb migration');
       final migrated = AppDb.withExecutor(NativeDatabase(File(copyPath)));
       try {
         await migrated.customSelect('SELECT 1').get();
@@ -118,7 +118,7 @@ void main() {
       }
 
       // ignore: avoid_print
-      print('schema20 checkpoint: inspecting migrated schema 20 copy');
+      print('schema21 checkpoint: inspecting migrated schema 21 copy');
       final after = _inspectSqlite(copyPath);
       final rowCountsPreserved = <String, bool>{};
       for (final table in _trackedTables) {
@@ -128,7 +128,7 @@ void main() {
       }
 
       final evidence = <String, Object?>{
-        'schema': 'project_atlas_schema20_migration_checkpoint.v1',
+        'schema': 'project_atlas_schema21_migration_checkpoint.v1',
         'generatedAt': DateTime.now().toUtc().toIso8601String(),
         'source': _fileFacts(source),
         'migratedCopy': _fileFacts(File(copyPath)),
@@ -136,7 +136,7 @@ void main() {
         'after': after.toJson(),
         'checks': {
           'sourceUserVersionIs19': before.userVersion == 19,
-          'migratedUserVersionIs20': after.userVersion == 20,
+          'migratedUserVersionIs21': after.userVersion == 21,
           'workItemPlanningColumnsPresent': after.hasColumns(
             'work_items',
             _workItemPlanningColumns,
@@ -159,14 +159,14 @@ void main() {
         );
       }
 
-      expect(after.userVersion, 20);
+      expect(after.userVersion, 21);
       expect(after.hasColumns('work_items', _workItemPlanningColumns), isTrue);
       expect(after.hasColumns('llm_task_queue', _queuePlanningColumns), isTrue);
       expect(rowCountsPreserved.values, everyElement(isTrue));
     },
     skip: shouldRun
         ? false
-        : 'Set --dart-define=ATLAS_SCHEMA20_SOURCE_DB=<real schema 19 DB>.',
+        : 'Set --dart-define=ATLAS_SCHEMA21_SOURCE_DB=<real schema 19 DB>.',
   );
 }
 

@@ -119,7 +119,7 @@ To build from source, use Windows 10 or 11 with Flutter stable:
 git clone https://github.com/ppeck1/project-atlas.git
 cd project-atlas
 flutter pub get
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 flutter run -d windows
 ```
 
@@ -133,7 +133,7 @@ The normal development launcher is also available:
 ## Verification
 
 ```powershell
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 flutter analyze
 flutter test
 flutter build windows --release

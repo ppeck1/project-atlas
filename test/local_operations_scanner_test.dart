@@ -123,6 +123,22 @@ void main() {
     expect(observed.classificationGuess, 'needs_review');
   });
 
+  test('classifies suffixed database snapshot folders as data roots', () async {
+    final snapshots = Directory(p.join(tempDir.path, 'sample_db_snapshots'))
+      ..createSync(recursive: true);
+    File(p.join(snapshots.path, 'README.md')).writeAsStringSync('# Snapshots');
+
+    final result = await LocalOperationsScanner(
+      roots: [tempDir.path],
+      maxDepth: 2,
+    ).scan();
+
+    final observed = result.observations.singleWhere(
+      (item) => item.displayName == 'sample_db_snapshots',
+    );
+    expect(observed.classificationGuess, 'data_root');
+  });
+
   test('skips unsafe drive roots before filesystem traversal', () async {
     final result = await const LocalOperationsScanner(roots: [r'B:\']).scan();
 

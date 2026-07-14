@@ -24,7 +24,7 @@ void main() {
             p.join(projectDir.path, 'atlas_outbox', 'imported'),
           ).createSync(recursive: true);
           Directory(
-            p.join(projectDir.path, 'secondary_outbox', 'rejected'),
+            p.join(projectDir.path, 'external_outbox', 'rejected'),
           ).createSync(recursive: true);
           File(
             p.join(projectDir.path, 'project_manifest.json'),
@@ -56,7 +56,7 @@ void main() {
                 'mode': 'outbox',
                 'project_key': 'project-atlas',
               },
-              'secondary_sync': {
+              'external_sync': {
                 'enabled': true,
                 'mode': 'outbox',
                 'authority': 'evidence-only',
@@ -91,6 +91,9 @@ void main() {
           File(
             p.join(projectDir.path, 'atlas_outbox', 'imported', 'run.json'),
           ).writeAsStringSync('{"summary":"do not embed"}');
+          File(
+            p.join(projectDir.path, 'external_outbox', 'rejected', 'run.json'),
+          ).writeAsStringSync('{"summary":"do not embed"}');
 
           final capsule = await resolver.resolveCapsuleStatus(
             projectId: 'atlas',
@@ -109,6 +112,13 @@ void main() {
           expect(capsule.evidenceAvailability, 'local_evidence_present');
           expect(capsule.counts['runLedgers'], 1);
           expect(capsule.counts['atlasOutboxImported'], 1);
+          expect(capsule.counts['secondaryOutboxRejected'], 1);
+          expect(capsule.toJson()['secondarySync'], {
+            'enabled': true,
+            'mode': 'outbox',
+            'authority': 'evidence-only',
+            'project_key': 'project-atlas',
+          });
           expect(capsule.toJson().toString(), isNot(contains('do not embed')));
           expect(identity.capsuleProjectId, 'project-atlas');
           expect(identity.githubRemote!['fullName'], 'ppeck1/project-atlas');
@@ -139,6 +149,95 @@ void main() {
         expect(
           capsule.warnings.join('\n'),
           contains('ops_capsule file is missing'),
+        );
+      } finally {
+        await root.delete(recursive: true);
+      }
+    });
+
+    test('prefers canonical secondary integration evidence', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'project_identity_resolver_precedence_test_',
+      );
+      try {
+        final projectDir = Directory(p.join(root.path, '.project'))
+          ..createSync(recursive: true);
+        File(
+          p.join(projectDir.path, 'project_manifest.json'),
+        ).writeAsStringSync(
+          jsonEncode({
+            'project_id': 'example',
+            'secondary_sync': {'mode': 'canonical'},
+            'external_sync': {'mode': 'older'},
+          }),
+        );
+        Directory(p.join(projectDir.path, 'secondary_outbox')).createSync();
+        Directory(p.join(projectDir.path, 'external_outbox')).createSync();
+        File(
+          p.join(projectDir.path, 'secondary_outbox', 'canonical.json'),
+        ).writeAsStringSync('{}');
+        File(
+          p.join(projectDir.path, 'external_outbox', 'older.json'),
+        ).writeAsStringSync('{}');
+
+        final capsule = await resolver.resolveCapsuleStatus(
+          projectId: 'example',
+          localPath: root.path,
+        );
+
+        expect(capsule.toJson()['secondarySync'], {'mode': 'canonical'});
+        expect(capsule.counts['secondaryOutboxPending'], 1);
+
+        File(
+          p.join(projectDir.path, 'project_manifest.json'),
+        ).writeAsStringSync(
+          jsonEncode({
+            'project_id': 'example',
+            'secondary_sync': <String, Object?>{},
+            'external_sync': {'mode': 'older'},
+          }),
+        );
+        final emptyCanonical = await resolver.resolveCapsuleStatus(
+          projectId: 'example',
+          localPath: root.path,
+        );
+        expect(emptyCanonical.toJson()['secondarySync'], isEmpty);
+      } finally {
+        await root.delete(recursive: true);
+      }
+    });
+
+    test('fails closed for ambiguous secondary integration evidence', () async {
+      final root = await Directory.systemTemp.createTemp(
+        'project_identity_resolver_ambiguity_test_',
+      );
+      try {
+        final projectDir = Directory(p.join(root.path, '.project'))
+          ..createSync(recursive: true);
+        File(
+          p.join(projectDir.path, 'project_manifest.json'),
+        ).writeAsStringSync(
+          jsonEncode({
+            'project_id': 'example',
+            'first_sync': <String, Object?>{},
+            'second_sync': {'mode': 'second'},
+          }),
+        );
+        for (final name in const ['first_outbox', 'second_outbox']) {
+          final outbox = Directory(p.join(projectDir.path, name))..createSync();
+          File(p.join(outbox.path, '$name.json')).writeAsStringSync('{}');
+        }
+
+        final capsule = await resolver.resolveCapsuleStatus(
+          projectId: 'example',
+          localPath: root.path,
+        );
+
+        expect(capsule.toJson()['secondarySync'], isEmpty);
+        expect(capsule.counts['secondaryOutboxPending'], 0);
+        expect(
+          capsule.warnings.join('\n'),
+          contains('Multiple secondary outbox candidates'),
         );
       } finally {
         await root.delete(recursive: true);

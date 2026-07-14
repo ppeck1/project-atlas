@@ -1203,6 +1203,88 @@ Pressure flakes a useful edge.
   );
 
   test(
+    'project refresh discovers a structurally compatible manifest filename',
+    () async {
+      final root = _makeDocumentConverterCandidate(tempDir);
+      final preferred = File(
+        p.join(root.path, '.project', 'runtime_manifest.json'),
+      );
+      final compatible = File(
+        p.join(root.path, '.project', 'existing_project.json'),
+      );
+      preferred.renameSync(compatible.path);
+
+      final plan = await const LocalProjectRefreshService().buildPlan(
+        root.path,
+      );
+      final metaAction = plan.actions.singleWhere(
+        (action) =>
+            action.sourceKind == 'project_meta' &&
+            action.sourceKey ==
+                '.project/existing_project.json#project-metadata',
+      );
+      final sourceKeys = plan.actions
+          .where((action) => action.sourceKind == 'source_file')
+          .map((action) => action.sourceKey)
+          .toSet();
+
+      expect(metaAction.payload['title'], 'Document Converter Demo');
+      expect(sourceKeys, isNot(contains('.project/existing_project.json')));
+    },
+  );
+
+  test('project refresh gives the canonical manifest precedence', () async {
+    final root = _makeDocumentConverterCandidate(tempDir);
+    final preferred = File(
+      p.join(root.path, '.project', 'runtime_manifest.json'),
+    );
+    File(
+      p.join(root.path, '.project', 'another_project.json'),
+    ).writeAsStringSync(preferred.readAsStringSync());
+
+    final plan = await const LocalProjectRefreshService().buildPlan(root.path);
+    final metaActions = plan.actions
+        .where((action) => action.sourceKind == 'project_meta')
+        .toList(growable: false);
+
+    expect(metaActions, hasLength(1));
+    expect(
+      metaActions.single.sourceKey,
+      '.project/runtime_manifest.json#project-metadata',
+    );
+    expect(
+      metaActions.single.payload['metadataSource'],
+      '.project/runtime_manifest.json',
+    );
+  });
+
+  test('project refresh fails closed for ambiguous manifests', () async {
+    final root = _makeDocumentConverterCandidate(tempDir);
+    final preferred = File(
+      p.join(root.path, '.project', 'runtime_manifest.json'),
+    );
+    final content = preferred.readAsStringSync();
+    preferred.deleteSync();
+    File(
+      p.join(root.path, '.project', 'first_project.json'),
+    ).writeAsStringSync(content);
+    File(
+      p.join(root.path, '.project', 'second_project.json'),
+    ).writeAsStringSync(content);
+
+    final plan = await const LocalProjectRefreshService().buildPlan(root.path);
+
+    expect(
+      plan.actions.where((action) => action.sourceKind == 'project_meta'),
+      isEmpty,
+    );
+    expect(
+      plan.warnings.join('\n'),
+      contains('Multiple compatible .project manifests'),
+    );
+  });
+
+  test(
     'project enrichment refreshes linked project artifacts and records coverage',
     () async {
       final root = _makeDocumentConverterCandidate(tempDir);

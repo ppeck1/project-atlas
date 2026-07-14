@@ -44,8 +44,8 @@ server, and exactly one token-validation mechanism: JWKS or introspection.
 | Variable | Used by | Purpose | Commit value? |
 |---|---|---|---|
 | `ATLAS_MCP_SMOKE_DB` | `tools/seed_mcp_smoke_fixture_test.dart` | Identifies the CI-owned database initialized by the release executable | No |
-| `ATLAS_SCHEMA20_SOURCE_DB` | `test/schema20_real_migration_test.dart` | Optional source database for a local migration exercise | No |
-| `ATLAS_SCHEMA20_EVIDENCE_PATH` | `test/schema20_real_migration_test.dart` | Optional destination for local migration evidence | No |
+| `ATLAS_SCHEMA21_SOURCE_DB` | `test/schema21_real_migration_test.dart` | Optional schema 19 source database for a local migration-to-21 exercise | No |
+| `ATLAS_SCHEMA21_EVIDENCE_PATH` | `test/schema21_real_migration_test.dart` | Optional destination for local migration evidence | No |
 
 `tools/seed_portfolio_capture.py` takes an explicit `--db` argument instead of
 an environment variable. It refuses paths that do not contain
@@ -64,6 +64,24 @@ screen. They are not process environment variables.
 | `telegram_enabled` | Enables outbound task-list delivery | Disabled | No |
 | `telegram_bot_token` | Telegram Bot API credential | Unset | **Yes** |
 | `telegram_chat_id` | Telegram destination | Unset | Treat as private |
+| `project_runtime_default_manifest_path` | Runtime manifest used for profile imports | Built-in neutral default path | Path may reveal local layout |
+
+On startup or first read, Atlas copies the value from exactly one nonempty older
+`project_runtime_default_%_yaml_path` setting into
+`project_runtime_default_manifest_path`. It leaves the older setting intact for
+downgrade compatibility. A current value always wins; multiple older
+candidates fail closed.
+
+## Linked-project compatibility contracts
+
+- `.project/runtime_manifest.json` is the preferred project metadata file.
+  When it is absent, Atlas accepts exactly one `.project/*.json` object with a
+  nonempty `name` plus map-valued `commands` and `docs` fields.
+- `secondary_sync` and `secondary_outbox` are preferred. When absent, Atlas can
+  read exactly one non-Atlas `*_sync` map and exactly one non-Atlas
+  `*_outbox` directory, while continuing to emit only generic secondary labels.
+- Atlas never renames or writes these linked-project compatibility sources.
+- Ambiguous fallback candidates are skipped instead of guessed.
 
 ## Handling rules
 

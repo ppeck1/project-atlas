@@ -71,7 +71,7 @@ SENSITIVE_FIXTURE = {
                 "type": "text",
                 "text": (
                     "Manual fixture from C:\\Examples\\project_protocol "
-                    "owned by Example Owner at atlas.owner@example.com."
+                    "owned by Example Owner at atlas.owner@example.invalid."
                 ),
             }
         ],
@@ -88,7 +88,7 @@ SENSITIVE_FIXTURE_FORBIDDEN = {
     "C:\\Private",
     "project_protocol",
     "project-atlas-main",
-    "atlas.owner@example.com",
+    "atlas.owner@example.invalid",
     "Example Owner",
     "DRAFT_FIXTURE_SHOULD_NOT_LEAK",
     "PROPOSAL_BODY_FIXTURE_SHOULD_NOT_LEAK",

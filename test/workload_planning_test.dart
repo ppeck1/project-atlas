@@ -204,6 +204,22 @@ void main() {
           title: 'Run the manifest test command if present.',
           source: 'local_refresh',
         );
+        final olderLaunchId = await db.addWorkItem(
+          stageId: stage.id,
+          title: 'Launch the project from an existing launcher.',
+          source: 'local_refresh:legacy-launcher',
+        );
+        final olderMetadataId = await db.addWorkItem(
+          stageId: stage.id,
+          title:
+              'Let the existing launcher update .project/example.json validation metadata after each check.',
+          source: 'local_refresh:legacy-launcher',
+        );
+        final manualShapeId = await db.addWorkItem(
+          stageId: stage.id,
+          title: 'Launch the project from a manual checklist.',
+          status: 'done',
+        );
         final manualId = await db.addWorkItem(
           stageId: stage.id,
           title: 'Operator selected work',
@@ -225,10 +241,25 @@ void main() {
           (card) => card.id == importedRefreshId,
         );
         final manual = global.cards.singleWhere((card) => card.id == manualId);
+        final manualShape = global.cards.singleWhere(
+          (card) => card.id == manualShapeId,
+        );
+        final olderLaunch = global.cards.singleWhere(
+          (card) => card.id == olderLaunchId,
+        );
+        final olderMetadata = global.cards.singleWhere(
+          (card) => card.id == olderMetadataId,
+        );
         expect(imported.originKind, 'imported_checklist');
         expect(importedRefresh.originKind, 'imported_checklist');
+        expect(olderLaunch.originKind, 'imported_checklist');
+        expect(olderMetadata.originKind, 'imported_checklist');
+        expect(manualShape.originKind, 'manual');
         expect(imported.showInMainWorkboard, isFalse);
         expect(importedRefresh.showInMainWorkboard, isFalse);
+        expect(olderLaunch.showInMainWorkboard, isFalse);
+        expect(olderMetadata.showInMainWorkboard, isFalse);
+        expect(manualShape.showInMainWorkboard, isTrue);
         expect(
           imported.staleReasons(DateTime(2026, 7, 8)),
           contains('imported_template_unreviewed'),
@@ -245,12 +276,12 @@ void main() {
         );
         expect(
           (global.toJson()['counts'] as Map)['demotedImportedChecklist'],
-          2,
+          4,
         );
         expect(
           ((global.toJson()['counts'] as Map)['byOrigin']
               as Map)['imported_checklist'],
-          2,
+          4,
         );
       },
     );

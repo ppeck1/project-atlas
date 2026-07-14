@@ -365,7 +365,11 @@ class LocalProjectRefreshService {
       ..._sourceFileActions(
         scannedFiles,
         warnings,
-        excludedRelativePaths: {...files.keys, projectManifestRelativePath},
+        excludedRelativePaths: {
+          ...files.keys,
+          projectManifestRelativePath,
+          if (manifest != null) manifest.relativePath,
+        },
       ),
       ..._cardLibraryActions(scannedFiles, warnings),
       ..._projectMetaActions(manifest, docsByName),
@@ -1216,25 +1220,85 @@ class LocalProjectRefreshService {
     Directory root,
     List<String> warnings,
   ) async {
-    final file = File(p.join(root.path, projectManifestRelativePath));
-    if (!await file.exists()) return null;
+    final preferred = File(p.join(root.path, projectManifestRelativePath));
+    if (await preferred.exists()) {
+      final manifest = await _parseRuntimeManifest(
+        root,
+        preferred,
+        warnings,
+        reportErrors: true,
+      );
+      return manifest;
+    }
+
+    final projectDir = Directory(p.join(root.path, '.project'));
+    if (!await projectDir.exists()) return null;
+
+    final candidates = await projectDir
+        .list(followLinks: false)
+        .where(
+          (entity) =>
+              entity is File &&
+              p.extension(entity.path).toLowerCase() == '.json',
+        )
+        .cast<File>()
+        .toList();
+    candidates.sort(
+      (a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()),
+    );
+    final compatible = <_ProjectManifest>[];
+    for (final file in candidates) {
+      final manifest = await _parseRuntimeManifest(
+        root,
+        file,
+        warnings,
+        reportErrors: false,
+      );
+      if (manifest != null && _looksLikeRuntimeManifest(manifest.fields)) {
+        compatible.add(manifest);
+      }
+    }
+    if (compatible.length == 1) return compatible.single;
+    if (compatible.length > 1) {
+      warnings.add(
+        'Multiple compatible .project manifests were found; metadata import was skipped.',
+      );
+    }
+    return null;
+  }
+
+  bool _looksLikeRuntimeManifest(Map<String, Object?> fields) {
+    return _stringField(fields, const ['name']) != null &&
+        _mapValue(fields, 'commands') is Map &&
+        _mapValue(fields, 'docs') is Map;
+  }
+
+  Future<_ProjectManifest?> _parseRuntimeManifest(
+    Directory root,
+    File file,
+    List<String> warnings, {
+    required bool reportErrors,
+  }) async {
+    final relativePath = p
+        .relative(file.path, from: root.path)
+        .replaceAll('\\', '/');
     try {
       final raw = await file.readAsString();
       final decoded = jsonDecode(_stripBom(raw));
       if (decoded is! Map) {
-        warnings.add(
-          '$projectManifestRelativePath: manifest is not an object.',
-        );
+        if (reportErrors) {
+          warnings.add('$relativePath: manifest is not an object.');
+        }
         return null;
       }
       return _ProjectManifest(
-        relativePath: projectManifestRelativePath,
+        relativePath: relativePath,
         fields: _stringKeyedMap(decoded),
       );
     } catch (error) {
-      warnings.add(
-        '$projectManifestRelativePath: could not parse manifest: $error',
-      );
+      if (reportErrors) {
+        warnings.add('$relativePath: could not parse manifest: $error');
+      }
       return null;
     }
   }

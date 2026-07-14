@@ -250,8 +250,8 @@ void main() {
     );
 
     test('EML import stores body only in extractedText', () async {
-      const emlContent = '''From: alice@example.com
-To: bob@example.com
+      const emlContent = '''From: alice@example.invalid
+To: bob@example.invalid
 Subject: Hello
 
 This is the email body.''';
@@ -265,7 +265,8 @@ This is the email body.''';
     });
 
     test('EML import: renderedMarkdown is null', () async {
-      const emlContent = 'From: a@b.com\nSubject: Test\n\nBody here.';
+      const emlContent =
+          'From: sender@example.invalid\nSubject: Test\n\nBody here.';
       final src = File(p.join(tempDir.path, 'msg.eml'))
         ..writeAsStringSync(emlContent);
       await db.importDocumentFromPath(src.path);

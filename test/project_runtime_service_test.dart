@@ -147,6 +147,139 @@ apps:
     expect(draft.capsuleProfile, 'public_repo');
   });
 
+  test('AppState migrates an older runtime manifest path setting', () async {
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+
+    final yamlPath = p.join(tempDir.path, 'existing_runtime.yaml');
+    const previousKey = 'project_runtime_default_previous_yaml_path';
+    await db.setMetaString(previousKey, yamlPath);
+    await db.setMetaString(
+      'projectXruntimeXdefaultXnoiseXyamlXpath',
+      p.join(tempDir.path, 'noise.yaml'),
+    );
+
+    final loaded = await state.loadProjectRuntimeDefaultsSettings();
+
+    expect(loaded.resolvedRuntimeManifestPath, yamlPath);
+    expect(
+      await db.getMetaString(AppDb.kProjectRuntimeDefaultManifestPath),
+      yamlPath,
+    );
+    expect(await db.getMetaString(previousKey), yamlPath);
+  });
+
+  test('AppState migrates an older manifest path during startup', () async {
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final yamlPath = p.join(tempDir.path, 'startup_runtime.yaml');
+    await db.setMetaString(
+      'project_runtime_default_startup_yaml_path',
+      yamlPath,
+    );
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+
+    String? migrated;
+    for (var attempt = 0; attempt < 50 && migrated == null; attempt++) {
+      migrated = await db.getMetaString(
+        AppDb.kProjectRuntimeDefaultManifestPath,
+      );
+      if (migrated == null) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
+
+    expect(migrated, yamlPath);
+  });
+
+  test('AppState keeps the canonical runtime manifest path', () async {
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+
+    final canonicalPath = p.join(tempDir.path, 'canonical_runtime.yaml');
+    final olderPath = p.join(tempDir.path, 'older_runtime.yaml');
+    await db.setMetaString(
+      AppDb.kProjectRuntimeDefaultManifestPath,
+      canonicalPath,
+    );
+    await db.setMetaString(
+      'project_runtime_default_previous_yaml_path',
+      olderPath,
+    );
+
+    final loaded = await state.loadProjectRuntimeDefaultsSettings();
+
+    expect(loaded.resolvedRuntimeManifestPath, canonicalPath);
+    expect(
+      await db.getMetaString(AppDb.kProjectRuntimeDefaultManifestPath),
+      canonicalPath,
+    );
+  });
+
+  test(
+    'runtime manifest migration preserves a concurrent canonical save',
+    () async {
+      final db = AppDb.withExecutor(NativeDatabase.memory());
+      addTearDown(db.close);
+      final olderPath = p.join(tempDir.path, 'older_runtime.yaml');
+      final selectedPath = p.join(tempDir.path, 'selected_runtime.yaml');
+      await db.setMetaString(
+        'project_runtime_default_previous_yaml_path',
+        olderPath,
+      );
+
+      await Future.wait([
+        db.migrateLegacyRuntimeManifestPathIfUnambiguous(),
+        db.setMetaString(
+          AppDb.kProjectRuntimeDefaultManifestPath,
+          selectedPath,
+        ),
+      ]);
+
+      expect(
+        await db.getMetaString(AppDb.kProjectRuntimeDefaultManifestPath),
+        selectedPath,
+      );
+    },
+  );
+
+  test('AppState fails closed for ambiguous older manifest paths', () async {
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final ambiguousPath = p.join(tempDir.path, 'same.yaml');
+    await db.setMetaString(
+      'project_runtime_default_first_yaml_path',
+      ambiguousPath,
+    );
+    await db.setMetaString(
+      'project_runtime_default_second_yaml_path',
+      ambiguousPath,
+    );
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+
+    final loaded = await state.loadProjectRuntimeDefaultsSettings();
+
+    expect(loaded.runtimeManifestPath, isNull);
+    expect(
+      await db.getMetaString(AppDb.kProjectRuntimeDefaultManifestPath),
+      isNull,
+    );
+  });
+
   test(
     'AppState imports runtime profiles from configured manifest defaults',
     () async {

@@ -14,6 +14,29 @@ Map<String, Object?> _objectMap(Object? value) {
   return value.map((key, value) => MapEntry('$key', value));
 }
 
+Map<String, Object?> _secondarySyncMap(Object? value) {
+  final manifest = _objectMap(value);
+  if (manifest.containsKey('secondary_sync')) {
+    return _objectMap(manifest['secondary_sync']);
+  }
+
+  final candidates =
+      manifest.entries
+          .where(
+            (entry) =>
+                entry.key.toLowerCase().endsWith('_sync') &&
+                entry.key.toLowerCase() != 'secondary_sync' &&
+                entry.key.toLowerCase() != 'atlas_sync',
+          )
+          .toList()
+        ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+  final compatible = candidates
+      .where((entry) => entry.value is Map)
+      .map((entry) => _objectMap(entry.value))
+      .toList(growable: false);
+  return compatible.length == 1 ? compatible.single : const {};
+}
+
 List<String> _stringList(Object? value) {
   if (value is! Iterable) return const [];
   return value.map((item) => '$item').toList(growable: false);
@@ -100,7 +123,7 @@ class AtlasCapsuleStatus {
     'validation': _objectMap(projectManifest?['validation']),
     'gitPolicy': _objectMap(projectManifest?['git_policy']),
     'atlasSync': _objectMap(projectManifest?['atlas_sync']),
-    'secondarySync': _objectMap(projectManifest?['secondary_sync']),
+    'secondarySync': _secondarySyncMap(projectManifest),
     'profiles': _stringList(projectManifest?['profiles']),
     'counts': counts,
     'warnings': warnings,
@@ -202,6 +225,7 @@ class ProjectIdentityResolver {
       warnings,
       errors,
     );
+    final secondaryOutboxCounts = _countSecondaryOutboxes(projectDir, warnings);
     final counts = <String, Object?>{
       'runLedgers': _countDirectoryFiles(
         Directory(p.join(projectDir.path, 'runs')),
@@ -215,15 +239,7 @@ class ProjectIdentityResolver {
       'atlasOutboxRejected': _countJsonFiles(
         Directory(p.join(projectDir.path, 'atlas_outbox', 'rejected')),
       ),
-      'secondaryOutboxPending': _countJsonFiles(
-        Directory(p.join(projectDir.path, 'secondary_outbox')),
-      ),
-      'secondaryOutboxImported': _countJsonFiles(
-        Directory(p.join(projectDir.path, 'secondary_outbox', 'imported')),
-      ),
-      'secondaryOutboxRejected': _countJsonFiles(
-        Directory(p.join(projectDir.path, 'secondary_outbox', 'rejected')),
-      ),
+      ...secondaryOutboxCounts,
     };
     final hasLocalEvidence = counts.values.whereType<int>().any(
       (count) => count > 0,
@@ -277,6 +293,60 @@ class ProjectIdentityResolver {
     directory,
     include: (entity) => entity is File && entity.path.endsWith('.json'),
   );
+
+  Map<String, int> _countSecondaryOutboxes(
+    Directory projectDir,
+    List<String> warnings,
+  ) {
+    var pending = 0;
+    var imported = 0;
+    var rejected = 0;
+    try {
+      final discovered = projectDir
+          .listSync(followLinks: false)
+          .whereType<Directory>()
+          .where((directory) {
+            final name = p.basename(directory.path).toLowerCase();
+            return name.endsWith('_outbox') && name != 'atlas_outbox';
+          })
+          .toList(growable: false);
+      final preferred = discovered
+          .where(
+            (directory) =>
+                p.basename(directory.path).toLowerCase() == 'secondary_outbox',
+          )
+          .toList(growable: false);
+      final directories = preferred.length == 1
+          ? preferred
+          : preferred.length > 1
+          ? const <Directory>[]
+          : discovered.length == 1
+          ? discovered
+          : const <Directory>[];
+      if (preferred.length > 1 ||
+          (preferred.isEmpty && discovered.length > 1)) {
+        warnings.add(
+          'Multiple secondary outbox candidates were found; counts were skipped.',
+        );
+      }
+      for (final directory in directories) {
+        pending += _countJsonFiles(directory);
+        imported += _countJsonFiles(
+          Directory(p.join(directory.path, 'imported')),
+        );
+        rejected += _countJsonFiles(
+          Directory(p.join(directory.path, 'rejected')),
+        );
+      }
+    } on FileSystemException {
+      // Missing or unreadable optional integration evidence is counted as 0.
+    }
+    return {
+      'secondaryOutboxPending': pending,
+      'secondaryOutboxImported': imported,
+      'secondaryOutboxRejected': rejected,
+    };
+  }
 
   int _countDirectoryFiles(
     Directory directory, {
