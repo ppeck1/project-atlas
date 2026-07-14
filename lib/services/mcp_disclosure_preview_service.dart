@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -8,18 +9,21 @@ import 'mcp_connector_autostart_service.dart';
 
 const mcpDisclosurePreviewSchema =
     'project_atlas.operator_disclosure_preview.v2';
-const _policySchema = 'project_atlas.remote_disclosure_policy.v1';
+const _policySchemaV1 = 'project_atlas.remote_disclosure_policy.v1';
+const _policySchemaV2 = 'project_atlas.remote_disclosure_policy.v2';
 const _projectionSchema = 'project_atlas.remote_projection.v1';
 const _policyMode = 'deny_by_default';
 const _policyDigestHeader = 'X-Project-Atlas-Policy-Digest';
 const _maxConfigBytes = 64 * 1024;
-const _maxPolicyBytes = 64 * 1024;
+const _maxPolicyBytes = 128 * 1024;
 const _maxAuditBytes = 1024 * 1024;
 const _maxAuditLines = 500;
 const _maxAuditLineBytes = 4 * 1024;
 const _maxRecentEvents = 25;
 const _maxHttpBytes = 32 * 1024;
-const _maxProjects = 64;
+const _maxInventoryProjects = 256;
+const _maxDetailProjects = 64;
+const _inventoryPageSize = 64;
 const _maxDisplayNumber = 0x7fffffff;
 
 const mcpRemoteTools = <String>[
@@ -89,14 +93,70 @@ typedef McpPreviewJsonReader =
     );
 
 typedef McpLocalProjectIdsReader = Future<Set<String>> Function();
+typedef McpLocalProjectsReader = Future<List<McpLocalProjectRecord>> Function();
+
+class McpLocalProjectRecord {
+  final String localId;
+  final String title;
+  final String status;
+  final String? phase;
+  final String? priority;
+  final String freshnessStatus;
+  final int activeWorkItems;
+  final int blockedWorkItems;
+  final int blocksProgressWorkItems;
+  final bool needsAttention;
+
+  const McpLocalProjectRecord({
+    required this.localId,
+    required this.title,
+    required this.status,
+    required this.phase,
+    required this.priority,
+    required this.freshnessStatus,
+    required this.activeWorkItems,
+    required this.blockedWorkItems,
+    required this.blocksProgressWorkItems,
+    required this.needsAttention,
+  });
+}
 
 class McpDisclosureProject {
   final String alias;
   final String label;
+  final bool inventoryEnabled;
+  final bool detailEnabled;
 
-  const McpDisclosureProject({required this.alias, required this.label});
+  const McpDisclosureProject({
+    required this.alias,
+    required this.label,
+    this.inventoryEnabled = true,
+    this.detailEnabled = true,
+  });
 
-  Map<String, Object?> toJson() => {'alias': alias, 'label': label};
+  Map<String, Object?> toJson() => {
+    'alias': alias,
+    'label': label,
+    'access': [if (inventoryEnabled) 'inventory', if (detailEnabled) 'detail'],
+  };
+}
+
+class McpDisclosureCandidate {
+  final String title;
+  final String? proposedAlias;
+  final String? unsafeReason;
+  final String sourceTitleFingerprint;
+
+  const McpDisclosureCandidate({
+    required this.title,
+    required this.proposedAlias,
+    required this.unsafeReason,
+    required this.sourceTitleFingerprint,
+  });
+
+  bool get requiresReview => unsafeReason != null || proposedAlias == null;
+
+  String get displayTitle => requiresReview ? _visibleText(title) : title;
 }
 
 class McpDisclosureAuditEvent {
@@ -158,12 +218,22 @@ class McpDisclosurePreview {
   final String? policyFingerprint;
   final String policyMode;
   final List<McpDisclosureProject> approvedProjects;
+  final List<McpDisclosureCandidate> eligibleNotEnrolledProjects;
+  final List<String> titleDriftAliases;
+  final List<String> missingTitleFingerprintAliases;
   final String inventoryState;
   final int registeredProjects;
   final int policyApprovedProjects;
   final int remotelyVisibleProjects;
   final int notAllowlistedProjects;
   final int unresolvedOrRemoteIneligibleEntries;
+  final int candidateInventoryProjects;
+  final int candidateDetailProjects;
+  final int inventoryPageCount;
+  final int estimatedInventoryResponseBytes;
+  final int aliasCollisionCount;
+  final int unsafeCandidateLabels;
+  final bool restartRequired;
   final String gatewayState;
   final String activeBinaryState;
   final String authMode;
@@ -189,12 +259,22 @@ class McpDisclosurePreview {
     required this.policyFingerprint,
     required this.policyMode,
     required this.approvedProjects,
+    required this.eligibleNotEnrolledProjects,
+    required this.titleDriftAliases,
+    required this.missingTitleFingerprintAliases,
     required this.inventoryState,
     required this.registeredProjects,
     required this.policyApprovedProjects,
     required this.remotelyVisibleProjects,
     required this.notAllowlistedProjects,
     required this.unresolvedOrRemoteIneligibleEntries,
+    required this.candidateInventoryProjects,
+    required this.candidateDetailProjects,
+    required this.inventoryPageCount,
+    required this.estimatedInventoryResponseBytes,
+    required this.aliasCollisionCount,
+    required this.unsafeCandidateLabels,
+    required this.restartRequired,
     required this.gatewayState,
     required this.activeBinaryState,
     required this.authMode,
@@ -213,6 +293,14 @@ class McpDisclosurePreview {
     required this.contracts,
   });
 
+  List<McpDisclosureProject> get inventoryProjects => approvedProjects
+      .where((project) => project.inventoryEnabled)
+      .toList(growable: false);
+
+  List<McpDisclosureProject> get detailProjects => approvedProjects
+      .where((project) => project.detailEnabled)
+      .toList(growable: false);
+
   Map<String, Object?> toJson() => {
     'schema': mcpDisclosurePreviewSchema,
     'overallState': overallState,
@@ -227,6 +315,15 @@ class McpDisclosurePreview {
     'remotelyVisibleProjects': remotelyVisibleProjects,
     'notAllowlistedProjects': notAllowlistedProjects,
     'unresolvedOrRemoteIneligibleEntries': unresolvedOrRemoteIneligibleEntries,
+    'candidateInventoryProjects': candidateInventoryProjects,
+    'candidateDetailProjects': candidateDetailProjects,
+    'inventoryPageCount': inventoryPageCount,
+    'estimatedInventoryResponseBytes': estimatedInventoryResponseBytes,
+    'aliasCollisionCount': aliasCollisionCount,
+    'unsafeCandidateLabels': unsafeCandidateLabels,
+    'titleDriftAliases': titleDriftAliases,
+    'missingTitleFingerprintAliases': missingTitleFingerprintAliases,
+    'restartRequired': restartRequired,
     'approvedProjects': approvedProjects.map((item) => item.toJson()).toList(),
     'gateway': {
       'state': gatewayState,
@@ -259,16 +356,26 @@ class McpDisclosurePreview {
       overallState: overallState,
       configState: configState,
       policyState: policyState,
-      policySchema: _policySchema,
+      policySchema: _policySchemaV1,
       policyFingerprint: null,
       policyMode: _policyMode,
       approvedProjects: const [],
+      eligibleNotEnrolledProjects: const [],
+      titleDriftAliases: const [],
+      missingTitleFingerprintAliases: const [],
       inventoryState: 'not_checked',
       registeredProjects: 0,
       policyApprovedProjects: 0,
       remotelyVisibleProjects: 0,
       notAllowlistedProjects: 0,
       unresolvedOrRemoteIneligibleEntries: 0,
+      candidateInventoryProjects: 0,
+      candidateDetailProjects: 0,
+      inventoryPageCount: 0,
+      estimatedInventoryResponseBytes: 0,
+      aliasCollisionCount: 0,
+      unsafeCandidateLabels: 0,
+      restartRequired: false,
       gatewayState: 'not_checked',
       activeBinaryState: 'not_checked',
       authMode: 'unavailable',
@@ -290,15 +397,38 @@ class McpDisclosurePreview {
 }
 
 class _PolicySnapshot {
+  final String schema;
   final String digest;
   final List<McpDisclosureProject> projects;
+  final List<_PolicyEntry> entries;
   final Set<String> localProjectIds;
 
   const _PolicySnapshot({
+    required this.schema,
     required this.digest,
     required this.projects,
+    required this.entries,
     required this.localProjectIds,
   });
+}
+
+class _PolicyEntry {
+  final String localId;
+  final McpDisclosureProject project;
+  final String? sourceTitleFingerprint;
+
+  const _PolicyEntry({
+    required this.localId,
+    required this.project,
+    required this.sourceTitleFingerprint,
+  });
+}
+
+class _PolicyParseOutcome {
+  final String state;
+  final _PolicySnapshot? policy;
+
+  const _PolicyParseOutcome(this.state, [this.policy]);
 }
 
 class _InventorySnapshot {
@@ -308,6 +438,15 @@ class _InventorySnapshot {
   final int remotelyVisibleProjects;
   final int notAllowlistedProjects;
   final int unresolvedOrRemoteIneligibleEntries;
+  final List<McpDisclosureCandidate> candidates;
+  final List<String> titleDriftAliases;
+  final List<String> missingTitleFingerprintAliases;
+  final int candidateInventoryProjects;
+  final int candidateDetailProjects;
+  final int pageCount;
+  final int estimatedResponseBytes;
+  final int aliasCollisionCount;
+  final int unsafeCandidateLabels;
 
   const _InventorySnapshot({
     required this.state,
@@ -316,6 +455,15 @@ class _InventorySnapshot {
     required this.remotelyVisibleProjects,
     required this.notAllowlistedProjects,
     required this.unresolvedOrRemoteIneligibleEntries,
+    required this.candidates,
+    required this.titleDriftAliases,
+    required this.missingTitleFingerprintAliases,
+    required this.candidateInventoryProjects,
+    required this.candidateDetailProjects,
+    required this.pageCount,
+    required this.estimatedResponseBytes,
+    required this.aliasCollisionCount,
+    required this.unsafeCandidateLabels,
   });
 }
 
@@ -354,12 +502,14 @@ class McpDisclosurePreviewService {
   final File configFile;
   final McpPreviewJsonReader _jsonReader;
   final McpLocalProjectIdsReader? _localProjectIdsReader;
+  final McpLocalProjectsReader? _localProjectsReader;
 
   McpDisclosurePreviewService({
     Directory? repoRoot,
     File? configFile,
     McpPreviewJsonReader? jsonReader,
     McpLocalProjectIdsReader? localProjectIdsReader,
+    McpLocalProjectsReader? localProjectsReader,
   }) : repoRoot = repoRoot ?? Directory.current,
        configFile =
            configFile ??
@@ -371,7 +521,8 @@ class McpDisclosurePreviewService {
              ),
            ),
        _jsonReader = jsonReader ?? _readJson,
-       _localProjectIdsReader = localProjectIdsReader;
+       _localProjectIdsReader = localProjectIdsReader,
+       _localProjectsReader = localProjectsReader;
 
   Future<McpDisclosurePreview> inspect() async {
     if (!await configFile.exists()) {
@@ -433,12 +584,13 @@ class McpDisclosurePreviewService {
         policyState: 'too_large_or_unreadable',
       );
     }
-    final policy = _parsePolicy(policyBytes);
+    final parseOutcome = _parsePolicy(policyBytes);
+    final policy = parseOutcome.policy;
     if (policy == null) {
       return McpDisclosurePreview.unavailable(
         overallState: 'attention',
         configState: 'valid',
-        policyState: 'invalid',
+        policyState: parseOutcome.state,
       );
     }
 
@@ -470,7 +622,10 @@ class McpDisclosurePreviewService {
     final overallState =
         gateway.state == 'identity_mismatch' ||
             auditNeedsAttention ||
-            inventory.state == 'unreadable'
+            inventory.state != 'readable' ||
+            inventory.titleDriftAliases.isNotEmpty ||
+            inventory.missingTitleFingerprintAliases.isNotEmpty ||
+            inventory.unresolvedOrRemoteIneligibleEntries > 0
         ? 'attention'
         : 'unverified';
 
@@ -478,10 +633,13 @@ class McpDisclosurePreviewService {
       overallState: overallState,
       configState: 'valid',
       policyState: 'valid',
-      policySchema: _policySchema,
+      policySchema: policy.schema,
       policyFingerprint: policy.digest.substring(0, 12),
       policyMode: _policyMode,
       approvedProjects: policy.projects,
+      eligibleNotEnrolledProjects: inventory.candidates,
+      titleDriftAliases: inventory.titleDriftAliases,
+      missingTitleFingerprintAliases: inventory.missingTitleFingerprintAliases,
       inventoryState: inventory.state,
       registeredProjects: inventory.registeredProjects,
       policyApprovedProjects: inventory.policyApprovedProjects,
@@ -489,6 +647,13 @@ class McpDisclosurePreviewService {
       notAllowlistedProjects: inventory.notAllowlistedProjects,
       unresolvedOrRemoteIneligibleEntries:
           inventory.unresolvedOrRemoteIneligibleEntries,
+      candidateInventoryProjects: inventory.candidateInventoryProjects,
+      candidateDetailProjects: inventory.candidateDetailProjects,
+      inventoryPageCount: inventory.pageCount,
+      estimatedInventoryResponseBytes: inventory.estimatedResponseBytes,
+      aliasCollisionCount: inventory.aliasCollisionCount,
+      unsafeCandidateLabels: inventory.unsafeCandidateLabels,
+      restartRequired: !gateway.policyMatches,
       gatewayState: gateway.state,
       activeBinaryState: 'unverified',
       authMode: config.authMode,
@@ -509,16 +674,174 @@ class McpDisclosurePreviewService {
   }
 
   Future<_InventorySnapshot> _inspectInventory(_PolicySnapshot policy) async {
+    final richReader = _localProjectsReader;
+    if (richReader != null) {
+      try {
+        final records = List<McpLocalProjectRecord>.unmodifiable(
+          await richReader(),
+        );
+        final byId = {for (final record in records) record.localId: record};
+        final enrolledIds = policy.localProjectIds;
+        final resolvedEntries = policy.entries
+            .where((entry) => byId.containsKey(entry.localId))
+            .toList(growable: false);
+        final titleDriftAliases = <String>[];
+        final missingTitleFingerprintAliases = <String>[];
+        for (final entry in resolvedEntries) {
+          final currentTitle = byId[entry.localId]!.title;
+          final fingerprint = entry.sourceTitleFingerprint;
+          if (fingerprint != null) {
+            if (_sourceTitleFingerprint(currentTitle) != fingerprint) {
+              titleDriftAliases.add(entry.project.alias);
+            }
+          } else if (policy.schema == _policySchemaV1) {
+            if (currentTitle != entry.project.label) {
+              titleDriftAliases.add(entry.project.alias);
+            }
+          } else {
+            missingTitleFingerprintAliases.add(entry.project.alias);
+          }
+        }
+        titleDriftAliases.sort();
+        missingTitleFingerprintAliases.sort();
+        final usedAliases = policy.projects
+            .map((project) => project.alias)
+            .toSet();
+        final forbiddenLocalIds = records
+            .map((record) => record.localId)
+            .toSet();
+        var aliasCollisions = 0;
+        final candidates = <McpDisclosureCandidate>[];
+        final candidateRecords =
+            records
+                .where((record) => !enrolledIds.contains(record.localId))
+                .toList(growable: false)
+              ..sort((a, b) {
+                final titleCompare = a.title.toLowerCase().compareTo(
+                  b.title.toLowerCase(),
+                );
+                return titleCompare != 0
+                    ? titleCompare
+                    : a.localId.compareTo(b.localId);
+              });
+        for (final record in candidateRecords) {
+          final unsafeReason =
+              forbiddenLocalIds.any(
+                (localId) =>
+                    record.title == localId ||
+                    (localId.length >= 8 && record.title.contains(localId)),
+              )
+              ? 'label_matches_local_id'
+              : _unsafeLabelReason(record.title);
+          String? alias;
+          if (unsafeReason == null) {
+            final proposal = _proposeAlias(
+              record.title,
+              usedAliases,
+              forbiddenLocalIds,
+            );
+            alias = proposal.alias;
+            aliasCollisions += proposal.collisionAdjustments;
+            if (alias != null) usedAliases.add(alias);
+          }
+          candidates.add(
+            McpDisclosureCandidate(
+              title: record.title,
+              proposedAlias: alias,
+              unsafeReason: unsafeReason,
+              sourceTitleFingerprint: _sourceTitleFingerprint(record.title),
+            ),
+          );
+        }
+        final safeCandidates = candidates
+            .where((candidate) => !candidate.requiresReview)
+            .toList(growable: false);
+        final candidateInventoryProjects =
+            policy.projects
+                .where((project) => project.inventoryEnabled)
+                .length +
+            safeCandidates.length;
+        final candidateDetailProjects = policy.projects
+            .where((project) => project.detailEnabled)
+            .length;
+        final projectedRows = <Map<String, Object?>>[];
+        for (final entry in resolvedEntries) {
+          if (!entry.project.inventoryEnabled) continue;
+          projectedRows.add(_inventoryRow(byId[entry.localId]!, entry.project));
+        }
+        for (var index = 0; index < candidates.length; index += 1) {
+          final candidate = candidates[index];
+          if (candidate.requiresReview) continue;
+          projectedRows.add(
+            _inventoryRow(
+              candidateRecords[index],
+              McpDisclosureProject(
+                alias: candidate.proposedAlias!,
+                label: candidate.title,
+                detailEnabled: false,
+              ),
+            ),
+          );
+        }
+        projectedRows.sort(
+          (a, b) =>
+              (a['projectId']! as String).compareTo(b['projectId']! as String),
+        );
+        final firstPage = projectedRows.take(_inventoryPageSize).toList();
+        final total = projectedRows.length;
+        final inventoryDto = <String, Object?>{
+          'schema': 'project_atlas.remote_project_inventory.v2',
+          'projects': firstPage,
+          'page': {
+            'offset': 0,
+            'limit': _inventoryPageSize,
+            'returned': firstPage.length,
+            'total': total,
+            'truncated': total > _inventoryPageSize,
+            'nextOffset': total > _inventoryPageSize
+                ? _inventoryPageSize
+                : null,
+          },
+          'disclosure': {
+            'scope': 'operator_approved_portfolio_inventory',
+            'denyByDefault': true,
+            'absenceDoesNotProveUnregistered': true,
+            'detailsRequireSeparateApproval': true,
+          },
+        };
+        return _InventorySnapshot(
+          state: candidates.any((candidate) => candidate.requiresReview)
+              ? 'review_required'
+              : 'readable',
+          registeredProjects: records.length,
+          policyApprovedProjects: policy.localProjectIds.length,
+          remotelyVisibleProjects: resolvedEntries.length,
+          notAllowlistedProjects: candidateRecords.length,
+          unresolvedOrRemoteIneligibleEntries:
+              policy.localProjectIds.length - resolvedEntries.length,
+          candidates: List.unmodifiable(candidates),
+          titleDriftAliases: List.unmodifiable(titleDriftAliases),
+          missingTitleFingerprintAliases: List.unmodifiable(
+            missingTitleFingerprintAliases,
+          ),
+          candidateInventoryProjects: candidateInventoryProjects,
+          candidateDetailProjects: candidateDetailProjects,
+          pageCount: candidateInventoryProjects == 0
+              ? 0
+              : (candidateInventoryProjects / _inventoryPageSize).ceil(),
+          estimatedResponseBytes: _canonicalJsonBytes(inventoryDto),
+          aliasCollisionCount: aliasCollisions,
+          unsafeCandidateLabels: candidates
+              .where((candidate) => candidate.unsafeReason != null)
+              .length,
+        );
+      } catch (_) {
+        return _emptyInventorySnapshot(state: 'unreadable', policy: policy);
+      }
+    }
     final reader = _localProjectIdsReader;
     if (reader == null) {
-      return _InventorySnapshot(
-        state: 'not_checked',
-        registeredProjects: 0,
-        policyApprovedProjects: policy.localProjectIds.length,
-        remotelyVisibleProjects: 0,
-        notAllowlistedProjects: 0,
-        unresolvedOrRemoteIneligibleEntries: 0,
-      );
+      return _emptyInventorySnapshot(state: 'not_checked', policy: policy);
     }
     try {
       final registeredIds = Set<String>.unmodifiable(await reader());
@@ -533,18 +856,49 @@ class McpDisclosurePreviewService {
         notAllowlistedProjects: registeredIds.length - remotelyVisible,
         unresolvedOrRemoteIneligibleEntries:
             policy.localProjectIds.length - remotelyVisible,
+        candidates: const [],
+        titleDriftAliases: const [],
+        missingTitleFingerprintAliases: const [],
+        candidateInventoryProjects: remotelyVisible,
+        candidateDetailProjects: policy.projects
+            .where((project) => project.detailEnabled)
+            .length,
+        pageCount: remotelyVisible == 0
+            ? 0
+            : (remotelyVisible / _inventoryPageSize).ceil(),
+        estimatedResponseBytes: 0,
+        aliasCollisionCount: 0,
+        unsafeCandidateLabels: 0,
       );
     } catch (_) {
-      return _InventorySnapshot(
-        state: 'unreadable',
-        registeredProjects: 0,
-        policyApprovedProjects: policy.localProjectIds.length,
-        remotelyVisibleProjects: 0,
-        notAllowlistedProjects: 0,
-        unresolvedOrRemoteIneligibleEntries: 0,
-      );
+      return _emptyInventorySnapshot(state: 'unreadable', policy: policy);
     }
   }
+
+  static _InventorySnapshot _emptyInventorySnapshot({
+    required String state,
+    required _PolicySnapshot policy,
+  }) => _InventorySnapshot(
+    state: state,
+    registeredProjects: 0,
+    policyApprovedProjects: policy.localProjectIds.length,
+    remotelyVisibleProjects: 0,
+    notAllowlistedProjects: 0,
+    unresolvedOrRemoteIneligibleEntries: 0,
+    candidates: const [],
+    titleDriftAliases: const [],
+    missingTitleFingerprintAliases: const [],
+    candidateInventoryProjects: policy.projects
+        .where((project) => project.inventoryEnabled)
+        .length,
+    candidateDetailProjects: policy.projects
+        .where((project) => project.detailEnabled)
+        .length,
+    pageCount: 0,
+    estimatedResponseBytes: 0,
+    aliasCollisionCount: 0,
+    unsafeCandidateLabels: 0,
+  );
 
   Future<_GatewaySnapshot> _inspectGateway(
     McpConnectorAutostartConfig config,
@@ -813,53 +1167,141 @@ class McpDisclosurePreviewService {
     return value;
   }
 
-  static _PolicySnapshot? _parsePolicy(List<int> bytes) {
+  static _PolicyParseOutcome _parsePolicy(List<int> bytes) {
     final decoded = _decodeObject(bytes);
     if (decoded == null ||
-        !_sameKeys(decoded.keys.toSet(), const {'schema', 'projects'}) ||
-        decoded['schema'] != _policySchema) {
-      return null;
+        !_sameKeys(decoded.keys.toSet(), const {'schema', 'projects'})) {
+      return const _PolicyParseOutcome('invalid_root');
+    }
+    final schema = decoded['schema'];
+    if (!const {_policySchemaV1, _policySchemaV2}.contains(schema)) {
+      return const _PolicyParseOutcome('unsupported_schema');
     }
     final rows = decoded['projects'];
-    if (rows is! List || rows.length > _maxProjects) return null;
+    if (rows is! List) return const _PolicyParseOutcome('invalid_projects');
+    final maxProjects = schema == _policySchemaV1
+        ? _maxDetailProjects
+        : _maxInventoryProjects;
+    if (rows.length > maxProjects) {
+      return _PolicyParseOutcome(
+        schema == _policySchemaV1
+            ? 'detail_capacity_exceeded'
+            : 'inventory_capacity_exceeded',
+      );
+    }
     final aliases = <String>{};
     final localIds = <String>{};
     final projects = <McpDisclosureProject>[];
+    final entries = <_PolicyEntry>[];
+    var detailProjects = 0;
     for (final rawRow in rows) {
-      if (rawRow is! Map ||
-          !rawRow.keys.every((key) => key is String) ||
-          !rawRow.keys.cast<String>().toSet().containsAll(const {
-            'projectId',
-            'alias',
-          }) ||
-          !rawRow.keys.cast<String>().toSet().every(
-            const {'projectId', 'alias', 'label'}.contains,
-          )) {
-        return null;
+      if (rawRow is! Map || !rawRow.keys.every((key) => key is String)) {
+        return const _PolicyParseOutcome('invalid_entry');
       }
+      final keys = rawRow.keys.cast<String>().toSet();
+      final validShape = schema == _policySchemaV1
+          ? keys.containsAll(const {'projectId', 'alias'}) &&
+                keys.every(const {'projectId', 'alias', 'label'}.contains)
+          : keys.containsAll(const {'projectId', 'alias', 'label', 'access'}) &&
+                keys.every(
+                  const {
+                    'projectId',
+                    'alias',
+                    'label',
+                    'access',
+                    'sourceTitleFingerprint',
+                  }.contains,
+                );
+      if (!validShape) return const _PolicyParseOutcome('invalid_entry');
       final localId = rawRow['projectId'];
       final alias = rawRow['alias'];
       final label = rawRow['label'] ?? alias;
+      late final Set<String> access;
+      if (schema == _policySchemaV1) {
+        access = const {'inventory', 'detail'};
+      } else {
+        final rawAccess = rawRow['access'];
+        if (rawAccess is! List ||
+            rawAccess.isEmpty ||
+            rawAccess.any((item) => item is! String) ||
+            rawAccess.cast<String>().toSet().length != rawAccess.length) {
+          return const _PolicyParseOutcome('invalid_access');
+        }
+        access = rawAccess.cast<String>().toSet();
+        if (!access.contains('inventory') ||
+            !access.every(const {'inventory', 'detail'}.contains)) {
+          return const _PolicyParseOutcome('invalid_access');
+        }
+      }
       if (localId is! String ||
           localId.trim().length < 8 ||
           localId.length > 128 ||
-          localId.codeUnits.any((unit) => unit < 32) ||
-          alias is! String ||
-          !_aliasPattern.hasMatch(alias) ||
-          label is! String ||
-          !_labelPattern.hasMatch(label) ||
-          alias == localId ||
-          label == localId ||
-          !localIds.add(localId) ||
-          !aliases.add(alias)) {
-        return null;
+          localId.codeUnits.any((unit) => unit < 32)) {
+        return const _PolicyParseOutcome('invalid_local_id');
       }
-      projects.add(McpDisclosureProject(alias: alias, label: label));
+      if (alias is! String || !_aliasPattern.hasMatch(alias)) {
+        return const _PolicyParseOutcome('invalid_alias');
+      }
+      if (label is! String ||
+          !_labelPattern.hasMatch(label) ||
+          _tokenShapePattern.hasMatch(label)) {
+        return const _PolicyParseOutcome('unsafe_label');
+      }
+      if (alias == localId || label == localId) {
+        return const _PolicyParseOutcome('local_identifier_exposure');
+      }
+      if (!localIds.add(localId)) {
+        return const _PolicyParseOutcome('duplicate_local_id');
+      }
+      if (!aliases.add(alias)) {
+        return const _PolicyParseOutcome('duplicate_alias');
+      }
+      final sourceTitleFingerprint = rawRow['sourceTitleFingerprint'];
+      if (sourceTitleFingerprint != null &&
+          (sourceTitleFingerprint is! String ||
+              !_sourceTitleFingerprintPattern.hasMatch(
+                sourceTitleFingerprint,
+              ))) {
+        return const _PolicyParseOutcome('invalid_source_title_fingerprint');
+      }
+      final project = McpDisclosureProject(
+        alias: alias,
+        label: label,
+        detailEnabled: access.contains('detail'),
+      );
+      if (project.detailEnabled) detailProjects += 1;
+      projects.add(project);
+      entries.add(
+        _PolicyEntry(
+          localId: localId,
+          project: project,
+          sourceTitleFingerprint: sourceTitleFingerprint as String?,
+        ),
+      );
     }
-    return _PolicySnapshot(
-      digest: sha256.convert(bytes).toString(),
-      projects: List.unmodifiable(projects),
-      localProjectIds: Set.unmodifiable(localIds),
+    for (final project in projects) {
+      for (final localId in localIds) {
+        if (project.alias == localId ||
+            project.label == localId ||
+            (localId.length >= 8 &&
+                (project.alias.contains(localId) ||
+                    project.label.contains(localId)))) {
+          return const _PolicyParseOutcome('local_identifier_exposure');
+        }
+      }
+    }
+    if (detailProjects > _maxDetailProjects) {
+      return const _PolicyParseOutcome('detail_capacity_exceeded');
+    }
+    return _PolicyParseOutcome(
+      'valid',
+      _PolicySnapshot(
+        schema: schema! as String,
+        digest: sha256.convert(bytes).toString(),
+        projects: List.unmodifiable(projects),
+        entries: List.unmodifiable(entries),
+        localProjectIds: Set.unmodifiable(localIds),
+      ),
     );
   }
 
@@ -1017,13 +1459,184 @@ class McpDisclosurePreviewService {
   }
 }
 
+class _AliasProposal {
+  final String? alias;
+  final int collisionAdjustments;
+
+  const _AliasProposal(this.alias, this.collisionAdjustments);
+}
+
+_AliasProposal _proposeAlias(
+  String title,
+  Set<String> usedAliases,
+  Set<String> forbiddenLocalIds,
+) {
+  bool conflicts(String alias) =>
+      usedAliases.contains(alias) ||
+      forbiddenLocalIds.any(
+        (localId) =>
+            alias == localId ||
+            (localId.length >= 8 && alias.contains(localId)),
+      );
+
+  var base = title
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+  if (base.isEmpty) return const _AliasProposal(null, 0);
+  if (base.length > 63)
+    base = base.substring(0, 63).replaceFirst(RegExp(r'-+$'), '');
+  if (!conflicts(base)) return _AliasProposal(base, 0);
+  final baseContainsLocalId = forbiddenLocalIds.any(
+    (localId) =>
+        base == localId || (localId.length >= 8 && base.contains(localId)),
+  );
+  var suffix = 2;
+  while (!baseContainsLocalId && suffix < 10_000) {
+    final suffixText = '-$suffix';
+    final prefixLength = 63 - suffixText.length;
+    final prefix = base.length > prefixLength
+        ? base.substring(0, prefixLength).replaceFirst(RegExp(r'-+$'), '')
+        : base;
+    final candidate = '$prefix$suffixText';
+    if (_aliasPattern.hasMatch(candidate) && !conflicts(candidate)) {
+      return _AliasProposal(candidate, 1);
+    }
+    suffix += 1;
+  }
+  suffix = 1;
+  while (suffix < 10_000) {
+    final candidate = suffix == 1 ? 'portfolio-item' : 'portfolio-item-$suffix';
+    if (!conflicts(candidate)) return _AliasProposal(candidate, 1);
+    suffix += 1;
+  }
+  return const _AliasProposal(null, 1);
+}
+
+String? _unsafeLabelReason(String title) {
+  if (title.codeUnits.any((unit) => unit < 32 || unit == 127)) {
+    return 'control_character';
+  }
+  if (RegExp(r'[\u202A-\u202E\u2066-\u2069]').hasMatch(title)) {
+    return 'bidi_control';
+  }
+  if (!_labelPattern.hasMatch(title)) return 'label_format';
+  if (RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(title)) {
+    return 'email_like';
+  }
+  if (title.contains('://') || title.toLowerCase().startsWith('www.')) {
+    return 'url_like';
+  }
+  if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(title)) return 'path_like';
+  if (RegExp(r'^[0-9a-fA-F]{20,}$').hasMatch(title) ||
+      RegExp(r'^[A-Za-z0-9_-]{32,}$').hasMatch(title)) {
+    return 'token_like';
+  }
+  return null;
+}
+
+String _sourceTitleFingerprint(String title) =>
+    sha256.convert(utf8.encode(title)).toString();
+
+String _visibleText(String value) {
+  final buffer = StringBuffer();
+  for (final rune in value.runes) {
+    if (rune >= 0x20 && rune <= 0x7e) {
+      buffer.writeCharCode(rune);
+    } else {
+      buffer.write('\\u{${rune.toRadixString(16).padLeft(4, '0')}}');
+    }
+  }
+  return buffer.toString();
+}
+
+Map<String, Object?> _inventoryRow(
+  McpLocalProjectRecord record,
+  McpDisclosureProject project,
+) => {
+  'projectId': project.alias,
+  'title': project.label,
+  'status': _safePreviewEnum(record.status, const {
+    'active',
+    'stale',
+    'needs_update',
+    'needs_review',
+    'local_only',
+    'public_mismatch',
+    'paused',
+    'blocked',
+    'completed',
+  }),
+  'phase': _safePreviewEnum(record.phase, const {
+    'idea',
+    'design',
+    'build',
+    'test',
+    'ship',
+    'stabilize',
+  }),
+  'priority': _safePreviewEnum(record.priority, const {
+    'low',
+    'normal',
+    'high',
+    'urgent',
+  }),
+  'needsAttention': record.needsAttention,
+  'freshness': {
+    'status': _safePreviewEnum(record.freshnessStatus, const {
+      'current',
+      'stale',
+      'unknown',
+    }),
+  },
+  'workItems': {
+    'active': record.activeWorkItems,
+    'blocked': record.blockedWorkItems,
+    'blocksProgress': record.blocksProgressWorkItems,
+  },
+  'detailsAvailable': project.detailEnabled,
+};
+
+String _safePreviewEnum(Object? value, Set<String> allowed) =>
+    value is String && allowed.contains(value) ? value : 'unknown';
+
+int _canonicalJsonBytes(Object? value) {
+  Object? canonicalize(Object? item) {
+    if (item is Map) {
+      final result = SplayTreeMap<String, Object?>();
+      for (final entry in item.entries) {
+        if (entry.key is! String) continue;
+        result[entry.key as String] = canonicalize(entry.value);
+      }
+      return result;
+    }
+    if (item is List) return item.map(canonicalize).toList(growable: false);
+    return item;
+  }
+
+  return utf8.encode(jsonEncode(canonicalize(value))).length;
+}
+
 final _aliasPattern = RegExp(r'^[a-z0-9][a-z0-9-]{0,62}$');
 final _labelPattern = RegExp(r'^[A-Za-z0-9][A-Za-z0-9 ._()\-]{0,79}$');
+final _tokenShapePattern = RegExp(r'^(?:[0-9a-fA-F]{20,}|[A-Za-z0-9_-]{32,})$');
+final _sourceTitleFingerprintPattern = RegExp(r'^[0-9a-f]{64}$');
 final _uuidPattern = RegExp(
   r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$',
 );
 
 List<McpDisclosureContract> _contracts(String alias, String label) {
+  final inventoryProject = <String, Object?>{
+    'projectId': alias,
+    'title': label,
+    'status': 'active',
+    'phase': 'build',
+    'priority': 'normal',
+    'needsAttention': false,
+    'freshness': {'status': 'current'},
+    'workItems': {'active': 0, 'blocked': 0, 'blocksProgress': 0},
+    'detailsAvailable': true,
+  };
   final project = <String, Object?>{
     'projectId': alias,
     'title': label,
@@ -1065,18 +1678,20 @@ List<McpDisclosureContract> _contracts(String alias, String label) {
         'projects[].projectId (approved alias)',
         'projects[].title (approved label)',
         'projects[].status/phase/priority',
-        'projects[].workItems/records/freshness/needsAttention',
-        'page.offset/limit/returned/totalApproved/hasMore',
+        'projects[].workItems/freshness.status/needsAttention',
+        'projects[].detailsAvailable',
+        'page.offset/limit/returned/total/truncated/nextOffset',
       ],
       sample: {
-        'schema': _projectionSchema,
-        'projects': [project],
+        'schema': 'project_atlas.remote_project_inventory.v2',
+        'projects': [inventoryProject],
         'page': {
           'offset': 0,
-          'limit': 10,
+          'limit': 64,
           'returned': 1,
-          'totalApproved': 1,
-          'hasMore': false,
+          'total': 1,
+          'truncated': false,
+          'nextOffset': null,
         },
       },
     ),

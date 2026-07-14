@@ -1250,16 +1250,23 @@ class AppDb extends _$AppDb {
 
   // ── Projects ──────────────────────────────────────────────────────────────
 
-  bool _isVisibleProject(Project project) =>
-      project.deletedAt == null &&
-      project.status != 'deleted' &&
-      project.id != kGeneralTasksProjectId &&
-      project.description != kGeneralTasksProjectDescription;
+  bool _isVisibleProject(Project project, {bool includeArchived = true}) {
+    final status = project.status.trim().toLowerCase();
+    return project.deletedAt == null &&
+        status != 'deleted' &&
+        (includeArchived || status != 'archived') &&
+        project.id != kGeneralTasksProjectId &&
+        project.description != kGeneralTasksProjectDescription;
+  }
 
   Stream<List<Project>> watchProjects() =>
-      (select(projects)..orderBy([(t) => OrderingTerm.asc(t.title)]))
-          .watch()
-          .map((rows) => rows.where(_isVisibleProject).toList(growable: false));
+      (select(
+        projects,
+      )..orderBy([(t) => OrderingTerm.asc(t.title)])).watch().map(
+        (rows) => rows
+            .where((project) => _isVisibleProject(project))
+            .toList(growable: false),
+      );
 
   Stream<Project?> watchProject(String id) =>
       (select(projects)..where((t) => t.id.equals(id))).watchSingleOrNull();
@@ -1418,7 +1425,17 @@ class AppDb extends _$AppDb {
         (rows) => rows.where(_isVisibleProject).toList(growable: false),
       );
 
-  Future<List<Project>> getVisibleProjects() => getProjectsFull();
+  Future<List<Project>> getVisibleProjects({bool includeArchived = true}) =>
+      (select(
+        projects,
+      )..orderBy([(t) => OrderingTerm.asc(t.title)])).get().then(
+        (rows) => rows
+            .where(
+              (project) =>
+                  _isVisibleProject(project, includeArchived: includeArchived),
+            )
+            .toList(growable: false),
+      );
 
   Future<ProjectFull?> getProjectFull(String id) =>
       (select(projects)..where((t) => t.id.equals(id))).getSingleOrNull();

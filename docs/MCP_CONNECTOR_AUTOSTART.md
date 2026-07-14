@@ -69,26 +69,36 @@ Create this second ignored file before enabling autostart:
 ```
 
 Start from `docs/examples/atlas_mcp_remote_disclosure.example.json`. Each entry
-contains the private local Atlas project ID plus the alias and label approved
-for remote disclosure:
+contains the private local Atlas project ID plus the alias, label, and explicit
+capabilities approved for remote disclosure:
 
 ```json
 {
-  "schema": "project_atlas.remote_disclosure_policy.v1",
+  "schema": "project_atlas.remote_disclosure_policy.v2",
   "projects": [
     {
       "projectId": "replace-with-local-atlas-project-id",
       "alias": "project-atlas",
-      "label": "Project Atlas"
+      "label": "Project Atlas",
+      "access": ["inventory", "detail"],
+      "sourceTitleFingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
     }
   ]
 }
 ```
 
-The policy is loaded once at gateway startup. Unknown fields, duplicate IDs or
-aliases, invalid aliases, and unsupported schemas are rejected. An explicit
-empty `projects` array is the deny-all configuration. Policy changes require a
-gateway restart.
+Every v2 row requires `inventory`; `detail` is optional and independently
+authorizes status, workload, and planning-context reads. Inventory capacity is
+256 and detail capacity is 64. `sourceTitleFingerprint` is an optional local-only
+SHA-256 baseline of the source title; Settings flags a missing baseline or later
+title drift without forcing an intentionally curated remote label to equal the
+private local title. The all-zero value above is a public placeholder and must
+be replaced with the actual lowercase SHA-256 before relying on drift checks.
+Valid v1 rows remain compatible as both
+capabilities. The policy is loaded once at gateway startup. Unknown fields or
+capabilities, duplicate IDs or aliases, invalid aliases, and unsupported schemas
+are rejected. An explicit empty `projects` array is the deny-all configuration.
+Policy changes require a gateway restart.
 
 ## Tunnel Profile
 
@@ -131,12 +141,15 @@ ignored disclosure audit metadata. If the configured gateway is already running
 on loopback, it also reads the gateway metadata and OAuth protected-resource
 metadata. It never starts, stops, restarts, or writes gateway or tunnel state.
 
-The preview shows the exact four remote tools, approved aliases and labels,
-disclosed field groups per tool, synthetic redacted samples, OAuth mode/scope
-and verifier kind, issuer count, a short policy SHA-256 fingerprint, recent
+The preview shows the exact four remote tools, inventory and detail aliases,
+eligible unenrolled projects with local-only candidate labels and proposed
+aliases, unsafe-label and title-drift warnings, page count, exact compact
+first-page byte estimate, synthetic redacted samples, OAuth mode/scope and
+verifier kind, issuer count, a short policy SHA-256 fingerprint, recent
 metadata-only audit events, and the current policy/gateway metadata match. It
-reports active executable identity as `unverified` because current gateway
-metadata does not attest the process binary.
+does not serialize local IDs or unenrolled labels. It reports active executable
+identity as `unverified` because current gateway metadata does not attest the
+process binary.
 
 ## Logs
 

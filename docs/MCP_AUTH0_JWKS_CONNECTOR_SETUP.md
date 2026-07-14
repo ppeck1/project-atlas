@@ -14,9 +14,10 @@ Do not enable project briefs, queue reads, task context, proposal tools,
 enrichment tools, GitHub refresh, or write tools.
 
 The gateway also requires an ignored, local disclosure policy. OAuth access is
-not disclosure approval by itself: only projects named in that policy can be
-returned, and remote callers address them by policy alias rather than Atlas's
-local project ID.
+not disclosure approval by itself. Policy v2 separates inventory discovery from
+detailed reads: every entry requires `inventory`, while `detail` is optional.
+Remote callers address projects by approved alias rather than Atlas's local
+project ID.
 
 ## Auth0 Values
 
@@ -39,7 +40,8 @@ for ChatGPT.
 
 Create the ignored local policy from the public shape example, then replace the
 placeholder project ID with the real Atlas project ID and choose a non-sensitive
-alias and label:
+alias, label, and capability list. Review the full candidate label list in
+Settings -> Integrations before replacing or restarting the live policy:
 
 ```powershell
 Copy-Item `

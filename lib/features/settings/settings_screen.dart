@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 
 import '../../db/app_db.dart';
 import '../../services/ollama_service.dart';
+import '../../services/atlas_agent_service.dart';
+import '../../services/mcp_disclosure_preview_service.dart';
 import '../../services/project_runtime_service.dart';
 import '../../services/telegram_service.dart';
 import '../../shared/models/app_state.dart';
@@ -308,6 +310,28 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
     return projects.map((project) => project.id).toSet();
   }
 
+  Future<List<McpLocalProjectRecord>> _readMcpLocalProjects() async {
+    final state = AppStateScope.of(context);
+    final projects = await AtlasAgentService(
+      state,
+    ).listProjects(includeArchived: false);
+    return [
+      for (final project in projects)
+        McpLocalProjectRecord(
+          localId: project.id,
+          title: project.title,
+          status: project.status,
+          phase: project.phase,
+          priority: project.priority,
+          freshnessStatus: project.freshness.status,
+          activeWorkItems: project.activeWorkItems,
+          blockedWorkItems: project.blockedWorkItems,
+          blocksProgressWorkItems: project.blocksProgressWorkItems,
+          needsAttention: project.needsAttention,
+        ),
+    ];
+  }
+
   @override
   void dispose() {
     _tgTokenCtrl.dispose();
@@ -438,6 +462,7 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
 
         McpDisclosurePreviewPanel(
           localProjectIdsReader: _readMcpLocalProjectIds,
+          localProjectsReader: _readMcpLocalProjects,
         ),
         const SizedBox(height: 28),
         const Divider(color: _line),

@@ -84,15 +84,23 @@ local paths or private project packet content.
 The tracked gateway prototype narrows that first profile to `list_projects`,
 `get_project_status`, `atlas.workload_snapshot`, and
 `atlas.project_planning_context` only. It requires a local ignored mapping of
-approved project IDs to remote aliases. Tool results are parsed from their MCP
+approved project IDs to remote aliases. Policy v2 gives each row explicit
+`inventory` and optional `detail` capabilities. `list_projects` uses the
+inventory tier; the other three tools and global workload cards use only the
+detail tier. An optional ignored `sourceTitleFingerprint` records the approved
+local-title baseline without returning the title or fingerprint remotely. Valid
+v1 rows remain compatible as inventory plus detail. Tool
+results are parsed from their MCP
 text blocks and rebuilt from exact output allowlists. Planning free text,
 accepted-truth claims, commands, notes, evidence excerpts, and broader reads
 remain blocked until their semantics are hardened.
 
 Settings -> Integrations includes a local-only disclosure preview for this
-remote profile. It shows approved aliases, exact tools, disclosed field groups,
-synthetic redacted samples, OAuth scope/verifier shape, a short policy
-fingerprint, recent metadata-only audit events, and whether the running
+remote profile. It shows inventory and detail aliases separately, eligible
+unenrolled local candidates, proposed aliases, unsafe labels, title drift,
+pagination and byte estimates, exact tools, synthetic redacted samples, OAuth
+scope/verifier shape, a short policy fingerprint, recent metadata-only audit
+events, and whether the running
 loopback gateway metadata matches the current policy. It does not start the
 gateway or tunnel, and it reports active executable identity as unverified
 until process-binary attestation exists.

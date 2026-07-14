@@ -781,7 +781,8 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Stream<List<Project>> watchProjects() => db.watchProjects();
-  Future<List<Project>> getVisibleProjects() => db.getVisibleProjects();
+  Future<List<Project>> getVisibleProjects({bool includeArchived = true}) =>
+      db.getVisibleProjects(includeArchived: includeArchived);
   Stream<Project?> watchProject(String id) => db.watchProject(id);
   Stream<Project?> watchActiveProject() => db.watchActiveProject();
 

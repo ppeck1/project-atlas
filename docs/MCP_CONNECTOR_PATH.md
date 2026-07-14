@@ -109,9 +109,16 @@ The gateway filters `tools/list` and rejects denied `tools/call` requests even
 if a caller sends them directly. ChatGPT permission prompts are not treated as
 authorization.
 
-The gateway will not start without an ignored disclosure policy. The policy
-maps explicitly approved local project IDs to remote aliases and labels. Remote
+The gateway will not start without an ignored disclosure policy. Policy v2
+maps explicitly approved local project IDs to remote aliases, labels, and an
+explicit `access` list. Every row requires `inventory`; `detail` is optional.
+An optional local-only `sourceTitleFingerprint` separates curated remote labels
+from later local-title drift; it is never returned or audited.
+Valid v1 rows normalize to both capabilities during staged migration. Remote
 callers use the alias; local IDs and hidden-project existence are not returned.
+`list_projects` returns the compact inventory tier in deterministic alias order,
+64 rows per page, up to 256 entries. Detailed status, workload, and planning
+context remain limited to at most 64 detail-approved entries.
 Archived projects are unavailable through every remote tool, even if an alias
 remains in the local policy or an older list caller sends
 `includeArchived=true`. Global workload reads first resolve the current
@@ -140,7 +147,9 @@ their semantics are hardened.
 Settings -> Integrations includes a local-only disclosure preview for the
 remote profile. It reads only local ignored config/policy/audit files and
 loopback metadata from an already-running gateway. It shows approved aliases,
-the exact four tools, disclosed field groups, synthetic redacted samples, OAuth
+separate inventory/detail tiers, eligible unenrolled candidates, safe proposed
+aliases, title drift, collisions, page count, exact compact response-byte
+estimates, the exact four tools, synthetic redacted samples, OAuth
 scope/verifier shape, issuer count, short policy fingerprint, recent
 metadata-only audit events, and whether gateway metadata matches the current
 policy. The preview does not start the gateway or tunnel, and active executable

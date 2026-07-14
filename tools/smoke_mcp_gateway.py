@@ -294,12 +294,13 @@ def create_smoke_disclosure_policy(
     policy_path.write_text(
         json.dumps(
             {
-                "schema": "project_atlas.remote_disclosure_policy.v1",
+                "schema": "project_atlas.remote_disclosure_policy.v2",
                 "projects": [
                     {
                         "projectId": selected["id"],
                         "alias": alias,
                         "label": "Atlas Smoke Project",
+                        "access": ["inventory", "detail"],
                     }
                 ],
             }
@@ -511,11 +512,13 @@ def assert_hardened_initialize(response: Any) -> None:
         "remoteWritesEnabled",
         "disclosureScope",
         "absenceDoesNotProveUnregistered",
+        "detailsRequireSeparateApproval",
     }:
         raise AssertionError(f"initialize metadata drifted: {response}")
     if (
-        meta.get("disclosureScope") != "operator_approved_subset"
+        meta.get("disclosureScope") != "operator_approved_portfolio_inventory"
         or meta.get("absenceDoesNotProveUnregistered") is not True
+        or meta.get("detailsRequireSeparateApproval") is not True
     ):
         raise AssertionError(f"initialize disclosure scope drifted: {response}")
 
@@ -529,7 +532,7 @@ def assert_four_remote_tool_calls(
     request_id_start: int,
 ) -> dict[str, str]:
     calls = [
-        ("list_projects", {}, "project_atlas.remote_project_list.v1"),
+        ("list_projects", {}, "project_atlas.remote_project_inventory.v2"),
         (
             "get_project_status",
             {"projectId": project_alias},

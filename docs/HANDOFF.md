@@ -8,20 +8,25 @@ Active work order `WO-RPI-1` is defined in
 `docs/MCP_PORTFOLIO_DISCLOSURE_WORK_ORDER.md`. It plans a tiered remote MCP
 disclosure model: an operator-reviewed compact inventory for every currently
 eligible project, separately approved detailed reads, the same exact four
-read-only tools, and no remote writes. The work order is queued for execution;
-the live gateway remains on the verified two-project policy until the staged
-implementation, privacy review, optimization loop, release build, and explicit
-policy-activation gate pass.
+read-only tools, and no remote writes. The source implementation, focused tests,
+independent privacy review, and controlled optimization measurement are complete.
+The live gateway remains on the verified two-project policy: the 49-project
+candidate has 48 immediately safe labels, one title that needs an
+operator-approved remote replacement, and one safe alias fallback. Activation
+still requires full release verification, exact candidate review, and explicit
+approval.
 
 This v1.4 slice adds the Workboard Planning Layer. A later Shopify SEO hardening slice adds a draft-backed, stage-only Project Detail Shopify SEO review workflow; this document preserves the v1.4 release evidence below and should not be read as the newest feature inventory by itself.
 
 Current MCP hardening continuation: Settings -> Integrations now includes a
 local-only ChatGPT remote disclosure preview. It reads ignored connector
-config/policy/audit metadata and loopback gateway metadata, shows approved
-aliases, exact tools, disclosed field groups, OAuth scope/verifier shape, short
-policy fingerprint, recent safe audit metadata, and synthetic redacted samples,
-and does not start the gateway or tunnel. Active executable identity remains
-explicitly unverified until process attestation exists.
+config/policy/audit metadata and loopback gateway metadata; separates inventory
+and detail aliases; shows eligible unenrolled candidates, escaped unsafe labels,
+stable alias proposals, title-baseline drift, bounded policy errors, page count,
+byte estimates, exact tools, OAuth shape, short policy fingerprint, recent safe
+audit metadata, and synthetic redacted samples. It does not start the gateway or
+tunnel or serialize local IDs/unenrolled labels. Active executable identity
+remains explicitly unverified until process attestation exists.
 
 - Work items now carry planning metadata: readiness, size, risk, suggested actor, verification needed, next action, planning notes, and last reviewed timestamp.
 - Existing work-item `blocked_reason` remains the blocker source of truth for work items.
@@ -42,16 +47,42 @@ explicitly unverified until process attestation exists.
 
 | Field | Value |
 |---|---|
-| Run ID | `20260710-a0b-disclosure-preview` |
-| Run State | A0b remote MCP disclosure preview merged |
-| Last Verified At | 2026-07-10 |
-| Validation State | complete locally and in CI: independent review, format, analyze, focused preview/autostart tests, Python remote-policy tests, full suite, release build, gateway smoke, and GitHub Actions CI |
-| Release Commit | `c3e056d46fb87ed451f59bd47174ae95a1de0c08` (PR #8 head) |
-| Accepted Public Main Hash | `583928a08058b946a826258ba889626c8d8c8f5f` (PR #8 merged 2026-07-10) |
+| Run ID | `20260714-wo-rpi1-implementation` |
+| Run State | source implemented; production activation gated on operator label review |
+| Last Verified At | 2026-07-14 |
+| Validation State | source candidate fully verified; production activation remains gated on one operator-approved replacement label |
+| Release Commit | pending final implementation commit |
+| Accepted Public Main Hash | `242914c3db034da862881192876d78395ad49307` (accepted base before WO-RPI-1) |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
 ## Validation Evidence
 
+- WO-RPI-1 source verification passed: Python policy/gateway tests (`27/27`),
+  Dart formatting (`90` files, `0` changes), `flutter analyze` (no issues),
+  focused Flutter tests (`47/47`), full Flutter suite (`273` passed, `1`
+  expected environment-gated skip), build runner (`119` outputs), Windows
+  release build, and full temporary-gateway smoke. The smoke retained exactly
+  four projected tools, rejected all 29 hidden tools, emitted 46 metadata-only
+  audit events, and passed OAuth/JWKS challenge, metadata, origin, and negative
+  path checks. Release executable SHA-256:
+  `F3C86C08DF95D4FBF26F31D113250C225C7276D4A1DA8117487975EC71962033`.
+- Final production-boundary readback confirmed that port 4874 still serves the
+  accepted v1 two-project policy, the live policy SHA-256 still matches the
+  pre-WO-RPI-1 backup, policy-match metadata is true, the allowlist remains four
+  tools, deny-by-default remains enabled, and the existing gateway and tunnel
+  processes remain alive. No v2 candidate policy was activated.
+- WO-RPI-1 controlled portfolio measurement used a temporary localhost-only v2
+  policy and audit with the accepted release executable; production port 4874,
+  policy, and tunnel were unchanged. Eligible local inventory: 49. Immediately
+  safe candidate inventory: 48; detail tier: 2; unsafe labels requiring review:
+  1; alias safety adjustments: 1. The no-argument list returned all 48 rows in
+  one page: 12,356-byte inner DTO, 14,302-byte projected response, about 3,089
+  estimated tokens, 297.96 response bytes/project, gateway p50 3,101.5 ms and
+  p95 3,219 ms. Baseline v1 gateway p95 was 3,375 ms.
+- Independent repair verification passed the 128 KiB/256-row boundary,
+  Python/Dart label-validation parity, bounded parse diagnostics, escaped
+  bidi/control rendering, and source-title-fingerprint drift baseline with no
+  remaining P1/P2 finding.
 - A0b remote MCP disclosure preview closeout: PR #8 merged to public `main`
   at `583928a08058b946a826258ba889626c8d8c8f5f`. GitHub Actions CI run
   `29114864112` passed. Local validation before merge: `flutter analyze`,

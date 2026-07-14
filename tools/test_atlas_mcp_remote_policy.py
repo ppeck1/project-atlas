@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from pathlib import Path
 try:
     from atlas_mcp_remote_policy import (
         DISCLOSURE_POLICY_SCHEMA,
+        DISCLOSURE_POLICY_SCHEMA_V2,
         DisclosurePolicyError,
         RemoteCallContext,
         RemoteProjectionError,
@@ -21,6 +23,7 @@ try:
 except ModuleNotFoundError:
     from tools.atlas_mcp_remote_policy import (
         DISCLOSURE_POLICY_SCHEMA,
+        DISCLOSURE_POLICY_SCHEMA_V2,
         DisclosurePolicyError,
         RemoteCallContext,
         RemoteProjectionError,
@@ -115,12 +118,289 @@ class RemotePolicyTest(unittest.TestCase):
                 "schema": DISCLOSURE_POLICY_SCHEMA,
                 "projects": [{"projectId": "same-id", "alias": "same-id"}],
             },
+            {
+                "schema": DISCLOSURE_POLICY_SCHEMA,
+                "projects": [
+                    {
+                        "projectId": "local-token-label",
+                        "alias": "safe-alias",
+                        "label": "0123456789abcdef0123456789abcdef01234567",
+                    }
+                ],
+            },
+            {
+                "schema": DISCLOSURE_POLICY_SCHEMA,
+                "projects": [
+                    {
+                        "projectId": "local-project-one",
+                        "alias": "safe-alias-one",
+                        "label": "Safe Label One",
+                    },
+                    {
+                        "projectId": "local-project-two",
+                        "alias": "local-project-one-copy",
+                        "label": "Safe Label Two",
+                    },
+                ],
+            },
         ]
         for index, document in enumerate(invalid_documents):
             path = Path(self.temp.name) / f"invalid-{index}.json"
             path.write_text(json.dumps(document), encoding="utf-8")
             with self.subTest(index=index), self.assertRaises(DisclosurePolicyError):
                 load_disclosure_policy(path)
+
+    def test_v1_policy_normalizes_every_project_to_inventory_and_detail(self) -> None:
+        self.assertEqual(self.policy.schema, DISCLOSURE_POLICY_SCHEMA)
+        self.assertEqual(self.approved.access, frozenset({'inventory', 'detail'}))
+        self.assertEqual(self.policy.inventory_projects, (self.approved,))
+        self.assertEqual(self.policy.detail_projects, (self.approved,))
+
+    def test_v2_policy_separates_inventory_from_detail_access(self) -> None:
+        self.policy_path.write_text(
+            json.dumps(
+                {
+                    'schema': DISCLOSURE_POLICY_SCHEMA_V2,
+                    'projects': [
+                        {
+                            'projectId': 'local-approved',
+                            'alias': 'approved-project',
+                            'label': 'Approved Project',
+                            'access': ['inventory', 'detail'],
+                        },
+                        {
+                            'projectId': 'local-inventory-only',
+                            'alias': 'inventory-only',
+                            'label': 'Inventory Only',
+                            'access': ['inventory'],
+                        },
+                    ],
+                }
+            ),
+            encoding='utf-8',
+        )
+        policy = load_disclosure_policy(self.policy_path)
+        self.assertEqual(len(policy.inventory_projects), 2)
+        self.assertEqual(len(policy.detail_projects), 1)
+        self.assertIn('inventory-only', policy.inventory_by_alias)
+        self.assertNotIn('inventory-only', policy.detail_by_alias)
+
+        request = {
+            'jsonrpc': '2.0',
+            'id': 2,
+            'method': 'tools/call',
+            'params': {
+                'name': 'get_project_status',
+                'arguments': {'projectId': 'inventory-only'},
+            },
+        }
+        with self.assertRaises(RemoteProjectionError) as caught:
+            prepare_remote_tool_request(request, policy)
+        self.assertEqual(caught.exception.code, 'not_found')
+
+    def test_v2_policy_rejects_unsafe_capabilities_and_capacity_overflow(self) -> None:
+        cases = [
+            [
+                {
+                    'projectId': 'local-project-000',
+                    'alias': 'project-000',
+                    'label': 'Project 000',
+                    'access': ['detail'],
+                }
+            ],
+            [
+                {
+                    'projectId': 'local-project-000',
+                    'alias': 'project-000',
+                    'label': 'Project 000',
+                    'access': ['inventory', 'inventory'],
+                }
+            ],
+            [
+                {
+                    'projectId': 'local-project-000',
+                    'alias': 'project-000',
+                    'label': 'Project 000',
+                    'access': ['inventory', 'admin'],
+                }
+            ],
+            [
+                {
+                    'projectId': 'local-project-000',
+                    'alias': 'project-000',
+                    'label': 'Project 000',
+                    'access': ['inventory'],
+                    'sourceTitleFingerprint': 'not-a-sha256',
+                }
+            ],
+        ]
+        cases.append(
+            [
+                {
+                    'projectId': f'local-project-{index:03d}',
+                    'alias': f'project-{index:03d}',
+                    'label': f'Project {index:03d}',
+                    'access': ['inventory'],
+                }
+                for index in range(257)
+            ]
+        )
+        cases.append(
+            [
+                {
+                    'projectId': f'local-detail-{index:03d}',
+                    'alias': f'detail-{index:03d}',
+                    'label': f'Detail {index:03d}',
+                    'access': ['inventory', 'detail'],
+                }
+                for index in range(65)
+            ]
+        )
+        for index, projects in enumerate(cases):
+            path = Path(self.temp.name) / f'unsafe-v2-{index}.json'
+            path.write_text(
+                json.dumps(
+                    {'schema': DISCLOSURE_POLICY_SCHEMA_V2, 'projects': projects}
+                ),
+                encoding='utf-8',
+            )
+            with self.subTest(index=index), self.assertRaises(DisclosurePolicyError):
+                load_disclosure_policy(path)
+
+    def test_v2_accepts_capacity_boundary_and_paginates_without_gaps(self) -> None:
+        projects = [
+            {
+                'projectId': f'local-project-{index:03d}',
+                'alias': f'project-{index:03d}',
+                'label': f'Project {index:03d}',
+                'access': (
+                    ['inventory', 'detail'] if index < 2 else ['inventory']
+                ),
+            }
+            for index in range(256)
+        ]
+        self.policy_path.write_text(
+            json.dumps(
+                {'schema': DISCLOSURE_POLICY_SCHEMA_V2, 'projects': projects}
+            ),
+            encoding='utf-8',
+        )
+        policy = load_disclosure_policy(self.policy_path)
+        payload = [
+            {
+                'id': row['projectId'],
+                'status': 'active',
+                'phase': 'build',
+                'priority': 'normal',
+                'freshness': {'status': 'current'},
+                'activeWorkItems': index,
+                'blockedWorkItems': 0,
+            }
+            for index, row in enumerate(projects)
+        ]
+        aliases: list[str] = []
+        for offset in range(0, 256, 64):
+            outcome = project_remote_tool_response(
+                wire(payload),
+                RemoteCallContext('list_projects', offset=offset, limit=64),
+                policy,
+                max_response_bytes=65_536,
+            )
+            projected = decode_projected(outcome.response)
+            page_aliases = [row['projectId'] for row in projected['projects']]
+            self.assertEqual(len(page_aliases), 64)
+            aliases.extend(page_aliases)
+            self.assertEqual(projected['page']['total'], 256)
+            self.assertEqual(
+                projected['page']['nextOffset'],
+                offset + 64 if offset < 192 else None,
+            )
+        self.assertEqual(aliases, [f'project-{index:03d}' for index in range(256)])
+        self.assertEqual(len(set(aliases)), 256)
+        self.assertIs(aliases[0] != aliases[-1], True)
+
+    def test_v2_accepts_256_maximum_length_rows_under_policy_byte_cap(self) -> None:
+        projects = []
+        for index in range(256):
+            local_prefix = f'local-{index:03d}-'
+            alias_prefix = f'project-{index:03d}-'
+            label_prefix = f'Project {index:03d} '
+            projects.append(
+                {
+                    'projectId': local_prefix + ('x' * (128 - len(local_prefix))),
+                    'alias': alias_prefix + ('a' * (63 - len(alias_prefix))),
+                    'label': label_prefix + ('A ' * 40)[: 80 - len(label_prefix)],
+                    'access': ['inventory'],
+                    'sourceTitleFingerprint': hashlib.sha256(
+                        f'Private source title {index}'.encode('utf-8')
+                    ).hexdigest(),
+                }
+            )
+        encoded = json.dumps(
+            {'schema': DISCLOSURE_POLICY_SCHEMA_V2, 'projects': projects}
+        )
+        self.assertGreater(len(encoded.encode('utf-8')), 64 * 1024)
+        self.policy_path.write_text(encoded, encoding='utf-8')
+        policy = load_disclosure_policy(self.policy_path)
+        self.assertEqual(len(policy.inventory_projects), 256)
+
+    def test_inventory_only_projects_are_excluded_from_every_detail_path(self) -> None:
+        self.policy_path.write_text(
+            json.dumps(
+                {
+                    'schema': DISCLOSURE_POLICY_SCHEMA_V2,
+                    'projects': [
+                        {
+                            'projectId': 'local-approved',
+                            'alias': 'approved-project',
+                            'label': 'Approved Project',
+                            'access': ['inventory', 'detail'],
+                        },
+                        {
+                            'projectId': 'local-inventory-only',
+                            'alias': 'inventory-only',
+                            'label': 'Inventory Only',
+                            'access': ['inventory'],
+                        },
+                    ],
+                }
+            ),
+            encoding='utf-8',
+        )
+        policy = load_disclosure_policy(self.policy_path)
+        for tool in (
+            'get_project_status',
+            'atlas.project_planning_context',
+            'atlas.workload_snapshot',
+        ):
+            request = {
+                'jsonrpc': '2.0',
+                'id': 2,
+                'method': 'tools/call',
+                'params': {
+                    'name': tool,
+                    'arguments': {'projectId': 'inventory-only'},
+                },
+            }
+            with self.subTest(tool=tool), self.assertRaises(
+                RemoteProjectionError
+            ) as caught:
+                prepare_remote_tool_request(request, policy)
+            self.assertEqual(caught.exception.code, 'not_found')
+
+        visibility = attach_remote_project_visibility(
+            wire(
+                [
+                    {'id': 'local-approved', 'status': 'active'},
+                    {'id': 'local-inventory-only', 'status': 'active'},
+                ]
+            ),
+            RemoteCallContext('atlas.workload_snapshot'),
+            policy,
+        )
+        self.assertEqual(
+            visibility.visible_local_project_ids, frozenset({'local-approved'})
+        )
 
     def test_request_rewrite_uses_aliases_and_forces_archived_false(self) -> None:
         list_request = {
@@ -129,7 +409,7 @@ class RemotePolicyTest(unittest.TestCase):
             "method": "tools/call",
             "params": {
                 "name": "list_projects",
-                "arguments": {"includeArchived": True, "offset": 2, "limit": 999},
+                "arguments": {"includeArchived": True, "offset": 2, "limit": 64},
             },
         }
         prepared, context = prepare_remote_tool_request(list_request, self.policy)
@@ -138,7 +418,38 @@ class RemotePolicyTest(unittest.TestCase):
             {"name": "list_projects", "arguments": {"includeArchived": False}},
         )
         self.assertEqual(context.offset, 2)
-        self.assertEqual(context.limit, 25)
+        self.assertEqual(context.limit, 64)
+
+        list_request['params']['arguments']['limit'] = 65
+        with self.assertRaises(RemoteProjectionError) as caught:
+            prepare_remote_tool_request(list_request, self.policy)
+        self.assertEqual(caught.exception.code, 'invalid_params')
+
+        invalid_pages = (
+            {'offset': -1},
+            {'offset': True},
+            {'limit': 0},
+            {'limit': False},
+            {'limit': 65},
+        )
+        for arguments in invalid_pages:
+            list_request['params']['arguments'] = arguments
+            with self.subTest(arguments=arguments), self.assertRaises(
+                RemoteProjectionError
+            ) as caught:
+                prepare_remote_tool_request(list_request, self.policy)
+            self.assertEqual(caught.exception.code, 'invalid_params')
+
+        past_total = project_remote_tool_response(
+            wire([{'id': 'local-approved', 'status': 'active'}]),
+            RemoteCallContext('list_projects', offset=99, limit=64),
+            self.policy,
+            max_response_bytes=65_536,
+        )
+        projected = decode_projected(past_total.response)
+        self.assertEqual(projected['projects'], [])
+        self.assertEqual(projected['page']['total'], 1)
+        self.assertIsNone(projected['page']['nextOffset'])
 
         status_request = {
             "jsonrpc": "2.0",
@@ -254,9 +565,10 @@ class RemotePolicyTest(unittest.TestCase):
             data,
             {
                 "code": "not_found",
-                "scope": "operator_approved_subset",
+                "scope": "operator_approved_detail_subset",
                 "denyByDefault": True,
                 "absenceDoesNotProveUnregistered": True,
+                "inventoryVisibilityDoesNotGrantDetails": True,
             },
         )
         self.assertNotIn("hidden", json.dumps(data).lower())
@@ -366,11 +678,13 @@ class RemotePolicyTest(unittest.TestCase):
         self.assertEqual(
             projected["disclosure"],
             {
-                "scope": "operator_approved_subset",
+                "scope": "operator_approved_portfolio_inventory",
                 "denyByDefault": True,
                 "absenceDoesNotProveUnregistered": True,
+                "detailsRequireSeparateApproval": True,
             },
         )
+        self.assertEqual(projected['schema'], 'project_atlas.remote_project_inventory.v2')
         self.assertEqual(len(projected["projects"]), 1)
         project = projected["projects"][0]
         self.assertEqual(
@@ -382,24 +696,19 @@ class RemotePolicyTest(unittest.TestCase):
                 "phase",
                 "priority",
                 "workItems",
-                "records",
                 "freshness",
                 "needsAttention",
+                "detailsAvailable",
             },
         )
         self.assertEqual(project["projectId"], "approved-project")
         self.assertEqual(project["title"], "Approved Project")
         self.assertEqual(
             set(project["freshness"]),
-            {
-                "status",
-                "confidence",
-                "staleReasons",
-                "attentionReasons",
-                "planningActionRequired",
-            },
+            {"status"},
         )
-        self.assertIs(project["freshness"]["planningActionRequired"], True)
+        self.assertIs(project['detailsAvailable'], True)
+        self.assertIsNone(projected['page']['nextOffset'])
         encoded = json.dumps(projected)
         for forbidden in (
             "local-approved",

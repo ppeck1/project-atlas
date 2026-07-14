@@ -9,11 +9,13 @@ typedef McpDisclosurePreviewLoader = Future<McpDisclosurePreview> Function();
 class McpDisclosurePreviewPanel extends StatefulWidget {
   final McpDisclosurePreviewLoader? loader;
   final McpLocalProjectIdsReader? localProjectIdsReader;
+  final McpLocalProjectsReader? localProjectsReader;
 
   const McpDisclosurePreviewPanel({
     super.key,
     this.loader,
     this.localProjectIdsReader,
+    this.localProjectsReader,
   });
 
   @override
@@ -40,6 +42,7 @@ class _McpDisclosurePreviewPanelState extends State<McpDisclosurePreviewPanel> {
           ? await loader()
           : await McpDisclosurePreviewService(
               localProjectIdsReader: widget.localProjectIdsReader,
+              localProjectsReader: widget.localProjectsReader,
             ).inspect();
     } catch (_) {
       preview = McpDisclosurePreview.unavailable(
@@ -142,11 +145,11 @@ class _McpDisclosurePreviewPanelState extends State<McpDisclosurePreviewPanel> {
               _VisibilityFacts(preview: preview),
               const SizedBox(height: 16),
               Text(
-                'Approved remote projects (${preview.approvedProjects.length})',
+                'Portfolio inventory tier (${preview.inventoryProjects.length})',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 6),
-              if (preview.approvedProjects.isEmpty)
+              if (preview.inventoryProjects.isEmpty)
                 const Text(
                   'None. The remote boundary is deny-all.',
                   style: TextStyle(color: Colors.white60),
@@ -156,9 +159,83 @@ class _McpDisclosurePreviewPanelState extends State<McpDisclosurePreviewPanel> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final project in preview.approvedProjects)
+                    for (final project in preview.inventoryProjects)
                       Chip(label: Text('${project.label} (${project.alias})')),
                   ],
+                ),
+              const SizedBox(height: 12),
+              Text(
+                'Detail-approved tier (${preview.detailProjects.length})',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+              if (preview.detailProjects.isEmpty)
+                const Text(
+                  'None. Detailed project reads are deny-all.',
+                  style: TextStyle(color: Colors.white60),
+                )
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final project in preview.detailProjects)
+                      Chip(label: Text('${project.label} (${project.alias})')),
+                  ],
+                ),
+              const SizedBox(height: 12),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: Text(
+                  'Eligible, not enrolled (${preview.eligibleNotEnrolledProjects.length})',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text(
+                  'Local-only candidate labels. Review every label and alias before writing policy v2.',
+                  style: TextStyle(fontSize: 11),
+                ),
+                children: [
+                  if (preview.eligibleNotEnrolledProjects.isEmpty)
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('No eligible unenrolled projects.'),
+                    )
+                  else
+                    for (final candidate in preview.eligibleNotEnrolledProjects)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 5),
+                          child: Text(
+                            candidate.requiresReview
+                                ? '${candidate.displayTitle} - review required (${candidate.unsafeReason ?? 'alias unavailable'})'
+                                : '${candidate.displayTitle} (${candidate.proposedAlias})',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: candidate.requiresReview
+                                  ? Colors.orangeAccent
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ),
+                ],
+              ),
+              if (preview.titleDriftAliases.isNotEmpty)
+                Text(
+                  'Title drift requires review: ${preview.titleDriftAliases.join(', ')}',
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    fontSize: 12,
+                  ),
+                ),
+              if (preview.missingTitleFingerprintAliases.isNotEmpty)
+                Text(
+                  'Approval baseline missing: ${preview.missingTitleFingerprintAliases.join(', ')}',
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    fontSize: 12,
+                  ),
                 ),
               const SizedBox(height: 16),
               const Text(
@@ -290,20 +367,37 @@ class _VisibilityFacts extends StatelessWidget {
               : _words(preview.inventoryState),
         ),
         _Fact(
-          label: 'Remote visibility',
+          label: 'Current policy',
           value:
-              '${preview.policyApprovedProjects} policy-approved - '
-              '${preview.remotelyVisibleProjects} visible',
+              '${preview.inventoryProjects.length} inventory - '
+              '${preview.detailProjects.length} detail',
         ),
         _Fact(
-          label: 'Policy exclusions',
-          value: '${preview.notAllowlistedProjects} not allowlisted',
+          label: 'Candidate inventory',
+          value:
+              '${preview.candidateInventoryProjects} project(s) - '
+              '${preview.inventoryPageCount} page(s) - '
+              '${preview.estimatedInventoryResponseBytes} B first page',
         ),
         _Fact(
           label: 'Unresolved entries',
           value:
               '${preview.unresolvedOrRemoteIneligibleEntries} unresolved or '
               'remote-ineligible',
+        ),
+        _Fact(
+          label: 'Review warnings',
+          value:
+              '${preview.unsafeCandidateLabels} unsafe label(s) - '
+              '${preview.aliasCollisionCount} alias adjustment(s) - '
+              '${preview.titleDriftAliases.length} title drift - '
+              '${preview.missingTitleFingerprintAliases.length} missing baseline',
+        ),
+        _Fact(
+          label: 'Activation',
+          value: preview.restartRequired
+              ? 'policy restart required'
+              : 'gateway policy identity matched',
         ),
       ],
     );

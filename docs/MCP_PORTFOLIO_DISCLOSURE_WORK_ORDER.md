@@ -6,7 +6,7 @@
 - Basis: accepted `origin/main` commit `242914c3db034da862881192876d78395ad49307`
 - Planning branch: `planning/mcp-portfolio-inventory-20260714`
 - Atlas queue task: active and verified as `pending`, `ready`, and high priority; the local task ID is retained only in Atlas and the ignored run ledger
-Implementation state: specification and queue activation only; no runtime disclosure expansion has been applied
+Implementation state: source implementation and controlled candidate verification complete; production disclosure remains on the backed-up v1 two-project policy pending operator review of one unsafe local title, final accepted commit/artifact, and explicit activation approval
 
 ## Goal
 
