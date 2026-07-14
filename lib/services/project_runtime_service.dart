@@ -7,8 +7,8 @@ import 'package:yaml/yaml.dart';
 
 import '../db/app_db.dart';
 
-const defaultDevLaunchpadYamlPath = r'.local\dev_launchpad.yaml';
-const defaultProjectOpsCapsulePath = r'.local\Project_Ops_Capsule';
+const defaultRuntimeManifestPath = r'.local\runtime_manifest.yaml';
+const defaultProjectProtocolPath = r'.local\project_protocol';
 const defaultCapsulePythonPath = 'python';
 
 class RuntimeUrl {
@@ -82,7 +82,7 @@ class ProjectRuntimeProfileDraft {
         autostart: false,
         capsuleEnabled: true,
         capsuleMode: 'check',
-        capsuleSourcePath: defaultProjectOpsCapsulePath,
+        capsuleSourcePath: defaultProjectProtocolPath,
         capsuleProfile: 'software_project',
       );
 
@@ -145,22 +145,22 @@ class ProjectRuntimeProfileDraft {
 }
 
 class ProjectRuntimeDefaultsSettings {
-  final String? devLaunchpadYamlPath;
+  final String? runtimeManifestPath;
   final bool capsuleEnabled;
   final String capsuleMode;
   final String capsuleSourcePath;
   final String? capsuleProfile;
 
   const ProjectRuntimeDefaultsSettings({
-    this.devLaunchpadYamlPath,
+    this.runtimeManifestPath,
     this.capsuleEnabled = true,
     this.capsuleMode = 'check',
-    this.capsuleSourcePath = defaultProjectOpsCapsulePath,
+    this.capsuleSourcePath = defaultProjectProtocolPath,
     this.capsuleProfile = 'software_project',
   });
 
-  String get resolvedDevLaunchpadYamlPath =>
-      _blankToNull(devLaunchpadYamlPath) ?? defaultDevLaunchpadYamlPath;
+  String get resolvedRuntimeManifestPath =>
+      _blankToNull(runtimeManifestPath) ?? defaultRuntimeManifestPath;
 
   ProjectRuntimeProfileDraft emptyDraft({String? workingDirectory}) =>
       applyToImportedDraft(
@@ -183,28 +183,28 @@ class ProjectRuntimeDefaultsSettings {
     capsuleEnabled: capsuleEnabled,
     capsuleMode: normalizeCapsuleMode(capsuleMode),
     capsuleSourcePath:
-        _blankToNull(capsuleSourcePath) ?? defaultProjectOpsCapsulePath,
+        _blankToNull(capsuleSourcePath) ?? defaultProjectProtocolPath,
     capsuleProfile: _blankToNull(capsuleProfile),
     importSource: draft.importSource,
     lastImportedAt: draft.lastImportedAt,
   );
 }
 
-class DevLaunchpadRuntimeImporter {
-  const DevLaunchpadRuntimeImporter();
+class RuntimeManifestImporter {
+  const RuntimeManifestImporter();
 
   Future<ProjectRuntimeProfileDraft?> readProfileForProject({
     required String projectTitle,
-    String yamlPath = defaultDevLaunchpadYamlPath,
+    String yamlPath = defaultRuntimeManifestPath,
   }) async {
     final file = File(yamlPath);
     if (!await file.exists()) {
-      throw StateError('Dev Launchpad YAML not found: $yamlPath');
+      throw StateError('Runtime manifest not found: $yamlPath');
     }
     final content = await file.readAsString();
     final decoded = loadYaml(content);
     if (decoded is! YamlMap) {
-      throw const FormatException('Dev Launchpad YAML root is not a map.');
+      throw const FormatException('Runtime manifest root is not a map.');
     }
     final apps = decoded['apps'];
     if (apps is! YamlList) return null;
@@ -233,7 +233,7 @@ class DevLaunchpadRuntimeImporter {
       autostart: match['autostart'] == true,
       capsuleEnabled: true,
       capsuleMode: 'check',
-      capsuleSourcePath: defaultProjectOpsCapsulePath,
+      capsuleSourcePath: defaultProjectProtocolPath,
       capsuleProfile: 'software_project',
       importSource: yamlPath,
       lastImportedAt: DateTime.now(),
@@ -409,7 +409,7 @@ class ProjectRuntimeService {
       profileId: profile.id,
       projectId: profile.projectId,
       action: 'capsule',
-      command: 'Project Ops Capsule doctor',
+      command: 'Project protocol verification',
     );
     final capsule = await _runCapsulePreflight(profile, force: true);
     return db.finishProjectRuntimeRun(
@@ -599,7 +599,7 @@ Write-Output \$process.Id
       );
     }
     final capsuleRoot =
-        _blankToNull(profile.capsuleSourcePath) ?? defaultProjectOpsCapsulePath;
+        _blankToNull(profile.capsuleSourcePath) ?? defaultProjectProtocolPath;
     final script = File(p.join(capsuleRoot, 'scripts', 'capsule_doctor.py'));
     if (!await script.exists()) {
       return _CapsulePreflightResult(

@@ -85,7 +85,7 @@ class AtlasMcpAdapter {
     AtlasMcpTool(
       name: 'get_project_capsule_status',
       description:
-          'Read Project Ops Capsule metadata and local evidence availability for one linked project.',
+          'Read project protocol metadata and local evidence availability for one linked project.',
       inputSchema: _projectIdSchema,
     ),
     AtlasMcpTool(

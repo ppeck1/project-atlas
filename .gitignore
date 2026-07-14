@@ -44,15 +44,10 @@ telegram_token.txt
 # Local demo/runtime scratch
 .demo_appdata/
 
-# Project Ops Capsule local evidence/outboxes
-.project/runs/
-.project/atlas_outbox/
-.project/boh_outbox/
-.project/verification/
-
-# Local database backups and launch logs — NEVER commit (contain real personal data)
-.project/db_backups/
-.project/*.log
+# Local operations metadata, evidence, outboxes, logs, and database backups may
+# contain project records or machine-specific paths. Keep the entire directory
+# outside the public source tree.
+.project/
 
 # Installer output (built artifacts, not source)
 dist/

@@ -124,7 +124,8 @@ class LocalProjectRefreshService {
     'EXPORT_MANIFEST.md',
   ];
 
-  static const String projectManifestRelativePath = '.project/launchpad.json';
+  static const String projectManifestRelativePath =
+      '.project/runtime_manifest.json';
 
   static const Set<String> mediaExtensions = {
     'jpg',
@@ -322,7 +323,7 @@ class LocalProjectRefreshService {
       );
     }
 
-    final manifest = await _readLaunchpadManifest(root, warnings);
+    final manifest = await _readRuntimeManifest(root, warnings);
     final files = <String, File>{};
     Future<void> addDocumentPath(String relativePath) async {
       final normalized = _normalizeRelativePath(relativePath);
@@ -376,7 +377,7 @@ class LocalProjectRefreshService {
     ];
 
     return LocalProjectRefreshPlan(
-      profile: _looksLikeBoh(docsByName, root.path) ? 'boh' : 'generic',
+      profile: docsByName.isEmpty ? 'generic' : 'operations_docs',
       rootPath: root.path,
       actions: actions,
       warnings: warnings,
@@ -537,12 +538,12 @@ class LocalProjectRefreshService {
         continue;
       }
 
-      if (_isTradeCraftCardMarkdown(file.relativePath)) {
+      if (_isMarkdownCard(file.relativePath)) {
         add(
           _generatedDocumentAction(
             file: file,
             sourceKey: '${file.relativePath}#card',
-            library: 'trade_craft',
+            library: 'markdown_cards',
             pattern: 'cards/*.md',
             format: 'markdown',
             title:
@@ -550,12 +551,12 @@ class LocalProjectRefreshService {
             body: text,
           ),
         );
-      } else if (_isProductivityGoalCard(file.relativePath)) {
+      } else if (_isGoalCard(file.relativePath)) {
         add(
           _generatedDocumentAction(
             file: file,
             sourceKey: '${file.relativePath}#card',
-            library: 'productivity',
+            library: 'goal_cards',
             pattern: '*.goalcard.md',
             format: 'markdown',
             title:
@@ -563,12 +564,12 @@ class LocalProjectRefreshService {
             body: text,
           ),
         );
-      } else if (_isPhilosophyJsonCards(file.relativePath)) {
-        for (final action in _philosophyJsonCardActions(file, text, warnings)) {
+      } else if (_isJsonCards(file.relativePath)) {
+        for (final action in _jsonCardActions(file, text, warnings)) {
           add(action);
         }
-      } else if (_isPreIndustrializationHtml(file.relativePath)) {
-        for (final action in _preIndustrializationHtmlActions(file, text)) {
+      } else if (_isHtmlCardCollection(file.relativePath)) {
+        for (final action in _htmlCardActions(file, text)) {
           add(action);
         }
       }
@@ -587,7 +588,7 @@ class LocalProjectRefreshService {
     return actions;
   }
 
-  List<LocalProjectRefreshAction> _philosophyJsonCardActions(
+  List<LocalProjectRefreshAction> _jsonCardActions(
     _RefreshFile file,
     String text,
     List<String> warnings,
@@ -596,9 +597,7 @@ class LocalProjectRefreshService {
     try {
       decoded = jsonDecode(text);
     } catch (error) {
-      warnings.add(
-        '${file.relativePath}: could not parse philosophy JSON: $error',
-      );
+      warnings.add('${file.relativePath}: could not parse card JSON: $error');
       return const [];
     }
 
@@ -610,7 +609,7 @@ class LocalProjectRefreshService {
       final title =
           _stringField(card, const ['title', 'name', 'label', 'heading']) ??
           id ??
-          'Philosophy card ${i + 1}';
+          'JSON card ${i + 1}';
       final body =
           _stringField(card, const [
             'body',
@@ -625,7 +624,7 @@ class LocalProjectRefreshService {
         _generatedDocumentAction(
           file: file,
           sourceKey: '${file.relativePath}#card-$keySuffix',
-          library: 'philosophy',
+          library: 'json_cards',
           pattern: 'json_card_array',
           format: 'json',
           title: title,
@@ -637,7 +636,7 @@ class LocalProjectRefreshService {
     return actions;
   }
 
-  List<LocalProjectRefreshAction> _preIndustrializationHtmlActions(
+  List<LocalProjectRefreshAction> _htmlCardActions(
     _RefreshFile file,
     String text,
   ) {
@@ -647,12 +646,12 @@ class LocalProjectRefreshService {
         _generatedDocumentAction(
           file: file,
           sourceKey: '${file.relativePath}#details-${fragment.index}',
-          library: 'pre_industrialization',
+          library: 'html_cards',
           pattern: 'html_details',
           format: 'html_fragment',
           title:
               _htmlTagText(fragment.html, 'summary') ??
-              'Pre-Industrialization details ${fragment.index}',
+              'HTML details ${fragment.index}',
           body: fragment.html,
           extraPayload: {
             'fragmentTag': 'details',
@@ -666,12 +665,12 @@ class LocalProjectRefreshService {
         _generatedDocumentAction(
           file: file,
           sourceKey: '${file.relativePath}#section-${fragment.index}',
-          library: 'pre_industrialization',
+          library: 'html_cards',
           pattern: 'html_section',
           format: 'html_fragment',
           title:
               _firstHtmlHeading(fragment.html) ??
-              'Pre-Industrialization section ${fragment.index}',
+              'HTML section ${fragment.index}',
           body: fragment.html,
           extraPayload: {
             'fragmentTag': 'section',
@@ -915,7 +914,7 @@ class LocalProjectRefreshService {
     if (!upper.contains('IDLE') && !upper.contains('NO ACTIVE WORK ORDER')) {
       return const [];
     }
-    const title = 'Await owner-authorized BOH work order';
+    const title = 'Await owner-authorized work order';
     const detail =
         'ACTIVE_TASK.md reports IDLE / no active work order. Do not treat roadmap drafts as active implementation.';
     return [
@@ -989,19 +988,6 @@ class LocalProjectRefreshService {
   List<LocalProjectRefreshAction> _currentStateActions(String? text) {
     if (text == null) return const [];
     final actions = <LocalProjectRefreshAction>[];
-    if (text.contains('boh_runtime_launch_origin_audit_v0_1')) {
-      actions.add(
-        _workAction(
-          sourceKey: 'CURRENT_STATE.md#boh-runtime-launch-origin-audit-v0-1',
-          title: 'boh_runtime_launch_origin_audit_v0_1',
-          detail:
-              'CURRENT_STATE.md names this as an operational item before production server validation or unattended use.',
-          status: 'waiting',
-          blockedReason: 'Separate BOH work order required.',
-        ),
-      );
-    }
-
     final knownRisks = _sectionText(text, 'Known Risks');
     if (knownRisks != null) {
       var index = 0;
@@ -1143,7 +1129,7 @@ class LocalProjectRefreshService {
     final type = _stringField(manifest.fields, const ['type']);
     if (type != null) yield 'Manifest type: $type';
     final group = _stringField(manifest.fields, const ['group']);
-    if (group != null) yield 'Launchpad group: $group';
+    if (group != null) yield 'Manifest group: $group';
     final tags = _stringListField(manifest.fields, const [
       'tags',
       'keywords',
@@ -1226,7 +1212,7 @@ class LocalProjectRefreshService {
     return ['$value'];
   }
 
-  Future<_ProjectManifest?> _readLaunchpadManifest(
+  Future<_ProjectManifest?> _readRuntimeManifest(
     Directory root,
     List<String> warnings,
   ) async {
@@ -1394,14 +1380,6 @@ class LocalProjectRefreshService {
       caseSensitive: false,
     ).firstMatch(body);
     return match?.group(1)?.trim();
-  }
-
-  bool _looksLikeBoh(Map<String, _DocText> docsByName, String rootPath) {
-    if (p.basename(rootPath).toLowerCase().contains('bag.of.holding')) {
-      return true;
-    }
-    final current = _docText(docsByName, 'CURRENT_STATE.md')?.text ?? '';
-    return current.contains('Bag of Holding') || current.contains('BOH MCP');
   }
 
   List<_RefreshFile> _scanRefreshFiles(Directory root, List<String> warnings) {
@@ -1587,38 +1565,34 @@ class LocalProjectRefreshService {
   }
 
   bool _looksLikeCardLibrarySource(String relativePath) {
-    return _isTradeCraftCardMarkdown(relativePath) ||
-        _isProductivityGoalCard(relativePath) ||
-        _isPhilosophyJsonCards(relativePath) ||
-        _isPreIndustrializationHtml(relativePath);
+    return _isGoalCard(relativePath) ||
+        _isMarkdownCard(relativePath) ||
+        _isJsonCards(relativePath) ||
+        _isHtmlCardCollection(relativePath);
   }
 
-  bool _isTradeCraftCardMarkdown(String relativePath) {
+  bool _isMarkdownCard(String relativePath) {
     final lower = relativePath.toLowerCase();
     if (!lower.endsWith('.md')) return false;
     final segments = lower.split('/');
-    return segments.contains('cards') &&
-        (lower.contains('trade_craft') ||
-            lower.contains('trade-craft') ||
-            lower.contains('trade craft') ||
-            lower.contains('tradecraft'));
+    return segments.contains('cards');
   }
 
-  bool _isProductivityGoalCard(String relativePath) {
+  bool _isGoalCard(String relativePath) {
     return relativePath.toLowerCase().endsWith('.goalcard.md');
   }
 
-  bool _isPhilosophyJsonCards(String relativePath) {
+  bool _isJsonCards(String relativePath) {
     final lower = relativePath.toLowerCase();
-    return lower.endsWith('.json') && lower.contains('philosophy');
+    final segments = lower.split('/');
+    return lower.endsWith('.json') &&
+        (segments.contains('cards') || p.basename(lower) == 'cards.json');
   }
 
-  bool _isPreIndustrializationHtml(String relativePath) {
+  bool _isHtmlCardCollection(String relativePath) {
     final lower = relativePath.toLowerCase();
     return (lower.endsWith('.html') || lower.endsWith('.htm')) &&
-        (lower.contains('pre_industrialization') ||
-            lower.contains('pre-industrialization') ||
-            lower.contains('preindustrialization'));
+        (lower.contains('cards') || lower.contains('library'));
   }
 
   List<Map<String, Object?>> _jsonCardObjects(Object? value) {

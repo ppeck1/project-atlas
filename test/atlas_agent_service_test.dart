@@ -196,7 +196,7 @@ void main() {
             p.join(projectDir.path, 'atlas_outbox'),
           ).createSync(recursive: true);
           Directory(
-            p.join(projectDir.path, 'boh_outbox'),
+            p.join(projectDir.path, 'secondary_outbox'),
           ).createSync(recursive: true);
           File(
             p.join(projectDir.path, 'project_manifest.json'),
@@ -228,7 +228,7 @@ void main() {
                 'mode': 'outbox',
                 'project_key': 'atlas',
               },
-              'boh_sync': {
+              'secondary_sync': {
                 'enabled': true,
                 'mode': 'outbox',
                 'authority': 'evidence-only',
@@ -385,18 +385,18 @@ void main() {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
       final proposal = await service.proposeCloseout(
         projectId: 'atlas',
-        runId: 'run-20260703',
+        runId: 'example-run',
         runState: 'signable',
-        summary: 'WO-5 stdio smoke is green.',
+        summary: 'Example stdio smoke is green.',
         scope: {
-          'workOrders': ['WO-5', 'WO-6'],
+          'workOrders': ['sample-task-1', 'sample-task-2'],
         },
         changedFiles: const ['lib/mcp/atlas_mcp_stdio.dart'],
         validation: const [
           {'command': 'flutter test', 'passed': true},
         ],
         capsuleDoctor: const {'status': 'healthy'},
-        packetPaths: const ['.project/runs/20260703-agent-closeout.md'],
+        packetPaths: const ['.local/example-closeout.md'],
         gitState: const {'dirty': true, 'branch': 'main'},
         commitRecommendation: 'Review locally before commit.',
         risks: const ['Manual UI verification remains pending.'],
@@ -415,8 +415,8 @@ void main() {
       expect(project!.status, 'active');
       expect(handoff, isNotNull);
       expect(handoff!.kind, AtlasAgentService.handoffDraftKind);
-      expect(handoff.title, contains('WO-5 stdio smoke is green.'));
-      expect(handoff.body, contains('run-20260703'));
+      expect(handoff.title, contains('Example stdio smoke is green.'));
+      expect(handoff.body, contains('example-run'));
       expect(handoff.body, contains('flutter test'));
       expect(handoff.body, contains('Manual UI verification remains pending.'));
       expect(review!.isApproved, isTrue);
@@ -471,11 +471,11 @@ void main() {
         final detail = await service.getLlmTaskDetail(queued.id);
         final claimed = await service.claimLlmTask(
           taskId: queued.id,
-          workerId: 'llm-harness-test',
+          workerId: 'sample-worker',
         );
         final completed = await service.completeLlmTask(
           taskId: queued.id,
-          workerId: 'llm-harness-test',
+          workerId: 'sample-worker',
           result: {'summary': 'Ready for review'},
           proposalTitle: 'Harness handoff',
           proposalBody: 'Reviewable handoff body.',
@@ -486,7 +486,7 @@ void main() {
         expect(queued.status, 'pending');
         expect((detail!['media'] as List).single['id'], mediaId);
         expect(claimed!.status, 'leased');
-        expect(claimed.leasedBy, 'llm-harness-test');
+        expect(claimed.leasedBy, 'sample-worker');
         expect(completed.status, 'completed');
         expect(completed.reviewDraftId, isNotNull);
         expect(completed.result['summary'], 'Ready for review');
@@ -498,7 +498,7 @@ void main() {
 
     test('updates and moves queued LLM tasks between projects', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
-      await db.createProject('boh', 'BOH', DateTime(2026, 1, 1));
+      await db.createProject('sample', 'Sample Project', DateTime(2026, 1, 1));
       final workItemId = await state.addWorkItemToProject(
         'atlas',
         'Prepare handoff',
@@ -513,32 +513,32 @@ void main() {
       await expectLater(
         service.updateLlmTask(
           taskId: queued.id,
-          projectId: 'boh',
+          projectId: 'sample',
           workItemId: workItemId,
-          title: 'Draft BOH handoff',
-          objective: 'Summarize BOH.',
+          title: 'Draft sample handoff',
+          objective: 'Summarize the sample project.',
         ),
         throwsStateError,
       );
 
       final moved = await service.updateLlmTask(
         taskId: queued.id,
-        projectId: 'boh',
-        title: 'Draft BOH handoff',
-        objective: 'Summarize BOH.',
+        projectId: 'sample',
+        title: 'Draft sample handoff',
+        objective: 'Summarize the sample project.',
         priority: 'urgent',
         context: {'source': 'operator-edit'},
       );
       final atlasTasks = await service.listLlmTasks(projectId: 'atlas');
-      final bohTasks = await service.listLlmTasks(projectId: 'boh');
+      final sampleTasks = await service.listLlmTasks(projectId: 'sample');
 
-      expect(moved.projectId, 'boh');
+      expect(moved.projectId, 'sample');
       expect(moved.workItemId, isNull);
-      expect(moved.title, 'Draft BOH handoff');
+      expect(moved.title, 'Draft sample handoff');
       expect(moved.priority, 'urgent');
       expect(moved.context['source'], 'operator-edit');
       expect(atlasTasks, isEmpty);
-      expect(bohTasks.single.id, queued.id);
+      expect(sampleTasks.single.id, queued.id);
     });
 
     test('editing a leased LLM task revokes the lease', () async {
@@ -548,10 +548,7 @@ void main() {
         title: 'Draft next action',
         objective: 'Prepare a proposed next action for review.',
       );
-      await service.claimLlmTask(
-        taskId: queued.id,
-        workerId: 'llm-harness-test',
-      );
+      await service.claimLlmTask(taskId: queued.id, workerId: 'sample-worker');
 
       final edited = await service.updateLlmTask(
         taskId: queued.id,
@@ -567,7 +564,7 @@ void main() {
       await expectLater(
         service.completeLlmTask(
           taskId: queued.id,
-          workerId: 'llm-harness-test',
+          workerId: 'sample-worker',
           result: {'summary': 'stale result'},
         ),
         throwsStateError,
@@ -585,7 +582,7 @@ void main() {
         );
         await service.claimLlmTask(
           taskId: queued.id,
-          workerId: 'llm-harness-test',
+          workerId: 'sample-worker',
         );
 
         final cancelled = await service.cancelLlmTask(
@@ -594,7 +591,7 @@ void main() {
         );
         final claimCancelled = await service.claimLlmTask(
           taskId: queued.id,
-          workerId: 'llm-harness-test',
+          workerId: 'sample-worker',
         );
 
         expect(cancelled.status, 'cancelled');
@@ -604,7 +601,7 @@ void main() {
         await expectLater(
           service.completeLlmTask(
             taskId: queued.id,
-            workerId: 'llm-harness-test',
+            workerId: 'sample-worker',
             result: {'summary': 'stale result'},
           ),
           throwsStateError,
@@ -620,12 +617,12 @@ void main() {
 
     test('builds queue-bound bootstrap context for active LLM tasks', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
-      await db.createProject('boh', 'BOH', DateTime(2026, 1, 1));
+      await db.createProject('sample', 'Sample Project', DateTime(2026, 1, 1));
       final queued = await service.enqueueLlmTask(
         projectId: 'atlas',
         title: 'Draft startup packet',
         objective: 'Use the task-specific bootstrap before implementation.',
-        context: {'workOrder': 'wo-4'},
+        context: {'workOrder': 'sample-task-4'},
       );
       final mediaId = await state.saveProjectMedia(
         projectId: 'atlas',
@@ -657,7 +654,7 @@ void main() {
       expect(leasedBootstrap.task['status'], 'leased');
 
       await expectLater(
-        service.getLlmTaskBootstrap(queued.id, projectId: 'boh'),
+        service.getLlmTaskBootstrap(queued.id, projectId: 'sample'),
         throwsStateError,
       );
       await service.completeLlmTask(

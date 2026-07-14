@@ -1,5 +1,5 @@
 #define MyAppName "Project Atlas"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.4.1"
 #define MyAppPublisher "Paul Peck"
 #define MyAppExeName "project_atlas.exe"
 #define MyAppURL "https://github.com/ppeck1/project-atlas"

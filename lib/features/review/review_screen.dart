@@ -100,7 +100,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
     ];
     final buf = StringBuffer();
     buf.writeln(
-      '# Daily Review ��������� ${months[now.month]} ${now.day}, ${now.year}',
+      '# Daily Review - ${months[now.month]} ${now.day}, ${now.year}',
     );
     buf.writeln();
     buf.writeln('**Active tasks:** ${_allActive.length}');
@@ -113,8 +113,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
       buf.writeln('## Blocked');
       for (final i in _blocked) {
         buf.writeln('- ${i.title}');
-        if (i.blockedReason != null)
-          buf.writeln('  ��������� ${i.blockedReason}');
+        if (i.blockedReason != null) buf.writeln('  - ${i.blockedReason}');
       }
       buf.writeln();
     }
@@ -160,7 +159,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
           children: [
             CircularProgressIndicator(),
             SizedBox(width: 16),
-            Text('Asking Ollama���������'),
+            Text('Asking Ollama...'),
           ],
         ),
       ),
@@ -255,7 +254,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                     ),
                     const SizedBox(width: 8),
                     const Text(
-                      '��������� output shown for review first',
+                      'AI output is shown for review first',
                       style: TextStyle(fontSize: 11, color: Colors.white38),
                     ),
                   ],
@@ -291,7 +290,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 const SizedBox(height: 12),
 
                 if (_blocked.isNotEmpty) ...[
-                  _SectionHeader('������������ Blocked', Colors.red),
+                  _SectionHeader('Blocked', Colors.red),
                   ..._blocked.map(
                     (i) => _ReviewTile(item: i, showBlocked: true),
                   ),
@@ -299,13 +298,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 ],
 
                 if (_overdue.isNotEmpty) ...[
-                  _SectionHeader('������������ Overdue', Colors.red.shade300),
+                  _SectionHeader('Overdue', Colors.red.shade300),
                   ..._overdue.map((i) => _ReviewTile(item: i)),
                   const SizedBox(height: 16),
                 ],
 
                 if (_dueToday.isNotEmpty) ...[
-                  _SectionHeader('������������ Due Today', Colors.orange),
+                  _SectionHeader('Due Today', Colors.orange),
                   ..._dueToday.map((i) => _ReviewTile(item: i)),
                   const SizedBox(height: 16),
                 ],
@@ -313,7 +312,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                 if (_allActive
                     .where((i) => i.status == 'doing')
                     .isNotEmpty) ...[
-                  _SectionHeader('������������ In Progress', Colors.amber),
+                  _SectionHeader('In Progress', Colors.amber),
                   ..._allActive
                       .where((i) => i.status == 'doing')
                       .map((i) => _ReviewTile(item: i)),
@@ -449,7 +448,7 @@ class _ReviewTile extends StatelessWidget {
               if (showBlocked && item.blockedReason != null) ...[
                 const SizedBox(height: 4),
                 Text(
-                  '��������� ${item.blockedReason}',
+                  'Blocked: ${item.blockedReason}',
                   style: const TextStyle(fontSize: 12, color: Colors.red),
                 ),
               ],
@@ -478,7 +477,7 @@ class _OllamaReviewDialog extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'AI-generated summary ��������� review before saving.',
+              'AI-generated summary - review before saving.',
               style: TextStyle(fontSize: 12, color: Colors.white54),
             ),
             const SizedBox(height: 12),

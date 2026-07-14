@@ -1,4 +1,4 @@
-"""Import Dev Launchpad runtime metadata into the live Project Atlas DB.
+"""Import generic runtime-manifest metadata into a Project Atlas database.
 
 Dry-run by default. Use --apply to write profiles for exact title matches.
 """
@@ -15,9 +15,9 @@ from typing import Any
 import yaml
 
 
-DEFAULT_YAML_PATH = Path(".local/dev_launchpad.yaml")
+DEFAULT_YAML_PATH = Path(".local/runtime_manifest.yaml")
 DEFAULT_DB_PATH = Path(".local/project_atlas.sqlite")
-DEFAULT_CAPSULE_PATH = Path(".local/Project_Ops_Capsule")
+DEFAULT_CAPSULE_PATH = Path(".local/project_protocol")
 
 
 def _blank_to_none(value: Any) -> str | None:

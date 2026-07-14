@@ -154,6 +154,7 @@ def base(selected, title, subtitle=None):
     draw_text(draw, (154, 62), title, COLORS["ink"], FONT_H)
     if subtitle:
         draw_text(draw, (154, 106), subtitle, COLORS["muted"], FONT_SM, 780)
+    pill(draw, 1130, 72, "SYNTHETIC DEMO DATA", COLORS["purple"], COLORS["violet"])
     draw.line([132, 142, W - 64, 142], fill=COLORS["line"], width=1)
     return image, draw
 
@@ -214,7 +215,7 @@ def make_today():
     draw_text(draw, (924, 366), "Operator signals", COLORS["ink"], FONT_H2)
     signals = [
         ("Human-in-loop AI", "Ollama drafts are advisory until reviewed."),
-        ("Local storage", "SQLite via Drift, schema version 20."),
+        ("Local storage", "SQLite via Drift, schema version 21."),
         ("Outbound only", "Telegram sends task lists and logs attempts."),
         ("Attention filters", "Blocked, overdue, doing, and high priority stay visible."),
     ]
@@ -247,9 +248,9 @@ def make_projects():
     draw_text(draw, (178, 310), "Pinned projects sort first; lifecycle, tags, phase, and runtime controls remain visible.", COLORS["muted"], FONT_SM, 760)
     projects = [
         ("Project Atlas", "Local-first command center with Today, Operations, Library, and Settings workflows.", "Active", "Ship", "Runtime ready", COLORS["blue"]),
-        ("Project Ops Capsule", "Repo-local launch, test, documentation, and closeout evidence for governed projects.", "Review", "Audit", "Capsule", COLORS["purple"]),
-        ("Dev Launchpad", "Project-owned launch metadata and runtime-visible YAML alignment.", "Active", "Stabilize", "Launch/Test", COLORS["green"]),
-        ("Telegram Outbox", "Outbound phone handoff with escaped HTML and local attempt logging.", "Paused", "Support", "Outbox", COLORS["amber"]),
+        ("Sample Client Portal", "Synthetic client-facing dashboard used to demonstrate project tracking.", "Review", "Audit", "Web", COLORS["purple"]),
+        ("Runtime Monitor", "Example runtime metadata, health checks, and operator-controlled actions.", "Active", "Stabilize", "Launch/Test", COLORS["green"]),
+        ("Notification Outbox", "Synthetic outbound handoff with local attempt logging.", "Paused", "Support", "Outbox", COLORS["amber"]),
     ]
     y = 356
     for name, desc, status, phase, action, color in projects:
@@ -294,9 +295,9 @@ def make_operations():
     for label, color in chips:
         x = pill(draw, x, 432, label, color, COLORS["sky"] if label == "Needs action" else COLORS["panel_alt"])
     candidates = [
-        ("C:/Projects/dev-launchpad", "Strong root: README, pubspec, .git. Import as project or link to existing record.", "candidate"),
-        ("C:/Projects/project-atlas", "Already linked. Refresh docs, media, source rows, and runtime profile.", "linked"),
-        ("C:/Projects/project-ops-capsule", "Capsule metadata present. Mark as governed support project after review.", "needs review"),
+        ("workspace/sample-dashboard", "Strong root: README, manifest, and version control. Import or link after review.", "candidate"),
+        ("workspace/project-atlas", "Already linked. Refresh docs, media, source rows, and runtime profile.", "linked"),
+        ("workspace/sample-service", "Verification metadata present. Review before registration.", "needs review"),
     ]
     y = 500
     for path, detail, state in candidates:

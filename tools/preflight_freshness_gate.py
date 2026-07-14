@@ -1,7 +1,7 @@
 """Project Atlas preflight freshness gate.
 
-Checks the local checkout, public GitHub main, latest CI, capsule metadata,
-operator docs, and README screenshots before agent-control-plane work begins.
+Checks the local checkout, public GitHub main, latest CI, portfolio docs, and
+synthetic README screenshots before release work begins.
 The gate is intentionally fail-closed: missing evidence is a blocked result,
 not a model assertion.
 """
@@ -19,9 +19,10 @@ from typing import Any
 
 REQUIRED_DOCS = (
     "README.md",
-    "docs/HANDOFF.md",
-    "docs/VARIABLE_MATRIX.md",
-    "VARIABLE_MAP.md",
+    "SECURITY.md",
+    "docs/ARCHITECTURE.md",
+    "docs/DATA_MODEL.md",
+    "docs/MCP_SECURITY_MODEL.md",
 )
 
 README_SCREENSHOTS = (
@@ -31,12 +32,6 @@ README_SCREENSHOTS = (
     "docs/screenshots/library.png",
     "docs/screenshots/settings.png",
 )
-
-CAPSULE_FILES = (
-    ".project/project_manifest.json",
-    ".project/ops_capsule.json",
-)
-
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -216,45 +211,6 @@ def check_git(repo: Path, github_repo: str) -> list[dict[str, Any]]:
     return results
 
 
-def check_capsule(repo: Path) -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    for relative in CAPSULE_FILES:
-        path = repo / relative
-        if not path.exists():
-            results.append(
-                step(
-                    f"capsule_{Path(relative).name}",
-                    "blocked",
-                    f"{relative} is missing.",
-                    path=str(path),
-                )
-            )
-            continue
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8-sig"))
-        except Exception as error:  # noqa: BLE001 - preflight must report any parse failure.
-            results.append(
-                step(
-                    f"capsule_{Path(relative).name}",
-                    "blocked",
-                    f"{relative} could not be parsed as JSON.",
-                    path=str(path),
-                    error=str(error),
-                )
-            )
-            continue
-        results.append(
-            step(
-                f"capsule_{Path(relative).name}",
-                "ok",
-                f"{relative} is present and parses as JSON.",
-                path=str(path),
-                keys=sorted(payload.keys())[:25],
-            )
-        )
-    return results
-
-
 def check_docs(repo: Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for relative in REQUIRED_DOCS:
@@ -295,7 +251,6 @@ def build_report(repo: Path, github_repo: str) -> dict[str, Any]:
     repo = repo.resolve()
     checks = [
         *check_git(repo, github_repo),
-        *check_capsule(repo),
         *check_docs(repo),
         *check_screenshots(repo),
     ]

@@ -225,7 +225,7 @@ class LocalOperationsScanner {
     return lowerName.contains('dataroot') ||
         lowerName.contains('_watch') ||
         lowerName.contains('snapshots') ||
-        lowerPath.contains(r'\boh_db_snapshots');
+        lowerPath.contains(r'\db_snapshots');
   }
 
   bool _looksLikeArchiveExport(String lowerName, String lowerPath) {

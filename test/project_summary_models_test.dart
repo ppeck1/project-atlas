@@ -9,7 +9,7 @@ void main() {
   "goal": ["Build a local project manager"],
   "currentState": "In early development.",
   "ownership": [
-    {"person": "Paul", "work": ["Architecture", "UI"], "basis": "Owner field"}
+    {"person": "Demo Owner", "work": ["Architecture", "UI"], "basis": "Owner field"}
   ],
   "relevantDocuments": [
     {"documentId": "doc-1", "title": "Spec", "reason": "Core requirements"}
@@ -24,7 +24,7 @@ void main() {
       expect(result!.goal, ['Build a local project manager']);
       expect(result.currentState, 'In early development.');
       expect(result.ownership.length, 1);
-      expect(result.ownership.first.person, 'Paul');
+      expect(result.ownership.first.person, 'Demo Owner');
       expect(result.ownership.first.work, ['Architecture', 'UI']);
       expect(result.ownership.first.basis, 'Owner field');
       expect(result.relevantDocuments.length, 1);
@@ -111,7 +111,7 @@ void main() {
         status: 'active',
         phase: 'build',
         priority: 'high',
-        owner: 'Paul',
+        owner: 'Demo Owner',
         workItems: [],
         people: [],
         risks: [],
@@ -125,7 +125,7 @@ void main() {
       expect(text, contains('All tests pass'));
       expect(text, contains('active'));
       expect(text, contains('build'));
-      expect(text, contains('Paul'));
+      expect(text, contains('Demo Owner'));
     });
 
     test('includes work items with blocked reason', () {
@@ -408,7 +408,7 @@ void main() {
         id: 'proj-owners',
         title: 'Owner Project',
         status: 'active',
-        owner: 'Paul',
+        owner: 'Demo Owner',
         workItems: [
           ProjectSummaryContextWorkItem(
             id: 'w1',
@@ -428,7 +428,7 @@ void main() {
   "goal": ["G"],
   "currentState": "S",
   "ownership": [
-    {"person": "Paul", "work": ["Project direction"], "basis": "Project owner"},
+    {"person": "Demo Owner", "work": ["Project direction"], "basis": "Project owner"},
     {"person": "Mira", "work": ["Implement validator"], "basis": "Work item owner"}
   ],
   "relevantDocuments": [{"documentId": "doc-1", "title": "README.md", "reason": "Project overview"}],

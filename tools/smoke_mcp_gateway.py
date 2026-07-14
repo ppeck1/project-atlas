@@ -70,7 +70,7 @@ SENSITIVE_FIXTURE = {
             {
                 "type": "text",
                 "text": (
-                    "Manual fixture from C:\\Private\\Project_Ops_Capsule "
+                    "Manual fixture from C:\\Examples\\project_protocol "
                     "owned by Example Owner at atlas.owner@example.com."
                 ),
             }
@@ -86,7 +86,7 @@ SENSITIVE_FIXTURE = {
 
 SENSITIVE_FIXTURE_FORBIDDEN = {
     "C:\\Private",
-    "Project_Ops_Capsule",
+    "project_protocol",
     "project-atlas-main",
     "atlas.owner@example.com",
     "Example Owner",

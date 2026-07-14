@@ -1,18 +1,18 @@
-From: alice@example.com
-To: paul@example.com
+From: example.sender@example.invalid
+To: demo.owner@example.invalid
 Date: Tue, 24 Jun 2026 09:15:00 +0000
 Subject: Re: Q3 scope review — action items
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 
-Hi Paul,
+Hi Demo Owner,
 
 Following up on our scope review call. Here are the agreed action items:
 
 1. Alice: provision staging API credentials by Wednesday EOD.
 2. Bob: resolve DNS propagation issue in staging environment — blocker for QA.
 3. Carol: draft the Phase 2 QA test plan and share for review by Friday.
-4. Paul: update HANDOFF.md with the new Library import pipeline notes.
+4. Demo Owner: update the example import notes.
 
 The migration window is confirmed for 2026-07-15 00:00–04:00 UTC.
 Please coordinate with infrastructure before scheduling any deployments.

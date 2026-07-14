@@ -1512,9 +1512,7 @@ class AppState extends ChangeNotifier {
 
   Future<ProjectRuntimeDefaultsSettings>
   loadProjectRuntimeDefaultsSettings() async {
-    final yamlPath = await getSetting(
-      AppDb.kProjectRuntimeDefaultDevLaunchpadYamlPath,
-    );
+    final yamlPath = await getSetting(AppDb.kProjectRuntimeDefaultManifestPath);
     final capsuleEnabled = await getSetting(
       AppDb.kProjectRuntimeDefaultCapsuleEnabled,
     );
@@ -1528,11 +1526,11 @@ class AppState extends ChangeNotifier {
       AppDb.kProjectRuntimeDefaultCapsuleProfile,
     );
     return ProjectRuntimeDefaultsSettings(
-      devLaunchpadYamlPath: _metaString(yamlPath),
+      runtimeManifestPath: _metaString(yamlPath),
       capsuleEnabled: _metaBool(capsuleEnabled, fallback: true),
       capsuleMode: normalizeCapsuleMode(_metaString(capsuleMode) ?? 'check'),
       capsuleSourcePath:
-          _metaString(capsuleSourcePath) ?? defaultProjectOpsCapsulePath,
+          _metaString(capsuleSourcePath) ?? defaultProjectProtocolPath,
       capsuleProfile: _metaString(capsuleProfile) ?? 'software_project',
     );
   }
@@ -1542,8 +1540,8 @@ class AppState extends ChangeNotifier {
   ) async {
     await Future.wait([
       db.setMetaString(
-        AppDb.kProjectRuntimeDefaultDevLaunchpadYamlPath,
-        _metaString(settings.devLaunchpadYamlPath),
+        AppDb.kProjectRuntimeDefaultManifestPath,
+        _metaString(settings.runtimeManifestPath),
       ),
       db.setMetaString(
         AppDb.kProjectRuntimeDefaultCapsuleEnabled,
@@ -1555,7 +1553,7 @@ class AppState extends ChangeNotifier {
       ),
       db.setMetaString(
         AppDb.kProjectRuntimeDefaultCapsuleSourcePath,
-        _metaString(settings.capsuleSourcePath) ?? defaultProjectOpsCapsulePath,
+        _metaString(settings.capsuleSourcePath) ?? defaultProjectProtocolPath,
       ),
       db.setMetaString(
         AppDb.kProjectRuntimeDefaultCapsuleProfile,
@@ -1712,7 +1710,7 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
-  // Ollama ��������� human-in-the-loop only. Output is never auto-applied.
+  // Ollama is human-in-the-loop only. Output is never auto-applied.
   // ---------------------------------------------------------------------------
 
   OllamaService _buildOllama(String? host, String? model) => OllamaService(
@@ -1804,7 +1802,7 @@ class AppState extends ChangeNotifier {
           .toList(),
       blockedItems: items
           .where((i) => i.blockedReason != null)
-          .map((i) => '${i.title} ��������� ${i.blockedReason}')
+          .map((i) => '${i.title} - ${i.blockedReason}')
           .toList(),
     );
   }
@@ -1956,7 +1954,7 @@ class AppState extends ChangeNotifier {
       capsuleEnabled: draft.capsuleEnabled,
       capsuleMode: normalizeCapsuleMode(draft.capsuleMode),
       capsuleSourcePath:
-          _metaString(draft.capsuleSourcePath) ?? defaultProjectOpsCapsulePath,
+          _metaString(draft.capsuleSourcePath) ?? defaultProjectProtocolPath,
       capsuleProfile: _metaString(draft.capsuleProfile),
       importSource: _metaString(draft.importSource),
       lastImportedAt: draft.lastImportedAt,
@@ -1983,16 +1981,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<ProjectRuntimeProfile?> importRuntimeProfileFromDevLaunchpad(
+  Future<ProjectRuntimeProfile?> importRuntimeProfileFromManifest(
     String projectId, {
     String? yamlPath,
-    DevLaunchpadRuntimeImporter importer = const DevLaunchpadRuntimeImporter(),
+    RuntimeManifestImporter importer = const RuntimeManifestImporter(),
   }) async {
     final project = await db.getProjectFull(projectId);
     if (project == null) throw StateError('Project not found: $projectId');
     final defaults = await loadProjectRuntimeDefaultsSettings();
     final resolvedYamlPath =
-        _metaString(yamlPath) ?? defaults.resolvedDevLaunchpadYamlPath;
+        _metaString(yamlPath) ?? defaults.resolvedRuntimeManifestPath;
     final draft = await importer.readProfileForProject(
       projectTitle: project.title,
       yamlPath: resolvedYamlPath,
@@ -4354,7 +4352,7 @@ class AppState extends ChangeNotifier {
             'unchangedProjects': identityResult.unchanged,
             'skippedProjects': identityResult.skipped,
             'sources': [
-              '.project/launchpad.json',
+              '.project/runtime_manifest.json',
               'CURRENT_STATE.md',
               'README.md',
               'local git observation',
@@ -5026,14 +5024,7 @@ class AppState extends ChangeNotifier {
       registry?.displayName,
       registry?.localPath,
     ].whereType<String>().join(' ').toLowerCase();
-    return haystack.contains('philosophy') ||
-        haystack.contains('trade atlas') ||
-        haystack.contains('trade_craft') ||
-        haystack.contains('trade craft') ||
-        haystack.contains('pre_industrialization') ||
-        haystack.contains('pre industrialization') ||
-        haystack.contains('goalcard') ||
-        haystack.contains('card library');
+    return haystack.contains('goalcard') || haystack.contains('card library');
   }
 
   bool _isBlank(String? value) => value == null || value.trim().isEmpty;

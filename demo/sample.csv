@@ -2,8 +2,8 @@ id,title,status,priority,owner,due_date,blocked_reason
 1,Review Q3 scope document,done,normal,Alice,,
 2,Provision staging credentials,doing,high,Bob,,Waiting on vendor response
 3,Draft QA test plan,next,normal,Carol,2026-07-10,
-4,Schedule migration window,next,urgent,Paul,2026-07-12,
-5,Update HANDOFF.md,done,normal,Paul,,
-6,Run flutter analyze,done,normal,Paul,,
-7,Run flutter test,done,normal,Paul,,
-8,Push v1.3.0+1 to GitHub,doing,high,Paul,,
+4,Schedule migration window,next,urgent,Demo Owner,2026-07-12,
+5,Update example notes,done,normal,Demo Owner,,
+6,Run static analysis,done,normal,Demo Owner,,
+7,Run test suite,done,normal,Demo Owner,,
+8,Prepare demo release,doing,high,Demo Owner,,

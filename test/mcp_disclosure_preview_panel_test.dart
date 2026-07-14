@@ -37,10 +37,10 @@ void main() {
     expect(find.textContaining('atlas.read'), findsOneWidget);
     expect(find.textContaining('abc123def456'), findsOneWidget);
     expect(find.text('deny by default'), findsOneWidget);
-    expect(find.text('49 registered'), findsOneWidget);
+    expect(find.text('3 registered'), findsOneWidget);
     expect(find.text('2 inventory - 2 detail'), findsOneWidget);
     expect(
-      find.text('49 project(s) - 1 page(s) - 12000 B first page'),
+      find.text('3 project(s) - 1 page(s) - 1400 B first page'),
       findsOneWidget,
     );
     expect(find.text('0 unresolved or remote-ineligible'), findsOneWidget);
@@ -95,10 +95,7 @@ McpDisclosurePreview _preview() => McpDisclosurePreview(
   policyMode: 'deny_by_default',
   approvedProjects: const [
     McpDisclosureProject(alias: 'project-atlas', label: 'Project Atlas'),
-    McpDisclosureProject(
-      alias: 'project-capsule',
-      label: 'New Project Capsule Template',
-    ),
+    McpDisclosureProject(alias: 'sample-dashboard', label: 'Sample Dashboard'),
   ],
   eligibleNotEnrolledProjects: const [
     McpDisclosureCandidate(
@@ -119,15 +116,15 @@ McpDisclosurePreview _preview() => McpDisclosurePreview(
   titleDriftAliases: const [],
   missingTitleFingerprintAliases: const [],
   inventoryState: 'readable',
-  registeredProjects: 49,
+  registeredProjects: 3,
   policyApprovedProjects: 2,
   remotelyVisibleProjects: 2,
-  notAllowlistedProjects: 47,
+  notAllowlistedProjects: 1,
   unresolvedOrRemoteIneligibleEntries: 0,
-  candidateInventoryProjects: 49,
+  candidateInventoryProjects: 3,
   candidateDetailProjects: 2,
   inventoryPageCount: 1,
-  estimatedInventoryResponseBytes: 12000,
+  estimatedInventoryResponseBytes: 1400,
   aliasCollisionCount: 0,
   unsafeCandidateLabels: 1,
   restartRequired: false,
