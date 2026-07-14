@@ -1,10 +1,19 @@
 {
-  "schema": "project_atlas.remote_disclosure_policy.v1",
+  "schema": "project_atlas.remote_disclosure_policy.v2",
   "projects": [
     {
       "projectId": "replace-with-local-atlas-project-id",
       "alias": "project-atlas",
-      "label": "Project Atlas"
+      "label": "Project Atlas",
+      "access": ["inventory", "detail"],
+      "sourceTitleFingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "projectId": "replace-with-another-local-project-id",
+      "alias": "portfolio-project",
+      "label": "Operator Approved Label",
+      "access": ["inventory"],
+      "sourceTitleFingerprint": "1111111111111111111111111111111111111111111111111111111111111111"
     }
   ]
 }

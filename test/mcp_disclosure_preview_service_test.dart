@@ -100,6 +100,382 @@ void main() {
     },
   );
 
+  test(
+    'previews v2 inventory and detail tiers with local-only candidates',
+    () async {
+      final policy = <String, Object?>{
+        'schema': 'project_atlas.remote_disclosure_policy.v2',
+        'projects': [
+          {
+            'projectId': _Fixture.localId,
+            'alias': 'project-atlas',
+            'label': 'Project Atlas',
+            'access': ['inventory', 'detail'],
+          },
+          {
+            'projectId': 'local-inventory-project-id',
+            'alias': 'inventory-project',
+            'label': 'Inventory Project',
+            'access': ['inventory'],
+          },
+        ],
+      };
+      final fixture = await _Fixture.create(policy: policy);
+      addTearDown(fixture.dispose);
+
+      final preview = await McpDisclosurePreviewService(
+        repoRoot: fixture.root,
+        configFile: fixture.configFile,
+        localProjectsReader: () async => const [
+          McpLocalProjectRecord(
+            localId: _Fixture.localId,
+            title: 'Project Atlas',
+            status: 'active',
+            phase: 'build',
+            priority: 'high',
+            freshnessStatus: 'current',
+            activeWorkItems: 2,
+            blockedWorkItems: 1,
+            blocksProgressWorkItems: 1,
+            needsAttention: true,
+          ),
+          McpLocalProjectRecord(
+            localId: 'local-inventory-project-id',
+            title: 'Inventory Project',
+            status: 'completed',
+            phase: 'ship',
+            priority: 'normal',
+            freshnessStatus: 'current',
+            activeWorkItems: 0,
+            blockedWorkItems: 0,
+            blocksProgressWorkItems: 0,
+            needsAttention: false,
+          ),
+          McpLocalProjectRecord(
+            localId: 'candidate-project',
+            title: 'Candidate Project',
+            status: 'paused',
+            phase: 'design',
+            priority: 'low',
+            freshnessStatus: 'unknown',
+            activeWorkItems: 0,
+            blockedWorkItems: 0,
+            blocksProgressWorkItems: 0,
+            needsAttention: true,
+          ),
+        ],
+        jsonReader: (uri, headers) async =>
+            uri.path.contains('oauth') ? _oauthMetadata() : _gatewayMetadata(),
+      ).inspect();
+
+      expect(preview.policySchema, 'project_atlas.remote_disclosure_policy.v2');
+      expect(preview.inventoryProjects, hasLength(2));
+      expect(preview.detailProjects.single.alias, 'project-atlas');
+      expect(
+        preview.eligibleNotEnrolledProjects.single.title,
+        'Candidate Project',
+      );
+      expect(
+        preview.eligibleNotEnrolledProjects.single.proposedAlias,
+        'portfolio-item',
+      );
+      expect(preview.candidateInventoryProjects, 3);
+      expect(preview.candidateDetailProjects, 1);
+      expect(preview.inventoryPageCount, 1);
+      expect(preview.estimatedInventoryResponseBytes, greaterThan(0));
+      expect(preview.aliasCollisionCount, 1);
+      expect(preview.unsafeCandidateLabels, 0);
+      expect(preview.titleDriftAliases, isEmpty);
+      expect(preview.missingTitleFingerprintAliases, [
+        'inventory-project',
+        'project-atlas',
+      ]);
+      final serialized = jsonEncode(preview.toJson());
+      expect(serialized, isNot(contains('candidate-project')));
+      expect(serialized, isNot(contains('Candidate Project')));
+    },
+  );
+
+  test(
+    'flags title drift and unsafe candidate labels without serializing them',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+      final preview = await McpDisclosurePreviewService(
+        repoRoot: fixture.root,
+        configFile: fixture.configFile,
+        localProjectsReader: () async => const [
+          McpLocalProjectRecord(
+            localId: _Fixture.localId,
+            title: 'Renamed Local Project',
+            status: 'active',
+            phase: 'build',
+            priority: 'high',
+            freshnessStatus: 'current',
+            activeWorkItems: 0,
+            blockedWorkItems: 0,
+            blocksProgressWorkItems: 0,
+            needsAttention: false,
+          ),
+          McpLocalProjectRecord(
+            localId: 'local-unsafe-candidate-id',
+            title: 'secret@example.com',
+            status: 'active',
+            phase: 'build',
+            priority: 'normal',
+            freshnessStatus: 'current',
+            activeWorkItems: 0,
+            blockedWorkItems: 0,
+            blocksProgressWorkItems: 0,
+            needsAttention: false,
+          ),
+        ],
+        jsonReader: (uri, headers) async =>
+            uri.path.contains('oauth') ? _oauthMetadata() : _gatewayMetadata(),
+      ).inspect();
+
+      expect(preview.overallState, 'attention');
+      expect(preview.titleDriftAliases, ['project-atlas']);
+      expect(preview.unsafeCandidateLabels, 1);
+      expect(preview.eligibleNotEnrolledProjects.single.requiresReview, isTrue);
+      final serialized = jsonEncode(preview.toJson());
+      expect(serialized, isNot(contains('Renamed Local Project')));
+      expect(serialized, isNot(contains('secret@example.com')));
+    },
+  );
+
+  test('previews a 65-project v2 policy as two compact pages', () async {
+    final policyRows = List.generate(
+      65,
+      (index) => {
+        'projectId': 'local-project-${index.toString().padLeft(3, '0')}',
+        'alias': 'project-${index.toString().padLeft(3, '0')}',
+        'label': 'Project ${index.toString().padLeft(3, '0')}',
+        'access': index < 2 ? ['inventory', 'detail'] : ['inventory'],
+      },
+    );
+    final fixture = await _Fixture.create(
+      policy: {
+        'schema': 'project_atlas.remote_disclosure_policy.v2',
+        'projects': policyRows,
+      },
+    );
+    addTearDown(fixture.dispose);
+    final preview = await McpDisclosurePreviewService(
+      repoRoot: fixture.root,
+      configFile: fixture.configFile,
+      localProjectsReader: () async => [
+        for (var index = 0; index < 65; index += 1)
+          McpLocalProjectRecord(
+            localId: 'local-project-${index.toString().padLeft(3, '0')}',
+            title: 'Project ${index.toString().padLeft(3, '0')}',
+            status: 'active',
+            phase: 'build',
+            priority: 'normal',
+            freshnessStatus: 'current',
+            activeWorkItems: 0,
+            blockedWorkItems: 0,
+            blocksProgressWorkItems: 0,
+            needsAttention: false,
+          ),
+      ],
+      jsonReader: (uri, headers) async =>
+          uri.path.contains('oauth') ? _oauthMetadata() : _gatewayMetadata(),
+    ).inspect();
+
+    expect(preview.candidateInventoryProjects, 65);
+    expect(preview.candidateDetailProjects, 2);
+    expect(preview.inventoryPageCount, 2);
+    expect(preview.estimatedInventoryResponseBytes, lessThan(24 * 1024));
+    expect(preview.eligibleNotEnrolledProjects, isEmpty);
+  });
+
+  test('rejects a 257-project v2 policy before gateway inspection', () async {
+    final fixture = await _Fixture.create(
+      policy: {
+        'schema': 'project_atlas.remote_disclosure_policy.v2',
+        'projects': [
+          for (var index = 0; index < 257; index += 1)
+            {
+              'projectId': 'local-project-${index.toString().padLeft(3, '0')}',
+              'alias': 'project-${index.toString().padLeft(3, '0')}',
+              'label': 'Project ${index.toString().padLeft(3, '0')}',
+              'access': ['inventory'],
+            },
+        ],
+      },
+    );
+    addTearDown(fixture.dispose);
+    var networkCalls = 0;
+    final preview = await McpDisclosurePreviewService(
+      repoRoot: fixture.root,
+      configFile: fixture.configFile,
+      jsonReader: (uri, headers) async {
+        networkCalls += 1;
+        return null;
+      },
+    ).inspect();
+
+    expect(preview.policyState, 'inventory_capacity_exceeded');
+    expect(preview.overallState, 'attention');
+    expect(networkCalls, 0);
+  });
+
+  test('distinguishes bounded v2 policy validation failures', () async {
+    final cases = <String, Map<String, Object?>>{
+      'invalid_access': {
+        'schema': 'project_atlas.remote_disclosure_policy.v2',
+        'projects': [
+          {
+            'projectId': 'local-project-invalid-access',
+            'alias': 'invalid-access',
+            'label': 'Invalid Access',
+            'access': ['inventory', 'admin'],
+          },
+        ],
+      },
+      'duplicate_alias': {
+        'schema': 'project_atlas.remote_disclosure_policy.v2',
+        'projects': [
+          {
+            'projectId': 'local-project-duplicate-one',
+            'alias': 'duplicate-alias',
+            'label': 'Duplicate One',
+            'access': ['inventory'],
+          },
+          {
+            'projectId': 'local-project-duplicate-two',
+            'alias': 'duplicate-alias',
+            'label': 'Duplicate Two',
+            'access': ['inventory'],
+          },
+        ],
+      },
+      'unsafe_label': {
+        'schema': 'project_atlas.remote_disclosure_policy.v2',
+        'projects': [
+          {
+            'projectId': 'local-project-token-label',
+            'alias': 'token-label',
+            'label': '0123456789abcdef0123456789abcdef01234567',
+            'access': ['inventory'],
+          },
+        ],
+      },
+      'detail_capacity_exceeded': {
+        'schema': 'project_atlas.remote_disclosure_policy.v2',
+        'projects': [
+          for (var index = 0; index < 65; index += 1)
+            {
+              'projectId': 'local-detail-${index.toString().padLeft(3, '0')}',
+              'alias': 'detail-${index.toString().padLeft(3, '0')}',
+              'label': 'Detail ${index.toString().padLeft(3, '0')}',
+              'access': ['inventory', 'detail'],
+            },
+        ],
+      },
+    };
+    for (final entry in cases.entries) {
+      final fixture = await _Fixture.create(policy: entry.value);
+      try {
+        final preview = await McpDisclosurePreviewService(
+          repoRoot: fixture.root,
+          configFile: fixture.configFile,
+          jsonReader: (uri, headers) async =>
+              fail('invalid policy must not reach gateway inspection'),
+        ).inspect();
+        expect(preview.policyState, entry.key);
+      } finally {
+        await fixture.dispose();
+      }
+    }
+  });
+
+  test(
+    'uses a local source-title fingerprint as the v2 drift baseline',
+    () async {
+      const sourceTitle = 'Private Source Title';
+      final fingerprint = sha256.convert(utf8.encode(sourceTitle)).toString();
+      final fixture = await _Fixture.create(
+        policy: {
+          'schema': 'project_atlas.remote_disclosure_policy.v2',
+          'projects': [
+            {
+              'projectId': _Fixture.localId,
+              'alias': 'curated-project',
+              'label': 'Curated Public Label',
+              'access': ['inventory', 'detail'],
+              'sourceTitleFingerprint': fingerprint,
+            },
+          ],
+        },
+      );
+      addTearDown(fixture.dispose);
+
+      Future<McpDisclosurePreview> inspect(String title) =>
+          McpDisclosurePreviewService(
+            repoRoot: fixture.root,
+            configFile: fixture.configFile,
+            localProjectsReader: () async => [
+              McpLocalProjectRecord(
+                localId: _Fixture.localId,
+                title: title,
+                status: 'active',
+                phase: 'build',
+                priority: 'normal',
+                freshnessStatus: 'current',
+                activeWorkItems: 0,
+                blockedWorkItems: 0,
+                blocksProgressWorkItems: 0,
+                needsAttention: false,
+              ),
+            ],
+            jsonReader: (uri, headers) async => uri.path.contains('oauth')
+                ? _oauthMetadata()
+                : _gatewayMetadata(),
+          ).inspect();
+
+      final approved = await inspect(sourceTitle);
+      expect(approved.titleDriftAliases, isEmpty);
+      expect(approved.missingTitleFingerprintAliases, isEmpty);
+
+      final renamed = await inspect('Renamed Private Source Title');
+      expect(renamed.titleDriftAliases, ['curated-project']);
+    },
+  );
+
+  test('accepts 256 maximum-length v2 rows above the old 64 KiB cap', () async {
+    final policy = {
+      'schema': 'project_atlas.remote_disclosure_policy.v2',
+      'projects': [
+        for (var index = 0; index < 256; index += 1)
+          {
+            'projectId':
+                'local-${index.toString().padLeft(3, '0')}-${List.filled(118, 'x').join()}',
+            'alias':
+                'project-${index.toString().padLeft(3, '0')}-${List.filled(51, 'a').join()}',
+            'label':
+                'Project ${index.toString().padLeft(3, '0')} ${List.filled(34, 'A ').join()}',
+            'access': ['inventory'],
+            'sourceTitleFingerprint': sha256
+                .convert(utf8.encode('Private source title $index'))
+                .toString(),
+          },
+      ],
+    };
+    final fixture = await _Fixture.create(policy: policy);
+    addTearDown(fixture.dispose);
+    expect(fixture.policyBytes.length, greaterThan(64 * 1024));
+    final preview = await McpDisclosurePreviewService(
+      repoRoot: fixture.root,
+      configFile: fixture.configFile,
+      jsonReader: (uri, headers) async =>
+          uri.path.contains('oauth') ? _oauthMetadata() : _gatewayMetadata(),
+    ).inspect();
+    expect(preview.policyState, 'valid');
+    expect(preview.inventoryProjects, hasLength(256));
+  });
+
   test('marks an unreadable local inventory for operator attention', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
@@ -287,21 +663,24 @@ class _Fixture {
     String host = '127.0.0.1',
     bool invalidAudit = false,
     String? disclosurePolicyPath,
+    Map<String, Object?>? policy,
   }) async {
     final root = await Directory.systemTemp.createTemp('atlas_preview_');
     final local = Directory(p.join(root.path, '.local'))..createSync();
     final runs = Directory(p.join(local.path, 'runs'))..createSync();
-    final policy = {
-      'schema': 'project_atlas.remote_disclosure_policy.v1',
-      'projects': [
+    final policyDocument =
+        policy ??
         {
-          'projectId': localId,
-          'alias': 'project-atlas',
-          'label': 'Project Atlas',
-        },
-      ],
-    };
-    final policyBytes = utf8.encode(jsonEncode(policy));
+          'schema': 'project_atlas.remote_disclosure_policy.v1',
+          'projects': [
+            {
+              'projectId': localId,
+              'alias': 'project-atlas',
+              'label': 'Project Atlas',
+            },
+          ],
+        };
+    final policyBytes = utf8.encode(jsonEncode(policyDocument));
     final policyFile = File(
       p.join(local.path, 'atlas_mcp_remote_disclosure.json'),
     )..writeAsBytesSync(policyBytes);

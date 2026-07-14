@@ -31,6 +31,7 @@ from typing import Any
 try:
     from atlas_mcp_remote_policy import (
         REMOTE_PROJECTION_SCHEMA,
+        REMOTE_DETAIL_SCOPE_NOTICE,
         REMOTE_SCOPE_NOTICE,
         DisclosurePolicy,
         DisclosurePolicyError,
@@ -44,6 +45,7 @@ try:
 except ModuleNotFoundError:  # Supports import as tools.atlas_mcp_gateway in tests.
     from tools.atlas_mcp_remote_policy import (
         REMOTE_PROJECTION_SCHEMA,
+        REMOTE_DETAIL_SCOPE_NOTICE,
         REMOTE_SCOPE_NOTICE,
         DisclosurePolicy,
         DisclosurePolicyError,
@@ -113,9 +115,10 @@ DENIED_REMOTE_TOOLS = {
 
 GATEWAY_INSTRUCTIONS = (
     "Project Atlas is a local-first planning system. This remote gateway is "
-    "limited to an operator-approved, deny-by-default subset of projects in a "
-    "tiny redacted read-only profile. A missing alias does not prove that a "
-    "project is unregistered locally. Read disclosed Atlas state before "
+    "limited to an operator-approved, deny-by-default portfolio inventory and "
+    "a separately approved detail subset in a tiny redacted read-only profile. "
+    "Inventory visibility does not grant detailed reads. A missing alias does "
+    "not prove that a project is unregistered locally. Read disclosed Atlas state before "
     "advising. Do not claim, complete, edit, approve, or close out work through "
     "this connector. If a mutation or private context is needed, summarize the "
     "requested operator action."
@@ -341,6 +344,7 @@ class StdioMcpClient:
                 "remoteWritesEnabled": False,
                 "disclosureScope": REMOTE_SCOPE_NOTICE["scope"],
                 "absenceDoesNotProveUnregistered": True,
+                "detailsRequireSeparateApproval": True,
             },
         }
         return {"jsonrpc": "2.0", "id": request.get("id"), "result": result}
@@ -1197,7 +1201,7 @@ class McpGatewayHandler(BaseHTTPRequestHandler):
                 request_id,
                 -32004,
                 "Resource unavailable",
-                {"code": "not_found", **REMOTE_SCOPE_NOTICE},
+                {"code": "not_found", **REMOTE_DETAIL_SCOPE_NOTICE},
             )
         return json_rpc_error(
             request_id,

@@ -12,16 +12,26 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-DISCLOSURE_POLICY_SCHEMA = "project_atlas.remote_disclosure_policy.v1"
+DISCLOSURE_POLICY_SCHEMA_V1 = "project_atlas.remote_disclosure_policy.v1"
+DISCLOSURE_POLICY_SCHEMA_V2 = "project_atlas.remote_disclosure_policy.v2"
+# Compatibility name retained for v1 policy fixtures and the staged migration.
+DISCLOSURE_POLICY_SCHEMA = DISCLOSURE_POLICY_SCHEMA_V1
 REMOTE_PROJECTION_SCHEMA = "project_atlas.remote_projection.v1"
-MAX_DISCLOSURE_POLICY_BYTES = 64 * 1024
-MAX_APPROVED_PROJECTS = 64
-MAX_REMOTE_PROJECT_PAGE = 25
+MAX_DISCLOSURE_POLICY_BYTES = 128 * 1024
+MAX_INVENTORY_PROJECTS = 256
+MAX_DETAIL_PROJECTS = 64
+MAX_APPROVED_PROJECTS = MAX_DETAIL_PROJECTS
+MAX_REMOTE_PROJECT_PAGE = 64
+DEFAULT_REMOTE_PROJECT_PAGE = 64
 MAX_REMOTE_WORKLOAD_ITEMS = 25
 MAX_REMOTE_PLANNING_ITEMS = 5
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()\-]{0,79}$")
+_TOKEN_SHAPED_LABEL_RE = re.compile(
+    r"(?:[0-9a-fA-F]{20,}|[A-Za-z0-9_-]{32,})"
+)
+_SOURCE_TITLE_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 
 PROJECT_STATUSES = frozenset(
     {
@@ -42,9 +52,16 @@ ATTENTION_PROJECT_STATUSES = frozenset(
     {"stale", "needs_update", "needs_review", "local_only", "public_mismatch", "blocked"}
 )
 REMOTE_SCOPE_NOTICE = {
-    "scope": "operator_approved_subset",
+    "scope": "operator_approved_portfolio_inventory",
     "denyByDefault": True,
     "absenceDoesNotProveUnregistered": True,
+    "detailsRequireSeparateApproval": True,
+}
+REMOTE_DETAIL_SCOPE_NOTICE = {
+    "scope": "operator_approved_detail_subset",
+    "denyByDefault": True,
+    "absenceDoesNotProveUnregistered": True,
+    "inventoryVisibilityDoesNotGrantDetails": True,
 }
 PROJECT_PHASES = frozenset({"idea", "design", "build", "test", "ship", "stabilize"})
 PRIORITIES = frozenset({"low", "normal", "high", "urgent"})
@@ -151,20 +168,60 @@ class DisclosureProject:
     local_project_id: str
     alias: str
     label: str
+    access: frozenset[str]
+    source_title_fingerprint: str | None = None
+
+    @property
+    def inventory_enabled(self) -> bool:
+        return "inventory" in self.access
+
+    @property
+    def detail_enabled(self) -> bool:
+        return "detail" in self.access
 
 
 @dataclass(frozen=True)
 class DisclosurePolicy:
+    schema: str
     projects: tuple[DisclosureProject, ...]
     digest: str
 
     @property
+    def inventory_projects(self) -> tuple[DisclosureProject, ...]:
+        return tuple(project for project in self.projects if project.inventory_enabled)
+
+    @property
+    def detail_projects(self) -> tuple[DisclosureProject, ...]:
+        return tuple(project for project in self.projects if project.detail_enabled)
+
+    @property
+    def inventory_by_local_id(self) -> dict[str, DisclosureProject]:
+        return {project.local_project_id: project for project in self.inventory_projects}
+
+    @property
+    def inventory_by_alias(self) -> dict[str, DisclosureProject]:
+        return {project.alias: project for project in self.inventory_projects}
+
+    @property
+    def detail_by_local_id(self) -> dict[str, DisclosureProject]:
+        return {project.local_project_id: project for project in self.detail_projects}
+
+    @property
+    def detail_by_alias(self) -> dict[str, DisclosureProject]:
+        return {project.alias: project for project in self.detail_projects}
+
+    @property
+    def all_local_project_ids(self) -> frozenset[str]:
+        return frozenset(project.local_project_id for project in self.projects)
+
+    # Compatibility views. New authorization code uses the explicit tier maps.
+    @property
     def by_local_id(self) -> dict[str, DisclosureProject]:
-        return {project.local_project_id: project for project in self.projects}
+        return self.inventory_by_local_id
 
     @property
     def by_alias(self) -> dict[str, DisclosureProject]:
-        return {project.alias: project for project in self.projects}
+        return self.inventory_by_alias
 
 
 @dataclass(frozen=True)
@@ -172,7 +229,7 @@ class RemoteCallContext:
     tool: str
     project: DisclosureProject | None = None
     offset: int = 0
-    limit: int = 10
+    limit: int = DEFAULT_REMOTE_PROJECT_PAGE
     visible_local_project_ids: frozenset[str] | None = None
 
     @property
@@ -292,21 +349,41 @@ def load_disclosure_policy(path: Path) -> DisclosurePolicy:
         raise DisclosurePolicyError("Disclosure policy is not valid UTF-8 JSON.") from error
     if not isinstance(decoded, dict) or set(decoded) != {"schema", "projects"}:
         raise DisclosurePolicyError("Disclosure policy has an unexpected root shape.")
-    if decoded.get("schema") != DISCLOSURE_POLICY_SCHEMA:
+    schema = decoded.get("schema")
+    if schema not in {DISCLOSURE_POLICY_SCHEMA_V1, DISCLOSURE_POLICY_SCHEMA_V2}:
         raise DisclosurePolicyError("Disclosure policy schema is unsupported.")
     project_rows = decoded.get("projects")
-    if not isinstance(project_rows, list) or len(project_rows) > MAX_APPROVED_PROJECTS:
+    capacity = (
+        MAX_APPROVED_PROJECTS
+        if schema == DISCLOSURE_POLICY_SCHEMA_V1
+        else MAX_INVENTORY_PROJECTS
+    )
+    if not isinstance(project_rows, list) or len(project_rows) > capacity:
         raise DisclosurePolicyError("Disclosure policy project list is invalid.")
 
     projects: list[DisclosureProject] = []
     local_ids: set[str] = set()
     aliases: set[str] = set()
     for row in project_rows:
-        if not isinstance(row, dict) or not set(row).issubset(
+        allowed_keys = (
             {"projectId", "alias", "label"}
-        ):
+            if schema == DISCLOSURE_POLICY_SCHEMA_V1
+            else {
+                "projectId",
+                "alias",
+                "label",
+                "access",
+                "sourceTitleFingerprint",
+            }
+        )
+        if not isinstance(row, dict) or not set(row).issubset(allowed_keys):
             raise DisclosurePolicyError("Disclosure policy project entry is invalid.")
-        if "projectId" not in row or "alias" not in row:
+        required_keys = (
+            {"projectId", "alias"}
+            if schema == DISCLOSURE_POLICY_SCHEMA_V1
+            else {"projectId", "alias", "label", "access"}
+        )
+        if not required_keys.issubset(row):
             raise DisclosurePolicyError("Disclosure policy project entry is incomplete.")
         local_project_id = row.get("projectId")
         alias = row.get("alias")
@@ -321,8 +398,39 @@ def load_disclosure_policy(path: Path) -> DisclosurePolicy:
             raise DisclosurePolicyError("Disclosure policy local project ID is invalid.")
         if not isinstance(alias, str) or not _ALIAS_RE.fullmatch(alias):
             raise DisclosurePolicyError("Disclosure policy alias is invalid.")
-        if not isinstance(label, str) or not _LABEL_RE.fullmatch(label):
+        if (
+            not isinstance(label, str)
+            or not _LABEL_RE.fullmatch(label)
+            or _TOKEN_SHAPED_LABEL_RE.fullmatch(label)
+        ):
             raise DisclosurePolicyError("Disclosure policy label is invalid.")
+        if schema == DISCLOSURE_POLICY_SCHEMA_V1:
+            access = frozenset({"inventory", "detail"})
+        else:
+            raw_access = row.get("access")
+            if (
+                not isinstance(raw_access, list)
+                or not raw_access
+                or any(not isinstance(item, str) for item in raw_access)
+                or len(set(raw_access)) != len(raw_access)
+                or not set(raw_access).issubset({"inventory", "detail"})
+                or "inventory" not in raw_access
+            ):
+                raise DisclosurePolicyError("Disclosure policy access is invalid.")
+            access = frozenset(raw_access)
+        source_title_fingerprint = row.get("sourceTitleFingerprint")
+        if (
+            source_title_fingerprint is not None
+            and (
+                not isinstance(source_title_fingerprint, str)
+                or not _SOURCE_TITLE_FINGERPRINT_RE.fullmatch(
+                    source_title_fingerprint
+                )
+            )
+        ):
+            raise DisclosurePolicyError(
+                "Disclosure policy source title fingerprint is invalid."
+            )
         if alias == local_project_id or label == local_project_id:
             raise DisclosurePolicyError(
                 "Disclosure policy aliases and labels must not expose local IDs."
@@ -336,9 +444,30 @@ def load_disclosure_policy(path: Path) -> DisclosurePolicy:
                 local_project_id=local_project_id,
                 alias=alias,
                 label=label,
+                access=access,
+                source_title_fingerprint=source_title_fingerprint,
             )
         )
+    for project in projects:
+        for local_project_id in local_ids:
+            if (
+                project.alias == local_project_id
+                or project.label == local_project_id
+                or (
+                    len(local_project_id) >= 8
+                    and (
+                        local_project_id in project.alias
+                        or local_project_id in project.label
+                    )
+                )
+            ):
+                raise DisclosurePolicyError(
+                    "Disclosure policy aliases and labels must not expose local IDs."
+                )
+    if sum(project.detail_enabled for project in projects) > MAX_DETAIL_PROJECTS:
+        raise DisclosurePolicyError("Disclosure policy detail project list is invalid.")
     return DisclosurePolicy(
+        schema=schema,
         projects=tuple(projects),
         digest=hashlib.sha256(raw).hexdigest(),
     )
@@ -371,16 +500,15 @@ def prepare_remote_tool_request(
         _reject_unknown_keys(arguments, {"offset", "limit", "includeArchived"})
         offset = _bounded_int(arguments.get("offset", 0), minimum=0, maximum=1_000_000)
         limit = _bounded_int(
-            arguments.get("limit", 10),
+            arguments.get("limit", DEFAULT_REMOTE_PROJECT_PAGE),
             minimum=1,
             maximum=MAX_REMOTE_PROJECT_PAGE,
-            clamp_max=True,
         )
         forwarded = {"includeArchived": False}
         context = RemoteCallContext(name, offset=offset, limit=limit)
     elif name in {"get_project_status", "atlas.project_planning_context"}:
         _reject_unknown_keys(arguments, {"projectId"})
-        project = _project_for_alias(arguments.get("projectId"), policy)
+        project = _detail_project_for_alias(arguments.get("projectId"), policy)
         forwarded = {"projectId": project.local_project_id}
         context = RemoteCallContext(
             name,
@@ -409,7 +537,7 @@ def prepare_remote_tool_request(
         forwarded = {}
         project = None
         if "projectId" in arguments:
-            project = _project_for_alias(arguments.get("projectId"), policy)
+            project = _detail_project_for_alias(arguments.get("projectId"), policy)
             forwarded["projectId"] = project.local_project_id
         for key in ("readiness", "actor", "risk", "size"):
             if key in arguments:
@@ -457,7 +585,7 @@ def attach_remote_project_visibility(
     payload = _extract_inner_payload(response)
     if not isinstance(payload, list):
         raise RemoteProjectionError("invalid_upstream_shape")
-    approved_ids = policy.by_local_id
+    approved_ids = policy.detail_by_local_id
     visible: set[str] = set()
     for row in payload:
         if not isinstance(row, dict):
@@ -555,7 +683,7 @@ def _project_list_projects(
 ) -> tuple[dict[str, Any], int]:
     if not isinstance(payload, list):
         raise RemoteProjectionError("invalid_upstream_shape")
-    by_local = policy.by_local_id
+    by_local = policy.inventory_by_local_id
     approved: list[dict[str, Any]] = []
     for row in payload:
         if not isinstance(row, dict):
@@ -569,12 +697,12 @@ def _project_list_projects(
         status = _safe_enum(row.get("status"), PROJECT_STATUSES)
         if status not in REMOTE_VISIBLE_PROJECT_STATUSES:
             continue
-        approved.append(_project_status_summary(row, project))
+        approved.append(_project_inventory_summary(row, project))
     approved.sort(key=lambda row: str(row["projectId"]))
     total = len(approved)
     page = approved[context.offset : context.offset + context.limit]
     projected = {
-        "schema": "project_atlas.remote_project_list.v1",
+        "schema": "project_atlas.remote_project_inventory.v2",
         "projects": page,
         "page": {
             "offset": context.offset,
@@ -582,6 +710,11 @@ def _project_list_projects(
             "returned": len(page),
             "total": total,
             "truncated": context.offset + len(page) < total,
+            "nextOffset": (
+                context.offset + len(page)
+                if context.offset + len(page) < total
+                else None
+            ),
         },
         "disclosure": dict(REMOTE_SCOPE_NOTICE),
     }
@@ -646,6 +779,40 @@ def _project_status_summary(
             or bool(freshness["attentionReasons"])
             or bool(blocks_progress)
         ),
+    }
+
+
+def _project_inventory_summary(
+    row: dict[str, Any], project: DisclosureProject
+) -> dict[str, Any]:
+    if row.get("id", row.get("projectId")) != project.local_project_id:
+        raise RemoteProjectionError("invalid_upstream_shape")
+    status = _safe_enum(row.get("status"), PROJECT_STATUSES)
+    freshness = _freshness_summary(row.get("freshness"))
+    blocked = _safe_optional_count(row.get("blockedWorkItems"))
+    blocks_progress = _safe_optional_count(row.get("blocksProgressWorkItems"))
+    if blocks_progress is None:
+        blocks_progress = blocked
+    return {
+        "projectId": project.alias,
+        "title": project.label,
+        "status": status,
+        "phase": _safe_enum(row.get("phase"), PROJECT_PHASES),
+        "priority": _safe_enum(row.get("priority"), PRIORITIES),
+        "needsAttention": (
+            status in ATTENTION_PROJECT_STATUSES
+            or freshness["status"] in {"stale", "unknown"}
+            or bool(freshness["staleReasons"])
+            or bool(freshness["attentionReasons"])
+            or bool(blocks_progress)
+        ),
+        "freshness": {"status": freshness["status"]},
+        "workItems": {
+            "active": _safe_optional_count(row.get("activeWorkItems")),
+            "blocked": blocked,
+            "blocksProgress": blocks_progress,
+        },
+        "detailsAvailable": project.detail_enabled,
     }
 
 
@@ -722,7 +889,7 @@ def _approved_cards(
     if not isinstance(value, list):
         raise RemoteProjectionError("invalid_upstream_shape")
     approved: list[tuple[dict[str, Any], DisclosureProject]] = []
-    by_local = policy.by_local_id
+    by_local = policy.detail_by_local_id
     for row in value:
         if not isinstance(row, dict):
             raise RemoteProjectionError("invalid_upstream_shape")
@@ -975,10 +1142,12 @@ def _reject_unknown_keys(value: dict[str, Any], allowed: set[str]) -> None:
         raise RemoteProjectionError("invalid_params")
 
 
-def _project_for_alias(value: Any, policy: DisclosurePolicy) -> DisclosureProject:
+def _detail_project_for_alias(
+    value: Any, policy: DisclosurePolicy
+) -> DisclosureProject:
     if not isinstance(value, str) or not _ALIAS_RE.fullmatch(value):
         raise RemoteProjectionError("not_found")
-    project = policy.by_alias.get(value)
+    project = policy.detail_by_alias.get(value)
     if project is None:
         raise RemoteProjectionError("not_found")
     return project
@@ -1046,7 +1215,7 @@ def _safe_timestamp(value: Any) -> str | None:
 
 
 def _reject_local_identifiers(value: Any, policy: DisclosurePolicy) -> None:
-    local_ids = tuple(policy.by_local_id)
+    local_ids = tuple(policy.all_local_project_ids)
 
     def visit(item: Any) -> bool:
         if isinstance(item, dict):

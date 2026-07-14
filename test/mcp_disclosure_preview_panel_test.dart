@@ -31,19 +31,34 @@ void main() {
 
     expect(loads, 1);
     expect(find.text('Remote MCP disclosure'), findsOneWidget);
-    expect(find.text('Project Atlas (project-atlas)'), findsOneWidget);
+    expect(find.text('Project Atlas (project-atlas)'), findsNWidgets(2));
     expect(find.text('Overall: unverified'), findsOneWidget);
     expect(find.text('Gateway: metadata matched'), findsOneWidget);
     expect(find.textContaining('atlas.read'), findsOneWidget);
     expect(find.textContaining('abc123def456'), findsOneWidget);
     expect(find.text('deny by default'), findsOneWidget);
     expect(find.text('49 registered'), findsOneWidget);
-    expect(find.text('2 policy-approved - 2 visible'), findsOneWidget);
-    expect(find.text('47 not allowlisted'), findsOneWidget);
+    expect(find.text('2 inventory - 2 detail'), findsOneWidget);
+    expect(
+      find.text('49 project(s) - 1 page(s) - 12000 B first page'),
+      findsOneWidget,
+    );
     expect(find.text('0 unresolved or remote-ineligible'), findsOneWidget);
+    expect(
+      find.text(
+        '1 unsafe label(s) - 0 alias adjustment(s) - 0 title drift - 0 missing baseline',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('gateway policy identity matched'), findsOneWidget);
     for (final tool in mcpRemoteTools) {
       expect(find.text(tool), findsOneWidget);
     }
+
+    final candidateHeader = find.text('Eligible, not enrolled (2)');
+    await tester.ensureVisible(candidateHeader);
+    await tester.tap(candidateHeader);
+    await tester.pumpAndSettle();
 
     final renderedText = tester.allWidgets
         .whereType<Text>()
@@ -60,8 +75,12 @@ void main() {
     ]) {
       expect(renderedText, isNot(contains(forbidden)));
     }
+    expect(renderedText, isNot(contains('Spoof\u202EName\n')));
+    expect(renderedText, contains(r'Spoof\u{202e}Name\u{000a}'));
 
-    await tester.tap(find.byTooltip('Refresh disclosure preview'));
+    final refresh = find.byTooltip('Refresh disclosure preview');
+    await tester.ensureVisible(refresh);
+    await tester.tap(refresh);
     await tester.pumpAndSettle();
     expect(loads, 2);
   });
@@ -81,12 +100,37 @@ McpDisclosurePreview _preview() => McpDisclosurePreview(
       label: 'New Project Capsule Template',
     ),
   ],
+  eligibleNotEnrolledProjects: const [
+    McpDisclosureCandidate(
+      title: 'Candidate Project',
+      proposedAlias: 'candidate-project',
+      unsafeReason: null,
+      sourceTitleFingerprint:
+          '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    ),
+    McpDisclosureCandidate(
+      title: 'Spoof\u202EName\n',
+      proposedAlias: null,
+      unsafeReason: 'bidi_control',
+      sourceTitleFingerprint:
+          'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+    ),
+  ],
+  titleDriftAliases: const [],
+  missingTitleFingerprintAliases: const [],
   inventoryState: 'readable',
   registeredProjects: 49,
   policyApprovedProjects: 2,
   remotelyVisibleProjects: 2,
   notAllowlistedProjects: 47,
   unresolvedOrRemoteIneligibleEntries: 0,
+  candidateInventoryProjects: 49,
+  candidateDetailProjects: 2,
+  inventoryPageCount: 1,
+  estimatedInventoryResponseBytes: 12000,
+  aliasCollisionCount: 0,
+  unsafeCandidateLabels: 1,
+  restartRequired: false,
   gatewayState: 'metadata_matched',
   activeBinaryState: 'unverified',
   authMode: 'oauth',

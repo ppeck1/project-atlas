@@ -31,23 +31,80 @@ void main() {
         await db.createProject('bravo', 'Bravo', DateTime(2026, 1, 1));
         await db.createProject('alpha', 'Alpha', DateTime(2026, 1, 1));
         await db.createProject('charlie', 'Charlie', DateTime(2026, 1, 1));
+        await db.createProject('paused', 'Paused', DateTime(2026, 1, 1));
+        await db.createProject('completed', 'Completed', DateTime(2026, 1, 1));
+        await db.createProject(
+          'status-deleted',
+          'Status Deleted',
+          DateTime(2026, 1, 1),
+        );
+        await db.createProject(
+          'timestamp-deleted',
+          'Timestamp Deleted',
+          DateTime(2026, 1, 1),
+        );
+        await db.createProject(
+          'legacy-marker',
+          'Legacy Marker',
+          DateTime(2026, 1, 1),
+        );
+        await db.createProject(
+          'general-tasks-title',
+          'General Tasks',
+          DateTime(2026, 1, 1),
+        );
         await db.updateProjectMeta('bravo', {'status': 'stale'});
         await db.updateProjectMeta('charlie', {'status': 'archived'});
+        await db.updateProjectMeta('paused', {'status': 'paused'});
+        await db.updateProjectMeta('completed', {'status': 'completed'});
+        await db.customStatement(
+          'UPDATE projects SET status = ? WHERE id = ?',
+          ['deleted', 'status-deleted'],
+        );
+        await db.softDeleteProject('timestamp-deleted', 'fixture');
+        await db.updateProjectMeta('timestamp-deleted', {'status': 'active'});
+        await db.updateProjectMeta('legacy-marker', {
+          'description': AppDb.kGeneralTasksProjectDescription,
+        });
         await db.ensureGeneralTaskStage();
 
         final rows = await service.listProjects();
+        final withoutArchived = await service.listProjects(
+          includeArchived: false,
+        );
         final attention = await service.getStaleProjects();
 
         expect(rows.map((project) => project.title), [
           'Alpha',
           'Bravo',
           'Charlie',
+          'Completed',
+          'General Tasks',
+          'Paused',
         ]);
         expect(
           rows.map((project) => project.id),
           isNot(contains(AppDb.kGeneralTasksProjectId)),
         );
         expect(rows.map((project) => project.id), contains('charlie'));
+        expect(
+          withoutArchived.map((project) => project.id),
+          isNot(contains('charlie')),
+        );
+        expect(
+          withoutArchived.map((project) => project.id),
+          containsAll(['paused', 'completed', 'general-tasks-title']),
+        );
+        for (final excluded in [
+          'status-deleted',
+          'timestamp-deleted',
+          'legacy-marker',
+        ]) {
+          expect(rows.map((project) => project.id), isNot(contains(excluded)));
+        }
+        expect(await service.getProjectStatus('status-deleted'), isNull);
+        expect(await service.getProjectStatus('timestamp-deleted'), isNull);
+        expect(await service.getProjectStatus('legacy-marker'), isNull);
         expect(attention.map((project) => project.id), contains('bravo'));
         expect(
           attention.map((project) => project.id),

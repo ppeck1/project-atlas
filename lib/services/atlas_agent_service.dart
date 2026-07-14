@@ -491,9 +491,9 @@ class AtlasAgentService {
   Future<List<AtlasProjectStatus>> listProjects({
     bool includeArchived = true,
   }) async {
-    final projects = includeArchived
-        ? await state.getVisibleProjects()
-        : await state.getProjectsFull();
+    final projects = await state.getVisibleProjects(
+      includeArchived: includeArchived,
+    );
     final rows = <AtlasProjectStatus>[];
     for (final project in projects) {
       rows.add(await _buildProjectStatus(project));
@@ -1426,7 +1426,9 @@ class AtlasAgentService {
     final project = await state.getProjectFull(projectId);
     if (project == null ||
         project.deletedAt != null ||
-        project.id == AppDb.kGeneralTasksProjectId) {
+        project.status.trim().toLowerCase() == 'deleted' ||
+        project.id == AppDb.kGeneralTasksProjectId ||
+        project.description == AppDb.kGeneralTasksProjectDescription) {
       return null;
     }
     return project;

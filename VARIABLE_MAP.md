@@ -967,18 +967,28 @@ Local JSON-RPC stdio transport for release Windows builds. `project_atlas.exe --
 
 The public ChatGPT gateway is a separate deny-by-default trust boundary over the
 broad local stdio server. It requires an ignored
-`.local/atlas_mcp_remote_disclosure.json` policy using
-`project_atlas.remote_disclosure_policy.v1`. Each approved local Atlas project
-ID maps to one non-sensitive alias and label; callers provide the alias, and the
-local ID never appears in remote results or audit entries. Missing, unreadable,
-or invalid policy state prevents gateway startup. An empty valid policy is a
-valid deny-all configuration.
+`.local/atlas_mcp_remote_disclosure.json` policy. Policy v2 maps every approved
+local Atlas project ID to one non-sensitive alias, approved label, and explicit
+`inventory` plus optional `detail` capability. Inventory visibility does not
+grant detailed reads. Valid v1 rows normalize to both capabilities during the
+staged migration. An optional local-only source-title SHA-256 baseline supports
+rename drift without requiring the approved remote label to equal the private
+source title. Inventory capacity is 256, detail capacity is 64, and the policy
+byte cap is 128 KiB. Callers
+provide aliases, and local IDs never appear in remote results or audit entries.
+Missing, unreadable, or invalid policy state prevents gateway startup. An empty
+valid policy is a deny-all configuration.
 
 The gateway exposes exactly `list_projects`, `get_project_status`,
 `atlas.workload_snapshot`, and `atlas.project_planning_context`. For each call it
 parses the JSON carried inside the local MCP text-content envelope, validates the
 expected structure, filters to policy-approved projects, and constructs a fresh
-bounded `project_atlas.remote_projection.v1` result. Local DTOs, upstream tool
+bounded remote result. `list_projects` rebuilds
+`project_atlas.remote_project_inventory.v2` with only approved identity,
+lifecycle, attention, compact freshness/work counts, and `detailsAvailable`.
+It defaults to 64 rows, preserves deterministic alias ordering, and returns
+`total`, `returned`, `truncated`, and `nextOffset`. The other tools retain their
+bounded `project_atlas.remote_projection.v1` detail projections. Local DTOs, upstream tool
 definitions, free-text work content, commands, evidence excerpts, paths, remote
 URLs, and local identifiers are never forwarded by recursive redaction.
 Project lifecycle, freshness, and workload classifications are constrained to
@@ -1006,12 +1016,15 @@ caps and terminate the child on overflow.
 profile. It reads the ignored autostart config, ignored disclosure policy, and
 ignored `.local/runs/atlas-mcp-disclosure-audit.jsonl` metadata, and it probes
 only the configured loopback metadata endpoints when a gateway is already
-running. It returns `project_atlas.operator_disclosure_preview.v1` with approved
-aliases/labels, the exact four-tool boundary, disclosed field groups, synthetic
-redacted samples, OAuth mode/scope/verifier shape, issuer count, a 12-character
-policy SHA-256 fingerprint, recent safe audit rows, and gateway metadata match
-booleans. It never returns local project IDs, local paths, issuer/resource URLs,
-tokens, request/response bodies, correlation IDs, or full policy digests.
+running. It returns `project_atlas.operator_disclosure_preview.v2` with separate
+inventory/detail aliases, eligible unenrolled local candidates, safe proposed
+aliases, title drift, unsafe-label and collision diagnostics, capacity/page
+counts, exact compact first-page bytes, the four-tool boundary, synthetic
+redacted samples, OAuth verifier shape, a 12-character policy fingerprint,
+recent safe audit rows, and gateway metadata match booleans. Candidate labels
+are local UI state and are omitted from `toJson`. It never returns local project
+IDs, local paths, issuer/resource URLs, tokens, request/response bodies,
+correlation IDs, or full policy digests.
 
 The Settings -> Integrations panel renders this DTO as an operator preview. It
 does not start, stop, restart, or write gateway/tunnel state. Active executable
