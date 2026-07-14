@@ -37,6 +37,7 @@ Template:
   "gatewayScriptPath": "tools\\atlas_mcp_gateway.py",
   "projectAtlasExePath": "build\\windows\\x64\\runner\\Release\\project_atlas.exe",
   "disclosurePolicyPath": ".local\\atlas_mcp_remote_disclosure.json",
+  "disclosureAuditLogPath": ".local\\runs\\atlas-mcp-disclosure-audit.jsonl",
   "host": "127.0.0.1",
   "port": 4874,
   "authMode": "oauth",
@@ -99,6 +100,11 @@ capabilities. The policy is loaded once at gateway startup. Unknown fields or
 capabilities, duplicate IDs or aliases, invalid aliases, and unsupported schemas
 are rejected. An explicit empty `projects` array is the deny-all configuration.
 Policy changes require a gateway restart.
+
+`disclosureAuditLogPath` is passed explicitly to the gateway. Keep it in the
+main Atlas state directory when `gatewayScriptPath` points at a separate
+accepted deployment checkout; otherwise the gateway's script-relative default
+and the Settings preview can silently read different audit files.
 
 ## Tunnel Profile
 

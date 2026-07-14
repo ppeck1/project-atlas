@@ -20,6 +20,7 @@ class McpConnectorAutostartConfig {
   final String gatewayScriptPath;
   final String projectAtlasExePath;
   final String disclosurePolicyPath;
+  final String disclosureAuditLogPath;
   final String host;
   final int port;
   final String authMode;
@@ -40,6 +41,7 @@ class McpConnectorAutostartConfig {
     required this.gatewayScriptPath,
     required this.projectAtlasExePath,
     required this.disclosurePolicyPath,
+    required this.disclosureAuditLogPath,
     required this.host,
     required this.port,
     required this.authMode,
@@ -67,6 +69,9 @@ class McpConnectorAutostartConfig {
       disclosurePolicyPath:
           _string(json['disclosurePolicyPath']) ??
           '.local/atlas_mcp_remote_disclosure.json',
+      disclosureAuditLogPath:
+          _string(json['disclosureAuditLogPath']) ??
+          '.local/runs/atlas-mcp-disclosure-audit.jsonl',
       host: _string(json['host']) ?? '127.0.0.1',
       port: _int(json['port']) ?? 4874,
       authMode: _string(json['authMode']) ?? 'oauth',
@@ -462,6 +467,8 @@ class McpConnectorAutostartService {
       _resolve(config.projectAtlasExePath),
       '--disclosure-policy',
       _resolve(config.disclosurePolicyPath),
+      '--disclosure-audit-log',
+      _resolve(config.disclosureAuditLogPath),
       '--auth-mode',
       config.authMode,
       '--scope',

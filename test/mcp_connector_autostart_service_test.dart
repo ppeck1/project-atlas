@@ -26,12 +26,24 @@ void main() {
       config.disclosurePolicyPath,
       '.local/atlas_mcp_remote_disclosure.json',
     );
+    expect(
+      config.disclosureAuditLogPath,
+      '.local/runs/atlas-mcp-disclosure-audit.jsonl',
+    );
     expect(config.host, '127.0.0.1');
     expect(config.port, 4874);
     expect(config.authMode, 'oauth');
     expect(config.scope, 'atlas.read');
     expect(config.tunnelEnabled, isTrue);
     expect(config.tunnelProfile, 'project-atlas');
+  });
+
+  test('accepts an explicit shared disclosure audit path', () {
+    final config = McpConnectorAutostartConfig.fromJson({
+      'disclosureAuditLogPath': r'D:\atlas-state\remote-audit.jsonl',
+    });
+
+    expect(config.disclosureAuditLogPath, r'D:\atlas-state\remote-audit.jsonl');
   });
 
   test('skips autostart when local config is missing', () async {
