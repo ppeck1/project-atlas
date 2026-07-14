@@ -1,11 +1,16 @@
 # MCP Portfolio Signal Calibration and Freshness Hygiene Work Order
 
-- Status: **ACTIVE**
+- Status: **COMPLETE WHEN MERGED**
 - Work order ID: `WO-PSC-1`
 - Activated: 2026-07-14 by explicit operator confirmation
+- Production verified: 2026-07-14
 - Basis: public `origin/main` commit `709ec6405801eebb1b646f75ded620a16b8f8b13`
 - Branch: `codex/portfolio-signal-calibration-20260714`
 - Baseline matrix: `docs/MCP_PORTFOLIO_SIGNAL_REASON_MATRIX_20260714.md`
+
+The implementation and production runtime gates are complete. GitHub's merged
+state for the source-publication pull request is the final completion gate; the
+post-merge live Atlas closeout records its PR, CI, and merge evidence.
 
 ## Goal
 
@@ -109,10 +114,31 @@ promoted to planning urgency merely to improve portfolio counts.
   redesign, or gateway process-pool work.
 - GitHub issue #1 remains separate.
 
+## Execution Evidence
+
+- Source implementation commit: `24054b586ffbe0893d3381ef21dc0b7c94d9bce7`.
+- The immutable `project-atlas-deploy-24054b5` checkout built and passed the
+  full gateway smoke and populated 49-project probe. Release SHA-256 values:
+  `project_atlas.exe`
+  `CD99E3ADCF4147B73A2BF37E90CE85AB31860A472FFAB7EF6D516A3C3EFA8B63`;
+  `data/app.so`
+  `FB124577CDB72BFC7929E0E6123D52B387483B2A69905BD8792FB46762A25912`.
+- Authenticated production readback returned inventory v3 with 49 rows, 2
+  detail-approved and 47 inventory-only; 28 planning-action and 48
+  data-refresh signals; freshness counts 2 current, 37 stale, and 10 unknown;
+  and severity counts 2 high, 33 medium, 13 low, and 1 none.
+- Status, workload, and planning returned v2. Workload/planning timestamps were
+  valid non-null UTC values, and both count objects separated 15 work items
+  from 16 LLM queue items. An inventory-only detail read remained unavailable.
+- Verification passed: 29 Python tests; 51 focused Flutter tests; all 274
+  runnable full-suite Flutter tests with 1 expected environment-gated skip;
+  repo-wide Dart formatting with 0 changes; `flutter analyze` with no issues;
+  Drift build generation; Windows release build; full OAuth/JWKS gateway smoke
+  with all 29 hidden tools rejected; privacy scan; and clean-diff checks.
+
 ## Rollback
 
-Keep the accepted `e938f0a` deployment and current ignored v2 policy unchanged
-until the new release passes smoke and authenticated readback. If activation
-fails, restore the prior gateway executable while retaining the same policy,
-tunnel, OAuth configuration, and audit path. Record the failed gate in Atlas;
-do not broaden disclosure or clear data flags to force acceptance.
+The accepted `e938f0a` release and immediate pre-cutover ignored configuration
+and policy backups remain the gateway-only rollback baseline. A rollback keeps
+the same policy, tunnel, OAuth configuration, and audit path. Do not broaden
+disclosure or clear data flags to force acceptance.
