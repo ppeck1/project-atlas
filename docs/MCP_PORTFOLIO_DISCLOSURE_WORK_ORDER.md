@@ -1,12 +1,12 @@
 # MCP Portfolio Inventory Disclosure Work Order
 
-- Status: **ACTIVE**
+- Status: **COMPLETE**
 - Work order ID: `WO-RPI-1`
 - Created: 2026-07-14
 - Basis: accepted `origin/main` commit `242914c3db034da862881192876d78395ad49307`
 - Planning branch: `planning/mcp-portfolio-inventory-20260714`
 - Atlas queue task: active and verified as `pending`, `ready`, and high priority; the local task ID is retained only in Atlas and the ignored run ledger
-Implementation state: source implementation and controlled candidate verification complete; production disclosure remains on the backed-up v1 two-project policy pending operator review of one unsafe local title, final accepted commit/artifact, and explicit activation approval
+Implementation state: v2 portfolio inventory is active on the retained ChatGPT tunnel from accepted commit `e938f0a0096772df5ea6f2d31931dc44ed86cc8c`; authenticated readback, detail isolation, shared audit routing, and v1 rollback artifacts are verified
 
 ## Goal
 
@@ -22,14 +22,14 @@ authority.
 
 ## Current Evidence
 
-- Local Atlas and local stdio MCP currently expose 49 normal visible projects.
-- The live ChatGPT connector currently exposes two approved aliases:
-  `project-atlas` and `project-capsule`.
+- Local Atlas, local stdio MCP, and the authenticated ChatGPT inventory expose
+  the same 49 operator-approved normal visible projects.
+- The production v2 policy grants detailed reads to `project-atlas` and
+  `project-capsule`; the other 47 approved aliases are inventory-only.
 - The remote gateway is OAuth `atlas.read`, `remote_readonly`, deny-by-default,
   and exposes exactly four read tools.
-- The existing v1 disclosure policy treats every approved project as eligible
-  for both inventory and detailed reads. Expanding that one-tier list to all 49
-  projects would unintentionally broaden all detailed tools.
+- Valid v1 rows remain compatible as both inventory and detail capabilities,
+  and the backed-up v1 two-project policy remains the verified rollback path.
 - Project names can themselves be sensitive. Regex cleanup or slug generation
   is not a substitute for operator approval of the remote label.
 

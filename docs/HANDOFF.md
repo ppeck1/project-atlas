@@ -48,15 +48,46 @@ remains explicitly unverified until process attestation exists.
 | Field | Value |
 |---|---|
 | Run ID | `20260714-wo-rpi1-implementation` |
-| Run State | source implemented; production activation gated on operator label review |
+| Run State | WO-RPI-1 v2 portfolio inventory activated and verified on the retained ChatGPT tunnel |
 | Last Verified At | 2026-07-14 |
-| Validation State | source candidate fully verified; production activation remains gated on one operator-approved replacement label |
-| Release Commit | `68c1f38af98cb84f13bdf578de9c8d6516812ba3` (verified source candidate; not yet activated in production) |
+| Validation State | production v2 activation, authenticated connector readback, audit routing, detail isolation, and rollback evidence verified |
+| Release Commit | `e938f0a0096772df5ea6f2d31931dc44ed86cc8c` |
 | Accepted Public Main Hash | `242914c3db034da862881192876d78395ad49307` (accepted base before WO-RPI-1) |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
 ## Validation Evidence
 
+- WO-RPI-1 production activation completed from the immutable
+  `project-atlas-deploy-e938f0a` checkout. The full 16-file Windows release
+  directory was hash-compared with zero mismatches before activation. Runner
+  SHA-256: `F3C86C08DF95D4FBF26F31D113250C225C7276D4A1DA8117487975EC71962033`;
+  `data/app.so` SHA-256:
+  `9D645C4357B73B6A0F683AA1D3B60C7525EC92E0B6019AE708F9F66E46E69BE7`.
+- The final v2 policy contains 49 inventory approvals: 2 detail-approved and
+  47 inventory-only. A conservative identifier-shaped source title received a
+  curated human-readable remote label and alias before activation. The policy
+  is 13,384 bytes; the authenticated no-argument inventory returned all 49
+  projects in one 12,639-byte page with `nextOffset: null`.
+- Production port 4874 now loads the v2 policy from the accepted deployment,
+  passes the local policy-digest check, retains deny-by-default OAuth/JWKS and
+  exactly four read-only tools, and routes disclosure audit events explicitly
+  into the main Atlas state directory. The existing tunnel process was retained
+  without restart and remained ready throughout the gateway-only replacement.
+- Authenticated connector readback passed: inventory schema
+  `project_atlas.remote_project_inventory.v2`, portfolio disclosure scope,
+  successful Atlas and Capsule detail reads, uniform not-found denial for an
+  inventory-only detail read, detail-tier-only global workload projection, and
+  successful Atlas planning context. The shared audit advanced for all four
+  tools under the v2 policy with no local-ID leakage.
+- Immediate pre-activation backups of the ignored v1 policy and autostart
+  configuration were created and hash-verified. The prior `242914c` deployment
+  and the byte-identical v1 policy backup remain available for gateway-only
+  rollback without restarting the tunnel.
+- The final audit-routing delta passed its focused autostart suite (`8/8`),
+  `flutter analyze`, the full Flutter suite (`274` passed, `1` expected skip),
+  Python policy tests (`23/23`), Windows release rebuild, full deployment smoke
+  (`29` hidden tools rejected; OAuth and JWKS paths passed), and the populated
+  49-project pre-activation gateway check.
 - WO-RPI-1 source verification passed: Python policy/gateway tests (`27/27`),
   Dart formatting (`90` files, `0` changes), `flutter analyze` (no issues),
   focused Flutter tests (`47/47`), full Flutter suite (`273` passed, `1`
@@ -66,11 +97,10 @@ remains explicitly unverified until process attestation exists.
   audit events, and passed OAuth/JWKS challenge, metadata, origin, and negative
   path checks. Release executable SHA-256:
   `F3C86C08DF95D4FBF26F31D113250C225C7276D4A1DA8117487975EC71962033`.
-- Final production-boundary readback confirmed that port 4874 still serves the
-  accepted v1 two-project policy, the live policy SHA-256 still matches the
-  pre-WO-RPI-1 backup, policy-match metadata is true, the allowlist remains four
-  tools, deny-by-default remains enabled, and the existing gateway and tunnel
-  processes remain alive. No v2 candidate policy was activated.
+- Before activation, the production-boundary readback confirmed that port 4874
+  still served the accepted v1 two-project policy and that the live policy
+  matched its pre-WO-RPI-1 backup. That frozen evidence remains the rollback
+  baseline.
 - WO-RPI-1 controlled portfolio measurement used a temporary localhost-only v2
   policy and audit with the accepted release executable; production port 4874,
   policy, and tunnel were unchanged. Eligible local inventory: 49. Immediately
