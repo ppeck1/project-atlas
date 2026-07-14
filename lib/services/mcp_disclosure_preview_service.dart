@@ -12,6 +12,10 @@ const mcpDisclosurePreviewSchema =
 const _policySchemaV1 = 'project_atlas.remote_disclosure_policy.v1';
 const _policySchemaV2 = 'project_atlas.remote_disclosure_policy.v2';
 const _projectionSchema = 'project_atlas.remote_projection.v1';
+const _inventorySchema = 'project_atlas.remote_project_inventory.v3';
+const _statusSchema = 'project_atlas.remote_project_status.v2';
+const _workloadSchema = 'project_atlas.remote_workload_snapshot.v2';
+const _planningSchema = 'project_atlas.remote_planning_context.v2';
 const _policyMode = 'deny_by_default';
 const _policyDigestHeader = 'X-Project-Atlas-Policy-Digest';
 const _maxConfigBytes = 64 * 1024;
@@ -25,6 +29,25 @@ const _maxInventoryProjects = 256;
 const _maxDetailProjects = 64;
 const _inventoryPageSize = 64;
 const _maxDisplayNumber = 0x7fffffff;
+const _attentionProjectStatuses = <String>{
+  'stale',
+  'needs_update',
+  'needs_review',
+  'local_only',
+  'public_mismatch',
+  'blocked',
+};
+const _planningSignalReasons = <String>{
+  'blocked_work_items',
+  'high_priority_without_active_work',
+  'capsule_errors',
+  'project_status_stale',
+  'project_status_needs_update',
+  'project_status_needs_review',
+  'project_status_local_only',
+  'project_status_public_mismatch',
+  'project_status_blocked',
+};
 
 const mcpRemoteTools = <String>[
   'list_projects',
@@ -106,6 +129,8 @@ class McpLocalProjectRecord {
   final int blockedWorkItems;
   final int blocksProgressWorkItems;
   final bool needsAttention;
+  final List<String> staleReasons;
+  final List<String> attentionReasons;
 
   const McpLocalProjectRecord({
     required this.localId,
@@ -118,6 +143,8 @@ class McpLocalProjectRecord {
     required this.blockedWorkItems,
     required this.blocksProgressWorkItems,
     required this.needsAttention,
+    this.staleReasons = const [],
+    this.attentionReasons = const [],
   });
 }
 
@@ -790,7 +817,7 @@ class McpDisclosurePreviewService {
         final firstPage = projectedRows.take(_inventoryPageSize).toList();
         final total = projectedRows.length;
         final inventoryDto = <String, Object?>{
-          'schema': 'project_atlas.remote_project_inventory.v2',
+          'schema': _inventorySchema,
           'projects': firstPage,
           'page': {
             'offset': 0,
@@ -1553,10 +1580,13 @@ String _visibleText(String value) {
 Map<String, Object?> _inventoryRow(
   McpLocalProjectRecord record,
   McpDisclosureProject project,
-) => {
-  'projectId': project.alias,
-  'title': project.label,
-  'status': _safePreviewEnum(record.status, const {
+) {
+  final freshnessStatus = _safePreviewEnum(record.freshnessStatus, const {
+    'current',
+    'stale',
+    'unknown',
+  });
+  final status = _safePreviewEnum(record.status, const {
     'active',
     'stale',
     'needs_update',
@@ -1566,36 +1596,91 @@ Map<String, Object?> _inventoryRow(
     'paused',
     'blocked',
     'completed',
-  }),
-  'phase': _safePreviewEnum(record.phase, const {
-    'idea',
-    'design',
-    'build',
-    'test',
-    'ship',
-    'stabilize',
-  }),
-  'priority': _safePreviewEnum(record.priority, const {
-    'low',
-    'normal',
-    'high',
-    'urgent',
-  }),
-  'needsAttention': record.needsAttention,
-  'freshness': {
-    'status': _safePreviewEnum(record.freshnessStatus, const {
-      'current',
-      'stale',
-      'unknown',
+  });
+  final reasons = {...record.staleReasons, ...record.attentionReasons};
+  final planningActionRequired =
+      record.needsAttention ||
+      _attentionProjectStatuses.contains(status) ||
+      record.attentionReasons.any(_planningSignalReasons.contains) ||
+      record.blocksProgressWorkItems > 0;
+  final dataRefreshRequired =
+      freshnessStatus != 'current' ||
+      record.staleReasons.isNotEmpty ||
+      record.attentionReasons.any(
+        (reason) => !_planningSignalReasons.contains(reason),
+      );
+  final severity =
+      record.blocksProgressWorkItems > 0 ||
+          status == 'blocked' ||
+          reasons.contains('blocked_work_items') ||
+          reasons.contains('capsule_errors')
+      ? 'high'
+      : planningActionRequired
+      ? 'medium'
+      : freshnessStatus == 'unknown'
+      ? 'medium'
+      : dataRefreshRequired
+      ? 'low'
+      : 'none';
+  final reasonClasses = <String>[
+    if (_attentionProjectStatuses.contains(status) ||
+        reasons.any((reason) => reason.startsWith('project_status_')))
+      'lifecycle',
+    if (record.blocksProgressWorkItems > 0 ||
+        reasons.contains('blocked_work_items') ||
+        reasons.contains('high_priority_without_active_work'))
+      'workload',
+    if (reasons.any(
+      (reason) =>
+          reason.startsWith('missing_local_') ||
+          reason.startsWith('linked_registry_') ||
+          reason.startsWith('invalid_local_') ||
+          reason.startsWith('old_local_') ||
+          reason == 'local_dirty_state',
+    ))
+      'local_evidence',
+    if (reasons.any(
+      (reason) => reason.startsWith('github_') || reason == 'old_github_check',
+    ))
+      'remote_evidence',
+    if (reasons.any((reason) => reason.startsWith('capsule_'))) 'capsule',
+    if (freshnessStatus == 'stale') 'freshness_stale',
+    if (freshnessStatus == 'unknown') 'freshness_unknown',
+  ]..sort();
+  return {
+    'projectId': project.alias,
+    'title': project.label,
+    'status': status,
+    'phase': _safePreviewEnum(record.phase, const {
+      'idea',
+      'design',
+      'build',
+      'test',
+      'ship',
+      'stabilize',
     }),
-  },
-  'workItems': {
-    'active': record.activeWorkItems,
-    'blocked': record.blockedWorkItems,
-    'blocksProgress': record.blocksProgressWorkItems,
-  },
-  'detailsAvailable': project.detailEnabled,
-};
+    'priority': _safePreviewEnum(record.priority, const {
+      'low',
+      'normal',
+      'high',
+      'urgent',
+    }),
+    'needsAttention': record.needsAttention,
+    'freshness': {'status': freshnessStatus},
+    'signals': {
+      'planningActionRequired': planningActionRequired,
+      'dataRefreshRequired': dataRefreshRequired,
+      'severity': severity,
+      'reasonClasses': reasonClasses,
+    },
+    'workItems': {
+      'active': record.activeWorkItems,
+      'blocked': record.blockedWorkItems,
+      'blocksProgress': record.blocksProgressWorkItems,
+    },
+    'detailsAvailable': project.detailEnabled,
+  };
+}
 
 String _safePreviewEnum(Object? value, Set<String> allowed) =>
     value is String && allowed.contains(value) ? value : 'unknown';
@@ -1634,6 +1719,12 @@ List<McpDisclosureContract> _contracts(String alias, String label) {
     'priority': 'normal',
     'needsAttention': false,
     'freshness': {'status': 'current'},
+    'signals': {
+      'planningActionRequired': false,
+      'dataRefreshRequired': false,
+      'severity': 'none',
+      'reasonClasses': <Object?>[],
+    },
     'workItems': {'active': 0, 'blocked': 0, 'blocksProgress': 0},
     'detailsAvailable': true,
   };
@@ -1650,7 +1741,13 @@ List<McpDisclosureContract> _contracts(String alias, String label) {
       'confidence': 'low',
       'staleReasons': <Object?>[],
       'attentionReasons': <Object?>[],
+      'dataRefreshRequired': false,
+    },
+    'signals': {
       'planningActionRequired': false,
+      'dataRefreshRequired': false,
+      'severity': 'none',
+      'reasonClasses': <Object?>[],
     },
     'needsAttention': false,
   };
@@ -1678,12 +1775,12 @@ List<McpDisclosureContract> _contracts(String alias, String label) {
         'projects[].projectId (approved alias)',
         'projects[].title (approved label)',
         'projects[].status/phase/priority',
-        'projects[].workItems/freshness.status/needsAttention',
+        'projects[].workItems/freshness.status/signals/needsAttention',
         'projects[].detailsAvailable',
         'page.offset/limit/returned/total/truncated/nextOffset',
       ],
       sample: {
-        'schema': 'project_atlas.remote_project_inventory.v2',
+        'schema': _inventorySchema,
         'projects': [inventoryProject],
         'page': {
           'offset': 0,
@@ -1704,7 +1801,7 @@ List<McpDisclosureContract> _contracts(String alias, String label) {
         'project.status/phase/priority',
         'project.workItems/records/freshness/needsAttention',
       ],
-      sample: {'schema': _projectionSchema, 'project': project},
+      sample: {'schema': _statusSchema, 'project': project},
     ),
     McpDisclosureContract(
       tool: 'atlas.workload_snapshot',
@@ -1717,8 +1814,8 @@ List<McpDisclosureContract> _contracts(String alias, String label) {
         'bounded structured card classifications only',
       ],
       sample: {
-        'schema': _projectionSchema,
-        'generatedAt': 'redacted-timestamp',
+        'schema': _workloadSchema,
+        'generatedAt': '2026-07-14T00:00:00Z',
         'scope': {'projectId': alias, 'title': label},
         'counts': {
           'total': 1,
@@ -1727,6 +1824,8 @@ List<McpDisclosureContract> _contracts(String alias, String label) {
           'reviewNeeded': 0,
           'stale': 0,
           'importedChecklist': 0,
+          'workItems': 1,
+          'llmQueueItems': 0,
         },
         'executionCandidates': [card],
         'planningCandidateItems': <Object?>[],
@@ -1746,11 +1845,17 @@ List<McpDisclosureContract> _contracts(String alias, String label) {
         'integrityNotice',
       ],
       sample: {
-        'schema': _projectionSchema,
-        'generatedAt': 'redacted-timestamp',
+        'schema': _planningSchema,
+        'generatedAt': '2026-07-14T00:00:00Z',
         'project': project,
         'workload': {
-          'counts': {'total': 0, 'ready': 0, 'blocked': 0},
+          'counts': {
+            'total': 0,
+            'ready': 0,
+            'blocked': 0,
+            'workItems': 0,
+            'llmQueueItems': 0,
+          },
           'executionCandidates': <Object?>[],
           'planningCandidateItems': <Object?>[],
           'reviewNeededItems': <Object?>[],

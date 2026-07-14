@@ -328,6 +328,8 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
           blockedWorkItems: project.blockedWorkItems,
           blocksProgressWorkItems: project.blocksProgressWorkItems,
           needsAttention: project.needsAttention,
+          staleReasons: project.freshness.staleReasons,
+          attentionReasons: project.freshness.attentionReasons,
         ),
     ];
   }

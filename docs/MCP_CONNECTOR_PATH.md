@@ -133,12 +133,17 @@ scrubbing remains defense in depth after structural projection. Set
 `ATLAS_MCP_PRIVATE_NAME_PATTERN` locally if upstream text could contain an
 operator name that should be scrubbed as `[redacted:person]`.
 
-All remotely returned status, freshness, and workload classification strings
-come from fixed semantic enums. Arbitrary token-shaped values are mapped to a
-fixed `unknown` sentinel or omitted. Freshness action text is reduced to a
-boolean signal. The `initialize` result and `tools/list` metadata are also
-rebuilt from fixed contracts, so upstream metadata and malformed errors cannot
-cross the gateway.
+All remotely returned status, freshness, signal, severity, reason-class, and
+workload classification strings come from fixed semantic enums. Arbitrary
+token-shaped values are mapped to a fixed `unknown` sentinel or omitted.
+Projected signals separate planning action from data-refresh debt;
+`needsAttention` is planning-only compatibility output, and stale versus
+unknown freshness remains explicit. Workload counts name `workItems` and
+`llmQueueItems` separately. Workload and planning packets preserve a valid
+upstream generation time or use the UTC projection time, so `generatedAt` is
+never null. The `initialize` result and `tools/list` metadata are also rebuilt
+from fixed contracts, so upstream metadata and malformed errors cannot cross
+the gateway.
 
 The current containment profile intentionally withholds work-item titles,
 accepted-truth claims, commands, free-text notes, and evidence excerpts until

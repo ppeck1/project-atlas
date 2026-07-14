@@ -350,6 +350,10 @@ class WorkloadSnapshot {
   int get blocksProgressTasks =>
       cards.where((card) => card.blocksProgress).length;
   int get reviewNeededTasks => countsByGroup['review_needed'] ?? 0;
+  int get workItems =>
+      cards.where((card) => card.kind == WorkloadCard.workItemKind).length;
+  int get llmQueueItems =>
+      cards.where((card) => card.kind == WorkloadCard.llmQueueKind).length;
 
   Map<String, Object?> toJson() => {
     'schema': 'atlas.workload_snapshot.v1',
@@ -363,6 +367,8 @@ class WorkloadSnapshot {
       'blocksProgress': blocksProgressTasks,
       'reviewNeeded': reviewNeededTasks,
       'stale': staleTasks,
+      'workItems': workItems,
+      'llmQueueItems': llmQueueItems,
       'byGroup': countsByGroup,
       'byActor': tasksByActor,
       'byRisk': tasksByRisk,

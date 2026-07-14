@@ -684,7 +684,7 @@ class RemotePolicyTest(unittest.TestCase):
                 "detailsRequireSeparateApproval": True,
             },
         )
-        self.assertEqual(projected['schema'], 'project_atlas.remote_project_inventory.v2')
+        self.assertEqual(projected['schema'], 'project_atlas.remote_project_inventory.v3')
         self.assertEqual(len(projected["projects"]), 1)
         project = projected["projects"][0]
         self.assertEqual(
@@ -697,6 +697,7 @@ class RemotePolicyTest(unittest.TestCase):
                 "priority",
                 "workItems",
                 "freshness",
+                "signals",
                 "needsAttention",
                 "detailsAvailable",
             },
@@ -706,6 +707,19 @@ class RemotePolicyTest(unittest.TestCase):
         self.assertEqual(
             set(project["freshness"]),
             {"status"},
+        )
+        self.assertEqual(
+            project["signals"],
+            {
+                "planningActionRequired": True,
+                "dataRefreshRequired": True,
+                "severity": "high",
+                "reasonClasses": [
+                    "freshness_stale",
+                    "remote_evidence",
+                    "workload",
+                ],
+            },
         )
         self.assertIs(project['detailsAvailable'], True)
         self.assertIsNone(projected['page']['nextOffset'])
@@ -755,7 +769,17 @@ class RemotePolicyTest(unittest.TestCase):
         encoded = json.dumps(projected)
         self.assertNotIn("abc123", encoded)
         self.assertNotIn("PRIVATE_STATUS_ACTION", encoded)
-        self.assertIs(projected["project"]["needsAttention"], True)
+        self.assertEqual(projected["schema"], "project_atlas.remote_project_status.v2")
+        self.assertIs(projected["project"]["needsAttention"], False)
+        self.assertEqual(
+            projected["project"]["signals"],
+            {
+                "planningActionRequired": False,
+                "dataRefreshRequired": True,
+                "severity": "medium",
+                "reasonClasses": ["freshness_unknown", "local_evidence"],
+            },
+        )
 
     def test_freshness_does_not_treat_no_action_sentence_as_required(self) -> None:
         payload = {
@@ -782,8 +806,44 @@ class RemotePolicyTest(unittest.TestCase):
             max_response_bytes=65_536,
         )
         project = decode_projected(outcome.response)["project"]
-        self.assertIs(project["freshness"]["planningActionRequired"], False)
+        self.assertIs(project["signals"]["planningActionRequired"], False)
+        self.assertIs(project["signals"]["dataRefreshRequired"], False)
+        self.assertEqual(project["signals"]["severity"], "none")
+        self.assertEqual(project["signals"]["reasonClasses"], [])
         self.assertIs(project["needsAttention"], False)
+
+    def test_stale_data_debt_does_not_become_planning_urgency(self) -> None:
+        payload = {
+            "id": "local-approved",
+            "status": "active",
+            "phase": "build",
+            "priority": "normal",
+            "blockedWorkItems": 0,
+            "blocksProgressWorkItems": 0,
+            "freshness": {
+                "status": "stale",
+                "confidence": "medium",
+                "staleReasons": ["old_local_observation"],
+                "attentionReasons": ["local_dirty_state"],
+            },
+        }
+        outcome = project_remote_tool_response(
+            wire(payload),
+            RemoteCallContext("get_project_status", project=self.approved),
+            self.policy,
+            max_response_bytes=65_536,
+        )
+        project = decode_projected(outcome.response)["project"]
+        self.assertIs(project["needsAttention"], False)
+        self.assertEqual(
+            project["signals"],
+            {
+                "planningActionRequired": False,
+                "dataRefreshRequired": True,
+                "severity": "low",
+                "reasonClasses": ["freshness_stale", "local_evidence"],
+            },
+        )
 
     def test_workload_projection_recomputes_approved_counts_and_omits_text(self) -> None:
         approved_card = {
@@ -809,6 +869,7 @@ class RemotePolicyTest(unittest.TestCase):
         review_blocker = dict(
             approved_card,
             id="private-review-id",
+            kind="llm_queue_item",
             readiness="review_needed",
             boardGroup="review_needed",
             blocksProgress=True,
@@ -838,6 +899,12 @@ class RemotePolicyTest(unittest.TestCase):
         self.assertEqual(projected["counts"]["blocked"], 0)
         self.assertEqual(projected["counts"]["blockedBoardGroup"], 0)
         self.assertEqual(projected["counts"]["blocksProgress"], 1)
+        self.assertEqual(projected["counts"]["workItems"], 1)
+        self.assertEqual(projected["counts"]["llmQueueItems"], 1)
+        self.assertEqual(
+            projected["schema"], "project_atlas.remote_workload_snapshot.v2"
+        )
+        self.assertEqual(projected["generatedAt"], "2026-07-09T22:00:00Z")
         self.assertEqual(len(projected["executionCandidates"]), 1)
         self.assertIs(
             projected["reviewNeededItems"][0]["blocksProgress"], True
@@ -892,7 +959,12 @@ class RemotePolicyTest(unittest.TestCase):
             },
             "currentAcceptedTruth": {"currentActiveTask": "PRIVATE_TASK"},
             "workload": {
-                "counts": {"total": 1, "ready": 1},
+                "counts": {
+                    "total": 1,
+                    "ready": 1,
+                    "workItems": 1,
+                    "llmQueueItems": 0,
+                },
                 "readyItems": [card],
                 "planningCandidateItems": [],
                 "reviewNeededItems": [],
@@ -913,6 +985,24 @@ class RemotePolicyTest(unittest.TestCase):
             wire(payload), context, self.policy, max_response_bytes=65_536
         )
         projected = decode_projected(outcome.response)
+        self.assertEqual(
+            projected["schema"], "project_atlas.remote_planning_context.v2"
+        )
+        self.assertEqual(projected["workload"]["counts"]["workItems"], 1)
+        self.assertEqual(projected["workload"]["counts"]["llmQueueItems"], 0)
+        self.assertEqual(
+            projected["project"]["signals"],
+            {
+                "planningActionRequired": False,
+                "dataRefreshRequired": True,
+                "severity": "low",
+                "reasonClasses": [
+                    "freshness_stale",
+                    "local_evidence",
+                    "remote_evidence",
+                ],
+            },
+        )
         self.assertEqual(
             set(projected),
             {
@@ -1003,6 +1093,8 @@ class RemotePolicyTest(unittest.TestCase):
         projected = decode_projected(outcome.response)
         self.assertNotIn(token_like, json.dumps(projected))
         self.assertEqual(projected["executionCandidates"][0]["kind"], "unknown")
+        self.assertIsInstance(projected["generatedAt"], str)
+        self.assertTrue(projected["generatedAt"].endswith("Z"))
 
     def test_archived_projects_are_hidden_from_every_remote_read(self) -> None:
         archived_status = {
