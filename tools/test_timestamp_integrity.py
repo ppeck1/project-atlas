@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from tools import apply_owner_continuity
-from tools import import_dev_launchpad_runtime
+from tools import import_runtime_manifest
 from tools import repair_drift_timestamps
 
 
@@ -136,8 +136,8 @@ class TimestampIntegrityTest(unittest.TestCase):
         self.assertLess(abs(owner_timestamp - int(time.time())), 3)
         self.assertLess(owner_timestamp, repair_drift_timestamps.EPOCH_SECOND_THRESHOLD)
 
-        profile = import_dev_launchpad_runtime._profile_from_app(
-            {"name": "Atlas"}, Path("dev_launchpad.yaml"), owner_timestamp
+        profile = import_runtime_manifest._profile_from_app(
+            {"name": "Atlas"}, Path("runtime_manifest.yaml"), owner_timestamp
         )
         self.assertEqual(profile["last_imported_at"], owner_timestamp)
         self.assertLess(
@@ -158,7 +158,7 @@ class TimestampIntegrityTest(unittest.TestCase):
                 import os
 
                 os.chdir(self.root)
-                backup_path = import_dev_launchpad_runtime._backup_db(
+                backup_path = import_runtime_manifest._backup_db(
                     source, source_path
                 )
             finally:

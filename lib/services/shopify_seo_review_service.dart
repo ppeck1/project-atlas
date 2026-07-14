@@ -151,8 +151,8 @@ class ShopifySeoReviewSnapshot {
       products: const [
         ShopifySeoProduct(
           id: 'gid://shopify/Product/demo-001',
-          handle: 'internet-cult-core-tee',
-          title: 'Internet Cult Core Tee',
+          handle: 'example-graphic-tee',
+          title: 'Example Graphic Tee',
           status: 'needs_review',
           productType: 'Apparel',
           vendor: 'Example Store',
@@ -162,16 +162,16 @@ class ShopifySeoReviewSnapshot {
           currentMetaDescription: '',
           currentDescription:
               'Graphic tee for the extremely online and spiritually unwell.',
-          proposedSeoTitle: 'Internet Cult Core Tee | Example Store',
+          proposedSeoTitle: 'Example Graphic Tee | Example Store',
           proposedMetaDescription:
-              'Shop the Internet Cult Core Tee from Example Store, a graphic streetwear shirt for extremely online chaos.',
+              'Shop the Example Graphic Tee from Example Store, a soft everyday shirt with original artwork.',
           proposedDescription:
               'A graphic tee for extremely online streetwear fans, built as a first SEO review placeholder until Shopify sync is connected.',
           images: [
             ShopifySeoImage(
               id: 'demo-img-001',
               src:
-                  'https://example-store.test/products/internet-cult-core-tee.png',
+                  'https://example-store.test/products/example-graphic-tee.png',
               alt: '',
               width: 1200,
               height: 1200,
@@ -208,9 +208,9 @@ class ShopifySeoReviewSnapshot {
               'Soft hoodie for logging off without actually logging off.',
           proposedSeoTitle: 'Doomscroll Recovery Hoodie | Example Store',
           proposedMetaDescription:
-              'A soft graphic hoodie for internet culture, comfort, and late-night scrolling recovery.',
+              'A soft graphic hoodie designed for everyday comfort.',
           proposedDescription:
-              'A comfort-first graphic hoodie with internet culture styling and search-ready copy for streetwear shoppers.',
+              'A comfort-first graphic hoodie with original artwork and search-ready copy.',
           images: [
             ShopifySeoImage(
               id: 'demo-img-002',

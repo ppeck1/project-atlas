@@ -178,7 +178,7 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
         _tgEnabled = enabled == '1';
         _ollamaHostCtrl.text = host ?? 'http://localhost:11434';
         _ollamaModelCtrl.text = model ?? 'mistral';
-        _runtimeYamlCtrl.text = runtimeDefaults.resolvedDevLaunchpadYamlPath;
+        _runtimeYamlCtrl.text = runtimeDefaults.resolvedRuntimeManifestPath;
         _runtimeCapsuleEnabled = runtimeDefaults.capsuleEnabled;
         _runtimeCapsuleMode = normalizeCapsuleMode(runtimeDefaults.capsuleMode);
         _runtimeCapsuleSourceCtrl.text = runtimeDefaults.capsuleSourcePath;
@@ -239,7 +239,7 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
       ),
       state.saveProjectRuntimeDefaultsSettings(
         ProjectRuntimeDefaultsSettings(
-          devLaunchpadYamlPath: _runtimeYamlCtrl.text,
+          runtimeManifestPath: _runtimeYamlCtrl.text,
           capsuleEnabled: _runtimeCapsuleEnabled,
           capsuleMode: _runtimeCapsuleMode,
           capsuleSourcePath: _runtimeCapsuleSourceCtrl.text,
@@ -479,14 +479,14 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
         const SizedBox(height: 14),
         _Field(
           ctrl: _runtimeYamlCtrl,
-          label: 'Dev Launchpad YAML path',
-          hint: defaultDevLaunchpadYamlPath,
+          label: 'Runtime manifest YAML path',
+          hint: defaultRuntimeManifestPath,
         ),
         const SizedBox(height: 12),
         SwitchListTile(
           value: _runtimeCapsuleEnabled,
           onChanged: (v) => setState(() => _runtimeCapsuleEnabled = v),
-          title: const Text('Enable Project Ops Capsule by default'),
+          title: const Text('Enable project protocol checks by default'),
           contentPadding: EdgeInsets.zero,
         ),
         const SizedBox(height: 12),
@@ -511,7 +511,7 @@ class _IntegrationsTabState extends State<_IntegrationsTab>
         _Field(
           ctrl: _runtimeCapsuleSourceCtrl,
           label: 'Capsule source path',
-          hint: defaultProjectOpsCapsulePath,
+          hint: defaultProjectProtocolPath,
         ),
         const SizedBox(height: 12),
         _Field(

@@ -331,10 +331,14 @@ void main() {
   });
 
   test(
-    'registry row can update an existing BOH project without duplication',
+    'registry row can update an existing sample project without duplication',
     () async {
-      final root = _makeBohCandidate(tempDir);
-      await db.createProject('existing-boh', 'Bag.of.holding', DateTime(2026));
+      final root = _makeOperationsCandidate(tempDir);
+      await db.createProject(
+        'existing-sample',
+        'Sample.Operations',
+        DateTime(2026),
+      );
       final runId = await state.runLocalOperationsScan(
         scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
       );
@@ -346,7 +350,7 @@ void main() {
 
       final projectId = await state.updateExistingProjectFromRegistryEntry(
         registry.id,
-        'existing-boh',
+        'existing-sample',
       );
 
       final projects = await db.getProjectsFull();
@@ -355,14 +359,14 @@ void main() {
       final workItems = await db.getWorkItemsForProject(projectId);
       final docs = await db.getDocumentsForProject(projectId);
 
-      expect(projectId, 'existing-boh');
+      expect(projectId, 'existing-sample');
       expect(projects, hasLength(1));
-      expect(linkedRegistry.atlasProjectId, 'existing-boh');
+      expect(linkedRegistry.atlasProjectId, 'existing-sample');
       expect(decisions, hasLength(1));
       expect(decisions.single.title, contains('DEC-0001'));
       expect(
         workItems.map((item) => item.title),
-        contains('Await owner-authorized BOH work order'),
+        contains('Await owner-authorized work order'),
       );
       expect(
         docs.where((doc) => doc.originalFilename == 'README.md'),
@@ -374,8 +378,12 @@ void main() {
   test(
     'upload-style existing project update previews before applying refresh',
     () async {
-      final root = _makeBohCandidate(tempDir);
-      await db.createProject('existing-boh', 'Bag.of.holding', DateTime(2026));
+      final root = _makeOperationsCandidate(tempDir);
+      await db.createProject(
+        'existing-sample',
+        'Sample.Operations',
+        DateTime(2026),
+      );
       final runId = await state.runLocalOperationsScan(
         scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
       );
@@ -387,7 +395,7 @@ void main() {
 
       final projectId = await state.updateExistingProjectFromRegistryEntry(
         registry.id,
-        'existing-boh',
+        'existing-sample',
         refresh: false,
       );
       final preview = await state.previewLocalProjectRefreshForRegistryEntry(
@@ -415,9 +423,9 @@ void main() {
       final media = await db.getProjectMedia(projectId);
       final ledgers = await db.select(db.localProjectRefreshItems).get();
 
-      expect(projectId, 'existing-boh');
+      expect(projectId, 'existing-sample');
       expect(projects, hasLength(1));
-      expect(linkedRegistry.atlasProjectId, 'existing-boh');
+      expect(linkedRegistry.atlasProjectId, 'existing-sample');
       expect(preview.entries, isNotEmpty);
       expect(selected, isNotEmpty);
       expect(beforeApplyDecisions, isEmpty);
@@ -435,7 +443,7 @@ void main() {
   test(
     'new registry import applies the local refresh profile by default',
     () async {
-      final root = _makeBohCandidate(tempDir);
+      final root = _makeOperationsCandidate(tempDir);
       final runId = await state.runLocalOperationsScan(
         scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
       );
@@ -567,13 +575,13 @@ void main() {
     final groups = groupProjectHealthWarnings([
       'Artifact not imported as source: release/a.zip (123 bytes).',
       'Artifact not imported as source: release/b.zip (456 bytes).',
-      'Bag of Holding: Artifact not imported as source: Bag-of-Holding-clean.tar.gz (45 bytes).',
+      'Sample Operations: Artifact not imported as source: sample-release.tar.gz (45 bytes).',
       'Skipped 3 source file(s) over 256 KB.',
-      'Bag of Holding: Skipped 59 source file(s) over 256 KB.',
+      'Sample Operations: Skipped 59 source file(s) over 256 KB.',
       'Source file refresh plan capped at 250 actions; skipped 10 additional candidate(s).',
-      'Bag of Holding: Source file refresh plan capped at 250 actions; skipped 2294 additional candidate(s).',
-      'Coheron: registered local path is a remote URL; replace the folder link or ignore the registry row.',
-      r'Old Project: registered local path does not exist: B:\missing',
+      'Sample Operations: Source file refresh plan capped at 250 actions; skipped 2294 additional candidate(s).',
+      'Remote Sample: registered local path is a remote URL; replace the folder link or ignore the registry row.',
+      r'Old Project: registered local path does not exist: C:\Example\missing',
       'Odd project warning.',
     ]);
     final byKey = {for (final group in groups) group.key: group};
@@ -591,9 +599,9 @@ void main() {
   });
 
   test(
-    'BOH refresh preview applies native project updates idempotently',
+    'operations-doc refresh preview applies native project updates idempotently',
     () async {
-      final root = _makeBohCandidate(tempDir);
+      final root = _makeOperationsCandidate(tempDir);
       final runId = await state.runLocalOperationsScan(
         scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
       );
@@ -608,7 +616,7 @@ void main() {
       );
 
       final preview = await state.previewLocalProjectRefresh(projectId);
-      expect(preview.profile, 'boh');
+      expect(preview.profile, 'operations_docs');
       expect(
         preview.entries.map((entry) => entry.action.sourceKey),
         contains('DECISIONS.md#dec-0001'),
@@ -634,7 +642,7 @@ void main() {
       expect(workItems.map((item) => item.title), contains('First next step.'));
       expect(
         workItems.map((item) => item.title),
-        contains('Await owner-authorized BOH work order'),
+        contains('Await owner-authorized work order'),
       );
       expect(docs.map((doc) => doc.originalFilename), contains('DECISIONS.md'));
       expect(
@@ -648,14 +656,14 @@ void main() {
   test(
     'registry-specific refresh works when multiple entries link to one project',
     () async {
-      final bohRoot = _makeBohCandidate(tempDir);
+      final operationsRoot = _makeOperationsCandidate(tempDir);
       _makeCandidate(tempDir, 'docs');
       final runId = await state.runLocalOperationsScan(
         scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
       );
       final observations = await db.getProjectObservationsForScanRun(runId);
-      final bohObservation = observations.singleWhere(
-        (row) => row.observedPath == bohRoot.path,
+      final operationsObservation = observations.singleWhere(
+        (row) => row.observedPath == operationsRoot.path,
       );
       final docsObservation = observations.singleWhere(
         (row) => row.observedPath.endsWith('${p.separator}docs'),
@@ -666,20 +674,25 @@ void main() {
         'Shared Project',
         DateTime(2026),
       );
-      await state.linkProjectObservation(bohObservation.id, 'shared-project');
-      await state.linkProjectObservation(docsObservation.id, 'shared-project');
-
-      final bohRegistry = await db.getProjectRegistryByPath(bohRoot.path);
-      expect(bohRegistry, isNotNull);
-
-      final preview = await state.previewLocalProjectRefreshForRegistryEntry(
-        bohRegistry!.id,
+      await state.linkProjectObservation(
+        operationsObservation.id,
         'shared-project',
       );
-      expect(preview.localPath, bohRoot.path);
+      await state.linkProjectObservation(docsObservation.id, 'shared-project');
+
+      final operationsRegistry = await db.getProjectRegistryByPath(
+        operationsRoot.path,
+      );
+      expect(operationsRegistry, isNotNull);
+
+      final preview = await state.previewLocalProjectRefreshForRegistryEntry(
+        operationsRegistry!.id,
+        'shared-project',
+      );
+      expect(preview.localPath, operationsRoot.path);
 
       final result = await state.applyLocalProjectRefreshForRegistryEntry(
-        bohRegistry.id,
+        operationsRegistry.id,
         'shared-project',
       );
       expect(result.created + result.updated, greaterThan(0));
@@ -872,14 +885,17 @@ void main() {
 
       final saved = await state.saveManualProjectGithubRemoteMetadata(
         'github-project',
-        'https://github.com/ppeck1/Coheron',
+        'https://github.com/example-owner/sample-repository',
       );
       final cached = await state.getLatestProjectGitRemoteStatus(
         'github-project',
       );
 
-      expect(saved.fullName, 'ppeck1/Coheron');
-      expect(cached?.htmlUrl, 'https://github.com/ppeck1/Coheron');
+      expect(saved.fullName, 'example-owner/sample-repository');
+      expect(
+        cached?.htmlUrl,
+        'https://github.com/example-owner/sample-repository',
+      );
 
       await state.clearProjectGithubRemoteMetadata('github-project');
       final cleared = await state.getLatestProjectGitRemoteStatus(
@@ -891,7 +907,7 @@ void main() {
   );
 
   test('local refresh imports project media idempotently', () async {
-    final root = _makeBohCandidate(tempDir);
+    final root = _makeOperationsCandidate(tempDir);
     final runId = await state.runLocalOperationsScan(
       scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
     );
@@ -1012,21 +1028,20 @@ void main() {
     () async {
       final root = Directory(p.join(tempDir.path, 'card_project'))
         ..createSync(recursive: true);
-      final tradeCards = Directory(p.join(root.path, 'trade_craft', 'cards'))
+      final markdownCards = Directory(p.join(root.path, 'field_notes', 'cards'))
         ..createSync(recursive: true);
-      File(p.join(tradeCards.path, 'flint.md')).writeAsStringSync('''
+      File(p.join(markdownCards.path, 'flint.md')).writeAsStringSync('''
 # Flint Knapper
 
 Pressure flakes a useful edge.
 ''');
-      final productivity = Directory(p.join(root.path, 'productivity'))
-        ..createSync();
+      final goals = Directory(p.join(root.path, 'goals'))..createSync();
       File(
-        p.join(productivity.path, 'focus.goalcard.md'),
+        p.join(goals.path, 'focus.goalcard.md'),
       ).writeAsStringSync('# Focus Block\nProtect one work interval.\n');
-      final philosophy = Directory(p.join(root.path, 'philosophy'))
+      final jsonCollection = Directory(p.join(root.path, 'json_collection'))
         ..createSync();
-      File(p.join(philosophy.path, 'cards.json')).writeAsStringSync(
+      File(p.join(jsonCollection.path, 'cards.json')).writeAsStringSync(
         jsonEncode({
           'cards': [
             {
@@ -1037,10 +1052,9 @@ Pressure flakes a useful edge.
           ],
         }),
       );
-      final preIndustrial = Directory(
-        p.join(root.path, 'Pre_Industrialization'),
-      )..createSync();
-      File(p.join(preIndustrial.path, 'index.html')).writeAsStringSync('''
+      final htmlLibrary = Directory(p.join(root.path, 'html_library'))
+        ..createSync();
+      File(p.join(htmlLibrary.path, 'index.html')).writeAsStringSync('''
 <section><h2>Village Forge</h2><p>Local heat and repair.</p></section>
 <details><summary>Canal Lock</summary><p>Water control pattern.</p></details>
 ''');
@@ -1053,11 +1067,14 @@ Pressure flakes a useful edge.
           .toList();
       final cardKeys = cardActions.map((action) => action.sourceKey).toSet();
 
-      expect(cardKeys, contains('trade_craft/cards/flint.md#card'));
-      expect(cardKeys, contains('productivity/focus.goalcard.md#card'));
-      expect(cardKeys, contains('philosophy/cards.json#card-stoic-practice'));
-      expect(cardKeys, contains('Pre_Industrialization/index.html#section-1'));
-      expect(cardKeys, contains('Pre_Industrialization/index.html#details-1'));
+      expect(cardKeys, contains('field_notes/cards/flint.md#card'));
+      expect(cardKeys, contains('goals/focus.goalcard.md#card'));
+      expect(
+        cardKeys,
+        contains('json_collection/cards.json#card-stoic-practice'),
+      );
+      expect(cardKeys, contains('html_library/index.html#section-1'));
+      expect(cardKeys, contains('html_library/index.html#details-1'));
       expect(cardActions.map((action) => action.targetType).toSet(), {
         'document',
       });
@@ -1075,7 +1092,7 @@ Pressure flakes a useful edge.
                       .singleWhere(
                         (action) =>
                             action.sourceKey ==
-                            'philosophy/cards.json#card-stoic-practice',
+                            'json_collection/cards.json#card-stoic-practice',
                       )
                       .payload['metadataJson']!
                   as String,
@@ -1087,9 +1104,9 @@ Pressure flakes a useful edge.
   );
 
   test(
-    'html2md-like refresh uses launchpad metadata and handoff verification',
+    'document-converter refresh uses runtime metadata and handoff verification',
     () async {
-      final root = _makeHtml2mdCandidate(tempDir);
+      final root = _makeDocumentConverterCandidate(tempDir);
 
       final plan = await const LocalProjectRefreshService().buildPlan(
         root.path,
@@ -1097,7 +1114,8 @@ Pressure flakes a useful edge.
       final metaAction = plan.actions.singleWhere(
         (action) =>
             action.sourceKind == 'project_meta' &&
-            action.sourceKey == '.project/launchpad.json#project-metadata',
+            action.sourceKey ==
+                '.project/runtime_manifest.json#project-metadata',
       );
       final workTitles = plan.actions
           .where((action) => action.sourceKind == 'work_item')
@@ -1113,7 +1131,7 @@ Pressure flakes a useful edge.
           .toSet();
 
       expect(metaAction.targetType, 'project');
-      expect(metaAction.payload['title'], 'HTML2MD Reanimator');
+      expect(metaAction.payload['title'], 'Document Converter Demo');
       expect(
         metaAction.payload['description'].toString(),
         contains('Windows-first HTML-to-Markdown recovery workstation'),
@@ -1123,17 +1141,20 @@ Pressure flakes a useful edge.
       expect(metaAction.payload['manifestTags'], contains('markdown'));
       expect(documentKeys, contains('docs/HANDOFF.md'));
       expect(workTitles, contains('Run the manifest test command if present.'));
-      expect(workTitles, contains('Launch the project from Dev Launchpad.'));
-      expect(sourceKeys, contains('codex_reanimator/app.py'));
-      expect(sourceKeys, isNot(contains('.project/launchpad.json')));
+      expect(
+        workTitles,
+        contains('Launch the project from the configured launcher.'),
+      );
+      expect(sourceKeys, contains('document_converter/app.py'));
+      expect(sourceKeys, isNot(contains('.project/runtime_manifest.json')));
       expect(sourceKeys, isNot(contains('docs/HANDOFF.md')));
       expect(sourceKeys, isNot(contains('tests/fixtures/simple.html')));
-      expect(sourceKeys, isNot(contains('release/CodexReanimator.exe')));
+      expect(sourceKeys, isNot(contains('release/DocumentConverter.exe')));
       expect(
         plan.warnings,
         contains(
           predicate<String>(
-            (warning) => warning.contains('release/CodexReanimator.exe'),
+            (warning) => warning.contains('release/DocumentConverter.exe'),
           ),
         ),
       );
@@ -1161,7 +1182,7 @@ Pressure flakes a useful edge.
       expect(first.created + first.updated, greaterThan(0));
       expect(second.created, 0);
       expect(second.updated, 0);
-      expect(project!.title, 'HTML2MD Reanimator');
+      expect(project!.title, 'Document Converter Demo');
       expect(
         project.description,
         contains('Windows-first HTML-to-Markdown recovery workstation'),
@@ -1172,11 +1193,11 @@ Pressure flakes a useful edge.
       );
       expect(
         tags.map((tag) => tag.name).toSet(),
-        containsAll({'markdown', 'desktop', 'Local AI Stack'}),
+        containsAll({'markdown', 'desktop', 'Sample Utilities'}),
       );
       expect(
         ledgers.map((row) => row.sourceKey),
-        contains('.project/launchpad.json#project-metadata'),
+        contains('.project/runtime_manifest.json#project-metadata'),
       );
     },
   );
@@ -1184,7 +1205,7 @@ Pressure flakes a useful edge.
   test(
     'project enrichment refreshes linked project artifacts and records coverage',
     () async {
-      final root = _makeHtml2mdCandidate(tempDir);
+      final root = _makeDocumentConverterCandidate(tempDir);
       final runId = await state.runLocalOperationsScan(
         scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
       );
@@ -1223,7 +1244,10 @@ Pressure flakes a useful edge.
       expect(coverage['sourceFiles'], greaterThan(0));
       expect(coverage['documents'], greaterThan(0));
       expect(ledgers.map((row) => row.sourceKind), contains('source_file'));
-      expect(docs.map((doc) => doc.title), contains('codex_reanimator/app.py'));
+      expect(
+        docs.map((doc) => doc.title),
+        contains('document_converter/app.py'),
+      );
       expect(
         steps.map((step) => step.worker),
         containsAll([
@@ -1245,7 +1269,7 @@ Pressure flakes a useful edge.
   test(
     'project enrichment analyze dry-run records findings without applying refresh',
     () async {
-      final root = _makeHtml2mdCandidate(tempDir);
+      final root = _makeDocumentConverterCandidate(tempDir);
       final runId = await state.runLocalOperationsScan(
         scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
       );
@@ -1315,7 +1339,7 @@ Pressure flakes a useful edge.
   test(
     'project enrichment repairs manifest tags even when metadata ledger is unchanged',
     () async {
-      final root = _makeHtml2mdCandidate(tempDir);
+      final root = _makeDocumentConverterCandidate(tempDir);
       final runId = await state.runLocalOperationsScan(
         scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
       );
@@ -1344,7 +1368,7 @@ Pressure flakes a useful edge.
 
       expect(
         tags.map((tag) => tag.name).toSet(),
-        containsAll({'markdown', 'desktop', 'Local AI Stack'}),
+        containsAll({'markdown', 'desktop', 'Sample Utilities'}),
       );
       expect(identityStep.status, 'completed');
       expect(identityStep.updatedItems, 1);
@@ -1444,18 +1468,20 @@ Pressure flakes a useful edge.
         DateTime(2026),
       );
       final runId = await db.startProjectScanRun(
-        rootsJson: jsonEncode(['https://github.com/ppeck1/Coheron']),
+        rootsJson: jsonEncode([
+          'https://github.com/example-owner/sample-repository',
+        ]),
         startedAt: DateTime(2026, 7, 2),
       );
       await db.addProjectObservation(
         id: 'remote_url_obs',
         scanRunId: runId,
-        observedPath: 'https://github.com/ppeck1/Coheron',
+        observedPath: 'https://github.com/example-owner/sample-repository',
         classificationGuess: 'software',
         confidence: 80,
         markerFilesJson: jsonEncode(['README.md']),
         warningsJson: '[]',
-        rawJson: jsonEncode({'displayName': 'Coheron'}),
+        rawJson: jsonEncode({'displayName': 'Remote Sample'}),
         observedAt: DateTime(2026, 7, 2),
       );
       await db.finishProjectScanRun(
@@ -1488,7 +1514,10 @@ Pressure flakes a useful edge.
       expect(result.run.status, 'analyzed_with_findings');
       expect(titles, contains(registryFinding.title));
       expect(registryFinding.severity, 'info');
-      expect(registryFinding.detail, 'https://github.com/ppeck1/Coheron');
+      expect(
+        registryFinding.detail,
+        'https://github.com/example-owner/sample-repository',
+      );
       expect(registryFinding.evidence['pathKind'], 'remote_url');
     },
   );
@@ -1502,18 +1531,20 @@ Pressure flakes a useful edge.
         DateTime(2026),
       );
       final runId = await db.startProjectScanRun(
-        rootsJson: jsonEncode(['https://github.com/ppeck1/Coheron']),
+        rootsJson: jsonEncode([
+          'https://github.com/example-owner/sample-repository',
+        ]),
         startedAt: DateTime(2026, 7, 2),
       );
       await db.addProjectObservation(
         id: 'remote_url_obs',
         scanRunId: runId,
-        observedPath: 'https://github.com/ppeck1/Coheron',
+        observedPath: 'https://github.com/example-owner/sample-repository',
         classificationGuess: 'software',
         confidence: 80,
         markerFilesJson: jsonEncode(['README.md']),
         warningsJson: '[]',
-        rawJson: jsonEncode({'displayName': 'Coheron'}),
+        rawJson: jsonEncode({'displayName': 'Remote Sample'}),
         observedAt: DateTime(2026, 7, 2),
       );
       await db.finishProjectScanRun(
@@ -1570,18 +1601,20 @@ Pressure flakes a useful edge.
         DateTime(2026),
       );
       final runId = await db.startProjectScanRun(
-        rootsJson: jsonEncode(['https://github.com/ppeck1/Coheron']),
+        rootsJson: jsonEncode([
+          'https://github.com/example-owner/sample-repository',
+        ]),
         startedAt: DateTime(2026, 7, 2),
       );
       await db.addProjectObservation(
         id: 'remote_url_obs',
         scanRunId: runId,
-        observedPath: 'https://github.com/ppeck1/Coheron',
+        observedPath: 'https://github.com/example-owner/sample-repository',
         classificationGuess: 'software',
         confidence: 80,
         markerFilesJson: jsonEncode(['README.md']),
         warningsJson: '[]',
-        rawJson: jsonEncode({'displayName': 'Coheron'}),
+        rawJson: jsonEncode({'displayName': 'Remote Sample'}),
         observedAt: DateTime(2026, 7, 2),
       );
       await db.finishProjectScanRun(
@@ -1788,18 +1821,20 @@ Pressure flakes a useful edge.
         DateTime(2026),
       );
       final runId = await db.startProjectScanRun(
-        rootsJson: jsonEncode(['https://github.com/ppeck1/Coheron']),
+        rootsJson: jsonEncode([
+          'https://github.com/example-owner/sample-repository',
+        ]),
         startedAt: DateTime(2026, 7, 2),
       );
       await db.addProjectObservation(
         id: 'remote_url_obs',
         scanRunId: runId,
-        observedPath: 'https://github.com/ppeck1/Coheron',
+        observedPath: 'https://github.com/example-owner/sample-repository',
         classificationGuess: 'software',
         confidence: 80,
         markerFilesJson: jsonEncode(['README.md']),
         warningsJson: '[]',
-        rawJson: jsonEncode({'displayName': 'Coheron'}),
+        rawJson: jsonEncode({'displayName': 'Remote Sample'}),
         observedAt: DateTime(2026, 7, 2),
       );
       await db.finishProjectScanRun(
@@ -1815,8 +1850,8 @@ Pressure flakes a useful edge.
         'remote_url_obs',
         'remote-url-project',
       );
-      _makeCandidate(tempDir, 'coheron_replacement');
-      final replacementPath = p.join(tempDir.path, 'coheron_replacement');
+      _makeCandidate(tempDir, 'remote_sample_replacement');
+      final replacementPath = p.join(tempDir.path, 'remote_sample_replacement');
 
       final result = await state.runProjectEnrichment(
         refreshLinkedProjects: false,
@@ -2086,7 +2121,7 @@ Pressure flakes a useful edge.
   );
 
   test('project bundle export contains project refresh artifacts', () async {
-    final root = _makeBohCandidate(tempDir);
+    final root = _makeOperationsCandidate(tempDir);
     final runId = await state.runLocalOperationsScan(
       scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
     );
@@ -2106,7 +2141,7 @@ Pressure flakes a useful edge.
     expect(preview.documents, greaterThan(0));
     expect(preview.refreshItems, greaterThan(0));
 
-    final zipPath = p.join(tempDir.path, 'boh_bundle.zip');
+    final zipPath = p.join(tempDir.path, 'operations_bundle.zip');
     await state.exportProjectBundleToZip(projectId, zipPath);
 
     final bytes = File(zipPath).readAsBytesSync();
@@ -2422,10 +2457,10 @@ Pressure flakes a useful edge.
         projectId: projectId,
         registryId: 'outer_registry',
         provider: 'github',
-        owner: 'ppeck1',
-        repo: 'dev-launchpad',
-        remoteUrl: 'https://github.com/ppeck1/dev-launchpad.git',
-        htmlUrl: 'https://github.com/ppeck1/dev-launchpad',
+        owner: 'example-owner',
+        repo: 'sample-repository',
+        remoteUrl: 'https://github.com/example-owner/sample-repository.git',
+        htmlUrl: 'https://github.com/example-owner/sample-repository',
         visibility: 'public',
         defaultBranch: 'main',
         onlineHeadSha: 'abc123',
@@ -2439,7 +2474,7 @@ Pressure flakes a useful edge.
         db,
         enableBackgroundSummaryRefresh: false,
         githubArchiveFetcher: (identity, ref) async {
-          expect(identity.fullName, 'ppeck1/dev-launchpad');
+          expect(identity.fullName, 'example-owner/sample-repository');
           expect(ref, 'abc123');
           return [80, 75, 3, 4, 0, 0];
         },
@@ -2463,7 +2498,9 @@ Pressure flakes a useful edge.
 
       final archive = ZipDecoder().decodeBytes(File(zipPath).readAsBytesSync());
       expect(
-        archive.findFile('git/github_ppeck1_dev-launchpad_abc123.zip'),
+        archive.findFile(
+          'git/github_example-owner_sample-repository_abc123.zip',
+        ),
         isNotNull,
       );
       final payload =
@@ -2475,8 +2512,8 @@ Pressure flakes a useful edge.
               as Map<String, Object?>;
       final cleanGit = payload['cleanGitArchive'] as Map<String, Object?>;
       expect(cleanGit['source'], 'github');
-      expect(cleanGit['owner'], 'ppeck1');
-      expect(cleanGit['repo'], 'dev-launchpad');
+      expect(cleanGit['owner'], 'example-owner');
+      expect(cleanGit['repo'], 'sample-repository');
       expect(cleanGit['ref'], 'abc123');
     },
   );
@@ -2505,25 +2542,23 @@ Directory _makeSourceCandidate(
   return dir;
 }
 
-Directory _makeBohCandidate(Directory tempDir) {
-  final dir = Directory(p.join(tempDir.path, 'Bag.of.holding'))
+Directory _makeOperationsCandidate(Directory tempDir) {
+  final dir = Directory(p.join(tempDir.path, 'Sample.Operations'))
     ..createSync(recursive: true);
-  File(p.join(dir.path, 'README.md')).writeAsStringSync('# Bag of Holding');
+  File(p.join(dir.path, 'README.md')).writeAsStringSync('# Sample Operations');
   File(p.join(dir.path, 'ACTIVE_TASK.md')).writeAsStringSync('''
 # ACTIVE_TASK.md
 
 ## IDLE - no active work order
 
-Last completed: `boh_fold_domain_cluster_visuals_v0_1` on 2026-06-23.
+Last completed: `sample_review_v0_1` on 2026-06-23.
 ''');
   File(p.join(dir.path, 'CURRENT_STATE.md')).writeAsStringSync('''
 # CURRENT_STATE.md
 
 ## Project Purpose
 
-Bag of Holding is a local-first knowledge workbench for governed document storage.
-
-Open operational item: `boh_runtime_launch_origin_audit_v0_1`.
+Sample Operations is a synthetic local-first project fixture.
 ''');
   File(p.join(dir.path, 'DECISIONS.md')).writeAsStringSync('''
 # DECISIONS.md
@@ -2545,7 +2580,7 @@ Consequence: Agents must keep patches small.
 
 ## Proposed next work orders - drafted, NOT authorized
 
-- **WO-3** proposed importer.
+- Proposed importer.
 ''');
   File(p.join(dir.path, 'ACCEPTANCE.md')).writeAsStringSync('''
 # ACCEPTANCE.md
@@ -2562,25 +2597,25 @@ Docs must distinguish implemented and future work.
   return dir;
 }
 
-Directory _makeHtml2mdCandidate(Directory tempDir) {
-  final dir = Directory(p.join(tempDir.path, 'html2md'))
+Directory _makeDocumentConverterCandidate(Directory tempDir) {
+  final dir = Directory(p.join(tempDir.path, 'document_converter_demo'))
     ..createSync(recursive: true);
   Directory(p.join(dir.path, '.project')).createSync();
   Directory(p.join(dir.path, 'docs')).createSync();
   Directory(p.join(dir.path, 'release')).createSync();
   Directory(p.join(dir.path, 'archive')).createSync();
-  Directory(p.join(dir.path, 'codex_reanimator')).createSync();
+  Directory(p.join(dir.path, 'document_converter')).createSync();
   Directory(p.join(dir.path, 'tests', 'fixtures')).createSync(recursive: true);
 
-  File(p.join(dir.path, '.project', 'launchpad.json')).writeAsStringSync(
+  File(p.join(dir.path, '.project', 'runtime_manifest.json')).writeAsStringSync(
     jsonEncode({
-      'name': 'HTML2MD Reanimator',
+      'name': 'Document Converter Demo',
       'type': 'desktop',
-      'group': 'Local AI Stack',
+      'group': 'Sample Utilities',
       'tags': ['python', 'tkinter', 'html', 'markdown'],
       'commands': {
-        'start': 'python -m codex_reanimator',
-        'build': 'python -m PyInstaller --clean CodexReanimator.spec',
+        'start': 'python -m document_converter',
+        'build': 'python -m PyInstaller --clean DocumentConverter.spec',
         'test': 'pytest',
       },
       'docs': {
@@ -2595,14 +2630,14 @@ Directory _makeHtml2mdCandidate(Directory tempDir) {
     }),
   );
   File(p.join(dir.path, 'README.md')).writeAsStringSync('''
-# CODEX REANIMATOR
+# DOCUMENT CONVERTER DEMO
 
-CODEX REANIMATOR is a Windows-first HTML-to-Markdown recovery workstation. It converts messy HTML artifacts into reviewable Markdown while preserving provenance.
+This synthetic Windows-first utility converts sample HTML into reviewable Markdown while preserving provenance.
 
 ## Repository Layout
 
 ```text
-codex_reanimator/   application source
+document_converter/ application source
 docs/               screenshots and design notes
 release/            latest packaged executable
 archive/            legacy builds
@@ -2611,14 +2646,14 @@ tests/              fixtures and future tests
 ''');
   File(p.join(dir.path, 'pyproject.toml')).writeAsStringSync('''
 [project]
-name = "codex-reanimator"
+name = "document-converter-demo"
 ''');
   File(p.join(dir.path, 'docs', 'CURRENT_STATE.md')).writeAsStringSync('''
 # Current State
 
-Project: HTML2MD Reanimator
+Project: Document Converter Demo
 
-Status: Metadata scaffolded for Dev Launchpad.
+Status: Runtime metadata scaffolded for a configured launcher.
 
 ## What This Project Is
 
@@ -2639,18 +2674,18 @@ Project documentation and operating decisions stay in this project folder.
 
 ## Operator Summary
 
-Seeded from .project/launchpad.json.
+Seeded from .project/runtime_manifest.json.
 
 ## Next Verification
 
 1. Run the manifest test command if present.
 2. Run the manifest build command if present.
-- Launch the project from Dev Launchpad.
+- Launch the project from the configured launcher.
 - Run health checks when URLs are declared.
 
 ## Boundary
 
-Dev Launchpad owns execution/status display only.
+The configured launcher owns execution and status display only.
 ''');
   File(
     p.join(dir.path, 'docs', 'VARIABLE_MATRIX.md'),
@@ -2659,16 +2694,16 @@ Dev Launchpad owns execution/status display only.
     p.join(dir.path, 'docs', 'OPERATIONS.md'),
   ).writeAsStringSync('# Operations\n');
   File(
-    p.join(dir.path, 'codex_reanimator', 'app.py'),
+    p.join(dir.path, 'document_converter', 'app.py'),
   ).writeAsStringSync('def main():\n    return "ok"\n');
   File(
     p.join(dir.path, 'tests', 'fixtures', 'simple.html'),
   ).writeAsStringSync('<html><body>fixture</body></html>');
   File(
-    p.join(dir.path, 'release', 'CodexReanimator.exe'),
+    p.join(dir.path, 'release', 'DocumentConverter.exe'),
   ).writeAsBytesSync(List.filled(128, 0));
   File(
-    p.join(dir.path, 'archive', 'html2md.v1.rar'),
+    p.join(dir.path, 'archive', 'document-converter.v1.rar'),
   ).writeAsBytesSync(List.filled(64, 1));
   return dir;
 }

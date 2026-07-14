@@ -2069,7 +2069,7 @@ class AtlasAgentService {
     },
     {
       'kind': 'capsule',
-      'label': 'Project Ops Capsule',
+      'label': 'Project protocol metadata',
       'status': capsule?.evidenceAvailability ?? 'not_linked',
       'detail': capsule == null
           ? 'No capsule metadata is linked.'

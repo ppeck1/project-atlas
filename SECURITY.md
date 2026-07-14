@@ -64,9 +64,10 @@ not reuse a shared group bot token that other people or services rely on.
 
 ## Reporting a Vulnerability
 
-If you discover a security issue, please open a GitHub issue or email
-**peckx257@gmail.com** for security-sensitive reports. There is no formal SLA
-for a personal project, but reports will be addressed promptly.
+If you discover a security issue, please use this repository's private
+**Security Advisories -> Report a vulnerability** flow. For non-sensitive
+security improvements, open a GitHub issue. Please do not post exploit details
+or user data in a public issue.
 
 ## Roadmap
 

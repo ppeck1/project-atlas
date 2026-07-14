@@ -24,7 +24,7 @@ void main() {
             p.join(projectDir.path, 'atlas_outbox', 'imported'),
           ).createSync(recursive: true);
           Directory(
-            p.join(projectDir.path, 'boh_outbox', 'rejected'),
+            p.join(projectDir.path, 'secondary_outbox', 'rejected'),
           ).createSync(recursive: true);
           File(
             p.join(projectDir.path, 'project_manifest.json'),
@@ -56,7 +56,7 @@ void main() {
                 'mode': 'outbox',
                 'project_key': 'project-atlas',
               },
-              'boh_sync': {
+              'secondary_sync': {
                 'enabled': true,
                 'mode': 'outbox',
                 'authority': 'evidence-only',

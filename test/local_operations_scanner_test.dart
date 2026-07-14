@@ -41,7 +41,7 @@ void main() {
       ..createSync(recursive: true);
     Directory(p.join(project.path, '.project')).createSync();
     File(
-      p.join(project.path, '.project', 'launchpad.json'),
+      p.join(project.path, '.project', 'runtime_manifest.json'),
     ).writeAsStringSync('{"name":"Manifest Project"}');
 
     final result = await LocalOperationsScanner(

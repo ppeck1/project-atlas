@@ -104,7 +104,7 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
     _runtimeHealthCtrl = TextEditingController();
     _runtimeNotesCtrl = TextEditingController();
     _capsuleSourceCtrl = TextEditingController(
-      text: defaultProjectOpsCapsulePath,
+      text: defaultProjectProtocolPath,
     );
     _capsuleProfileCtrl = TextEditingController(text: 'software_project');
     _customCategory = category != null && !widget.categories.contains(category);
@@ -312,7 +312,7 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
               child: OutlinedButton.icon(
                 onPressed: _runtimeImporting || _saving
                     ? null
-                    : () => _importRuntimeFromDevLaunchpad(state),
+                    : () => _importRuntimeFromManifest(state),
                 icon: _runtimeImporting
                     ? const SizedBox(
                         width: 14,
@@ -320,7 +320,7 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.download_outlined, size: 16),
-                label: const Text('Import Dev Launchpad'),
+                label: const Text('Import runtime manifest'),
               ),
             ),
             const SizedBox(height: 10),
@@ -354,11 +354,11 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
               onChanged: _saving
                   ? null
                   : (value) => setState(() => _capsuleEnabled = value),
-              title: const Text('Project Ops Capsule'),
+              title: const Text('Project protocol checks'),
             ),
             DropdownButtonFormField<String>(
               value: normalizeCapsuleMode(_capsuleMode),
-              decoration: const InputDecoration(labelText: 'Capsule mode'),
+              decoration: const InputDecoration(labelText: 'Protocol mode'),
               items: const [
                 DropdownMenuItem(value: 'off', child: Text('off')),
                 DropdownMenuItem(value: 'check', child: Text('check')),
@@ -371,26 +371,26 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
                   ? null
                   : (value) => setState(() => _capsuleMode = value ?? 'check'),
             ),
-            _field(_capsuleSourceCtrl, 'Capsule source path'),
-            _field(_capsuleProfileCtrl, 'Capsule profile'),
+            _field(_capsuleSourceCtrl, 'Protocol source path'),
+            _field(_capsuleProfileCtrl, 'Protocol profile'),
           ],
         ),
       ),
     );
   }
 
-  Future<void> _importRuntimeFromDevLaunchpad(AppState state) async {
+  Future<void> _importRuntimeFromManifest(AppState state) async {
     setState(() {
       _runtimeImporting = true;
       _error = null;
     });
     try {
-      final profile = await state.importRuntimeProfileFromDevLaunchpad(
+      final profile = await state.importRuntimeProfileFromManifest(
         widget.project.id,
       );
       if (!mounted) return;
       if (profile == null) {
-        setState(() => _error = 'No matching Dev Launchpad app was found.');
+        setState(() => _error = 'No matching runtime entry was found.');
         return;
       }
       _applyRuntimeDraft(ProjectRuntimeProfileDraft.fromProfile(profile));
@@ -422,7 +422,7 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
       _capsuleEnabled = draft.capsuleEnabled;
       _capsuleMode = normalizeCapsuleMode(draft.capsuleMode);
       _capsuleSourceCtrl.text =
-          draft.capsuleSourcePath ?? defaultProjectOpsCapsulePath;
+          draft.capsuleSourcePath ?? defaultProjectProtocolPath;
       _capsuleProfileCtrl.text = draft.capsuleProfile ?? 'software_project';
     });
   }
@@ -470,7 +470,7 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
           capsuleMode: normalizeCapsuleMode(_capsuleMode),
           capsuleSourcePath:
               _blankToNull(_capsuleSourceCtrl.text) ??
-              defaultProjectOpsCapsulePath,
+              defaultProjectProtocolPath,
           capsuleProfile: _blankToNull(_capsuleProfileCtrl.text),
         ),
       );

@@ -775,19 +775,19 @@ class WorkloadPlanner {
 
   static bool _looksLikeImportedChecklist(String title, String source) {
     final normalizedTitle = title.trim().toLowerCase();
-    return source.contains('dev launchpad') ||
-        source.contains('launchpad') ||
-        normalizedTitle.contains('dev launchpad') ||
+    return source.contains('runtime manifest') ||
+        source.contains('launcher manifest') ||
+        normalizedTitle.contains('runtime manifest') ||
         normalizedTitle == 'launch project' ||
-        normalizedTitle == 'launch the project from dev launchpad.' ||
+        normalizedTitle == 'launch the project from the configured launcher.' ||
         normalizedTitle == 'run health checks' ||
         normalizedTitle.startsWith('run health checks ') ||
         normalizedTitle == 'run manifest test command' ||
         normalizedTitle.startsWith('run the manifest test command') ||
         normalizedTitle == 'run manifest build command' ||
         normalizedTitle.startsWith('run the manifest build command') ||
-        normalizedTitle == 'let dev launchpad update metadata' ||
-        normalizedTitle.startsWith('let dev launchpad update ');
+        normalizedTitle == 'let the runtime manifest update metadata' ||
+        normalizedTitle.startsWith('let the runtime manifest update ');
   }
 
   static bool _looksLikePlaceholderTitle(String title) {

@@ -20,11 +20,7 @@ void main() {
       await db.close();
     });
 
-    await db.createProject(
-      'shop',
-      'Shopify Admin Catalog Sync',
-      DateTime(2026),
-    );
+    await db.createProject('shop', 'Catalog Sync Demo', DateTime(2026));
     await db.createProject('other', 'Other Project', DateTime(2026));
 
     await tester.pumpWidget(
@@ -38,7 +34,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Project scoped'), findsOneWidget);
-    expect(find.text('Shopify Admin Catalog Sync'), findsOneWidget);
+    expect(find.text('Catalog Sync Demo'), findsOneWidget);
     expect(find.text('All projects'), findsNothing);
     final projectDropdown = tester.widget<DropdownButtonFormField<String?>>(
       find.byType(DropdownButtonFormField<String?>).first,

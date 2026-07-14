@@ -78,9 +78,9 @@ void main() {
 
       final result = await service.fetch(
         const GithubRemoteIdentity(
-          owner: 'ppeck1',
-          repo: 'private-project',
-          remoteUrl: 'https://github.com/ppeck1/private-project.git',
+          owner: 'example-owner',
+          repo: 'private-repository',
+          remoteUrl: 'https://github.com/example-owner/private-repository.git',
         ),
       );
 

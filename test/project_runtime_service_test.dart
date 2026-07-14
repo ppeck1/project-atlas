@@ -20,11 +20,9 @@ void main() {
     }
   });
 
-  test(
-    'imports a matching Dev Launchpad app as a runtime profile draft',
-    () async {
-      final yamlPath = p.join(tempDir.path, 'dev_launchpad.yaml');
-      File(yamlPath).writeAsStringSync(r'''
+  test('imports a matching runtime manifest app as a profile draft', () async {
+    final yamlPath = p.join(tempDir.path, 'runtime_manifest.yaml');
+    File(yamlPath).writeAsStringSync(r'''
 settings:
   health_timeout_seconds: 2
 apps:
@@ -43,28 +41,23 @@ apps:
   autostart: false
 ''');
 
-      final draft = await const DevLaunchpadRuntimeImporter()
-          .readProfileForProject(
-            projectTitle: 'Project Atlas',
-            yamlPath: yamlPath,
-          );
+    final draft = await const RuntimeManifestImporter().readProfileForProject(
+      projectTitle: 'Project Atlas',
+      yamlPath: yamlPath,
+    );
 
-      expect(draft, isNotNull);
-      expect(draft!.enabled, isTrue);
-      expect(
-        draft.workingDirectory,
-        r'C:\Projects\Project_Atlas\project-atlas-main',
-      );
-      expect(draft.launchCommand, contains('launch.ps1'));
-      expect(
-        draft.testCommands.single,
-        r'C:\Tools\flutter\bin\flutter.bat test',
-      );
-      expect(draft.urls.single.label, 'Docs');
-      expect(draft.healthUrls.single, 'http://localhost/health');
-      expect(draft.capsuleSourcePath, defaultProjectOpsCapsulePath);
-    },
-  );
+    expect(draft, isNotNull);
+    expect(draft!.enabled, isTrue);
+    expect(
+      draft.workingDirectory,
+      r'C:\Projects\Project_Atlas\project-atlas-main',
+    );
+    expect(draft.launchCommand, contains('launch.ps1'));
+    expect(draft.testCommands.single, r'C:\Tools\flutter\bin\flutter.bat test');
+    expect(draft.urls.single.label, 'Docs');
+    expect(draft.healthUrls.single, 'http://localhost/health');
+    expect(draft.capsuleSourcePath, defaultProjectProtocolPath);
+  });
 
   test('AppState imports and persists runtime profile data', () async {
     final db = AppDb.withExecutor(NativeDatabase.memory());
@@ -75,7 +68,7 @@ apps:
     });
     await db.createProject('atlas', 'Project Atlas', DateTime(2026, 7, 2));
 
-    final yamlPath = p.join(tempDir.path, 'dev_launchpad.yaml');
+    final yamlPath = p.join(tempDir.path, 'runtime_manifest.yaml');
     File(yamlPath).writeAsStringSync(r'''
 apps:
 - name: Project Atlas
@@ -91,7 +84,7 @@ apps:
   autostart: true
 ''');
 
-    final profile = await state.importRuntimeProfileFromDevLaunchpad(
+    final profile = await state.importRuntimeProfileFromManifest(
       'atlas',
       yamlPath: yamlPath,
     );
@@ -120,19 +113,19 @@ apps:
     });
 
     final fallback = await state.loadProjectRuntimeDefaultsSettings();
-    expect(fallback.resolvedDevLaunchpadYamlPath, defaultDevLaunchpadYamlPath);
+    expect(fallback.resolvedRuntimeManifestPath, defaultRuntimeManifestPath);
     expect(fallback.capsuleEnabled, isTrue);
     expect(fallback.capsuleMode, 'check');
-    expect(fallback.capsuleSourcePath, defaultProjectOpsCapsulePath);
+    expect(fallback.capsuleSourcePath, defaultProjectProtocolPath);
     expect(fallback.capsuleProfile, 'software_project');
 
-    final yamlPath = p.join(tempDir.path, 'configured_launchpad.yaml');
+    final yamlPath = p.join(tempDir.path, 'configured_runtime.yaml');
     await state.saveProjectRuntimeDefaultsSettings(
       ProjectRuntimeDefaultsSettings(
-        devLaunchpadYamlPath: yamlPath,
+        runtimeManifestPath: yamlPath,
         capsuleEnabled: false,
         capsuleMode: 'strict_check',
-        capsuleSourcePath: r'C:\Projects\Project_Ops_Capsule',
+        capsuleSourcePath: r'C:\Examples\project_protocol',
         capsuleProfile: 'public_repo',
       ),
     );
@@ -142,20 +135,20 @@ apps:
       workingDirectory: r'C:\Projects\example',
     );
 
-    expect(loaded.resolvedDevLaunchpadYamlPath, yamlPath);
+    expect(loaded.resolvedRuntimeManifestPath, yamlPath);
     expect(loaded.capsuleEnabled, isFalse);
     expect(loaded.capsuleMode, 'strict_check');
-    expect(loaded.capsuleSourcePath, r'C:\Projects\Project_Ops_Capsule');
+    expect(loaded.capsuleSourcePath, r'C:\Examples\project_protocol');
     expect(loaded.capsuleProfile, 'public_repo');
     expect(draft.workingDirectory, r'C:\Projects\example');
     expect(draft.capsuleEnabled, isFalse);
     expect(draft.capsuleMode, 'strict_check');
-    expect(draft.capsuleSourcePath, r'C:\Projects\Project_Ops_Capsule');
+    expect(draft.capsuleSourcePath, r'C:\Examples\project_protocol');
     expect(draft.capsuleProfile, 'public_repo');
   });
 
   test(
-    'AppState imports runtime profiles from configured Dev Launchpad defaults',
+    'AppState imports runtime profiles from configured manifest defaults',
     () async {
       final db = AppDb.withExecutor(NativeDatabase.memory());
       final state = AppState(db, enableBackgroundSummaryRefresh: false);
@@ -165,7 +158,7 @@ apps:
       });
       await db.createProject('atlas', 'Project Atlas', DateTime(2026, 7, 2));
 
-      final yamlPath = p.join(tempDir.path, 'configured_launchpad.yaml');
+      final yamlPath = p.join(tempDir.path, 'configured_runtime.yaml');
       File(yamlPath).writeAsStringSync(r'''
 apps:
 - name: Project Atlas
@@ -181,15 +174,15 @@ apps:
 ''');
       await state.saveProjectRuntimeDefaultsSettings(
         ProjectRuntimeDefaultsSettings(
-          devLaunchpadYamlPath: yamlPath,
+          runtimeManifestPath: yamlPath,
           capsuleEnabled: false,
           capsuleMode: 'strict_check',
-          capsuleSourcePath: r'C:\Projects\Project_Ops_Capsule',
+          capsuleSourcePath: r'C:\Examples\project_protocol',
           capsuleProfile: 'public_repo',
         ),
       );
 
-      final profile = await state.importRuntimeProfileFromDevLaunchpad('atlas');
+      final profile = await state.importRuntimeProfileFromManifest('atlas');
       final saved = await db.getProjectRuntimeProfile('atlas');
 
       expect(profile, isNotNull);
@@ -204,7 +197,7 @@ apps:
       expect(saved.importSource, yamlPath);
       expect(saved.capsuleEnabled, isFalse);
       expect(saved.capsuleMode, 'strict_check');
-      expect(saved.capsuleSourcePath, r'C:\Projects\Project_Ops_Capsule');
+      expect(saved.capsuleSourcePath, r'C:\Examples\project_protocol');
       expect(saved.capsuleProfile, 'public_repo');
     },
   );

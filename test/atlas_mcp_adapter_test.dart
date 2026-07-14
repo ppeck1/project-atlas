@@ -86,7 +86,7 @@ void main() {
           p.join(projectDir.path, 'atlas_outbox'),
         ).createSync(recursive: true);
         Directory(
-          p.join(projectDir.path, 'boh_outbox'),
+          p.join(projectDir.path, 'secondary_outbox'),
         ).createSync(recursive: true);
         File(
           p.join(projectDir.path, 'project_manifest.json'),
@@ -118,7 +118,7 @@ void main() {
               'mode': 'outbox',
               'project_key': 'atlas',
             },
-            'boh_sync': {
+            'secondary_sync': {
               'enabled': true,
               'mode': 'outbox',
               'authority': 'evidence-only',
@@ -465,11 +465,11 @@ void main() {
         final taskId = (enqueue.data as Map)['id'] as String;
         final claim = await adapter.callTool('claim_llm_task', {
           'taskId': taskId,
-          'workerId': 'llm-harness-test',
+          'workerId': 'sample-worker',
         });
         final complete = await adapter.callTool('complete_llm_task', {
           'taskId': taskId,
-          'workerId': 'llm-harness-test',
+          'workerId': 'sample-worker',
           'result': {'summary': 'Review me'},
           'proposalTitle': 'Queued result',
           'proposalBody': 'This result should be reviewed by a human.',

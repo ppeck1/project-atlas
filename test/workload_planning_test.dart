@@ -197,7 +197,7 @@ void main() {
         final importedId = await db.addWorkItem(
           stageId: stage.id,
           title: 'Run manifest test command',
-          source: 'Dev Launchpad imported checklist',
+          source: 'Runtime manifest imported checklist',
         );
         final importedRefreshId = await db.addWorkItem(
           stageId: stage.id,

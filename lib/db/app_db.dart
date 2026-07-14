@@ -689,8 +689,8 @@ class AppDb extends _$AppDb {
   static const kProjectAiSummaryAllowBulkRefresh =
       'project_ai_summary_allow_bulk_refresh';
   static const kProjectAiSummaryModel = 'project_ai_summary_model';
-  static const kProjectRuntimeDefaultDevLaunchpadYamlPath =
-      'project_runtime_default_dev_launchpad_yaml_path';
+  static const kProjectRuntimeDefaultManifestPath =
+      'project_runtime_default_manifest_path';
   static const kProjectRuntimeDefaultCapsuleEnabled =
       'project_runtime_default_capsule_enabled';
   static const kProjectRuntimeDefaultCapsuleMode =

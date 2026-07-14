@@ -100,7 +100,7 @@ class AtlasCapsuleStatus {
     'validation': _objectMap(projectManifest?['validation']),
     'gitPolicy': _objectMap(projectManifest?['git_policy']),
     'atlasSync': _objectMap(projectManifest?['atlas_sync']),
-    'bohSync': _objectMap(projectManifest?['boh_sync']),
+    'secondarySync': _objectMap(projectManifest?['secondary_sync']),
     'profiles': _stringList(projectManifest?['profiles']),
     'counts': counts,
     'warnings': warnings,
@@ -215,14 +215,14 @@ class ProjectIdentityResolver {
       'atlasOutboxRejected': _countJsonFiles(
         Directory(p.join(projectDir.path, 'atlas_outbox', 'rejected')),
       ),
-      'bohOutboxPending': _countJsonFiles(
-        Directory(p.join(projectDir.path, 'boh_outbox')),
+      'secondaryOutboxPending': _countJsonFiles(
+        Directory(p.join(projectDir.path, 'secondary_outbox')),
       ),
-      'bohOutboxImported': _countJsonFiles(
-        Directory(p.join(projectDir.path, 'boh_outbox', 'imported')),
+      'secondaryOutboxImported': _countJsonFiles(
+        Directory(p.join(projectDir.path, 'secondary_outbox', 'imported')),
       ),
-      'bohOutboxRejected': _countJsonFiles(
-        Directory(p.join(projectDir.path, 'boh_outbox', 'rejected')),
+      'secondaryOutboxRejected': _countJsonFiles(
+        Directory(p.join(projectDir.path, 'secondary_outbox', 'rejected')),
       ),
     };
     final hasLocalEvidence = counts.values.whereType<int>().any(

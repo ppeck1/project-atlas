@@ -187,15 +187,15 @@ void main() {
 
 ShopifySeoProduct _product({
   String id = 'gid://shopify/Product/test',
-  String handle = 'internet-cult-core-tee',
-  String title = 'Internet Cult Core Tee',
-  String? currentSeoTitle = 'Internet Cult Core Tee | Example Store',
+  String handle = 'example-graphic-tee',
+  String title = 'Example Graphic Tee',
+  String? currentSeoTitle = 'Example Graphic Tee | Example Store',
   String? currentMetaDescription =
       'A graphic streetwear tee from Example Store for extremely online outfit chaos.',
   String? currentDescription =
-      '<p>A graphic tee with internet culture styling for everyday wear and gifting.</p>',
+      '<p>A graphic tee with original artwork for everyday wear and gifting.</p>',
   List<ShopifySeoImage> images = const [
-    ShopifySeoImage(id: 'img1', alt: 'Internet Cult Core Tee'),
+    ShopifySeoImage(id: 'img1', alt: 'Example Graphic Tee'),
   ],
   List<ShopifySeoVariant> variants = const [
     ShopifySeoVariant(
