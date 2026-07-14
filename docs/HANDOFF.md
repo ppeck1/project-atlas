@@ -51,7 +51,7 @@ remains explicitly unverified until process attestation exists.
 | Run State | source implemented; production activation gated on operator label review |
 | Last Verified At | 2026-07-14 |
 | Validation State | source candidate fully verified; production activation remains gated on one operator-approved replacement label |
-| Release Commit | pending final implementation commit |
+| Release Commit | `68c1f38af98cb84f13bdf578de9c8d6516812ba3` (verified source candidate; not yet activated in production) |
 | Accepted Public Main Hash | `242914c3db034da862881192876d78395ad49307` (accepted base before WO-RPI-1) |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
