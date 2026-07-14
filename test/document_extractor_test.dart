@@ -110,8 +110,8 @@ void main() {
 
   group('stripEmlBody', () {
     test('strips RFC-2822 headers and returns body', () {
-      const eml = '''From: alice@example.com
-To: bob@example.com
+      const eml = '''From: alice@example.invalid
+To: bob@example.invalid
 Subject: Test
 
 This is the body.
@@ -123,7 +123,8 @@ Second line.''';
     });
 
     test('returns empty string when there is no body', () {
-      const eml = 'From: a@b.com\nTo: c@d.com\n\n';
+      const eml =
+          'From: sender@example.invalid\nTo: recipient@example.invalid\n\n';
       final result = stripEmlBody(eml);
       expect(result.trim(), isEmpty);
     });
@@ -135,7 +136,7 @@ Second line.''';
     });
 
     test('body text is preserved verbatim', () {
-      const eml = 'From: a@b.com\n\nLine one.\nLine two.';
+      const eml = 'From: sender@example.invalid\n\nLine one.\nLine two.';
       final result = stripEmlBody(eml);
       expect(result, contains('Line one.'));
       expect(result, contains('Line two.'));

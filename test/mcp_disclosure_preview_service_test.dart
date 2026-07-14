@@ -225,7 +225,7 @@ void main() {
           ),
           McpLocalProjectRecord(
             localId: 'local-unsafe-candidate-id',
-            title: 'secret@example.com',
+            title: 'secret@example.invalid',
             status: 'active',
             phase: 'build',
             priority: 'normal',
@@ -246,7 +246,7 @@ void main() {
       expect(preview.eligibleNotEnrolledProjects.single.requiresReview, isTrue);
       final serialized = jsonEncode(preview.toJson());
       expect(serialized, isNot(contains('Renamed Local Project')));
-      expect(serialized, isNot(contains('secret@example.com')));
+      expect(serialized, isNot(contains('secret@example.invalid')));
     },
   );
 

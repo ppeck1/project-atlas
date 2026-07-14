@@ -775,11 +775,14 @@ class WorkloadPlanner {
 
   static bool _looksLikeImportedChecklist(String title, String source) {
     final normalizedTitle = title.trim().toLowerCase();
+    final isLocalRefresh = source.startsWith('local_refresh:');
     return source.contains('runtime manifest') ||
         source.contains('launcher manifest') ||
         normalizedTitle.contains('runtime manifest') ||
         normalizedTitle == 'launch project' ||
         normalizedTitle == 'launch the project from the configured launcher.' ||
+        (isLocalRefresh &&
+            normalizedTitle.startsWith('launch the project from ')) ||
         normalizedTitle == 'run health checks' ||
         normalizedTitle.startsWith('run health checks ') ||
         normalizedTitle == 'run manifest test command' ||
@@ -787,7 +790,11 @@ class WorkloadPlanner {
         normalizedTitle == 'run manifest build command' ||
         normalizedTitle.startsWith('run the manifest build command') ||
         normalizedTitle == 'let the runtime manifest update metadata' ||
-        normalizedTitle.startsWith('let the runtime manifest update ');
+        normalizedTitle.startsWith('let the runtime manifest update ') ||
+        (isLocalRefresh &&
+            normalizedTitle.startsWith('let ') &&
+            normalizedTitle.contains(' update .project/') &&
+            normalizedTitle.contains(' validation metadata after each check'));
   }
 
   static bool _looksLikePlaceholderTitle(String title) {

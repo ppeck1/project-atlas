@@ -1232,6 +1232,43 @@ class AppDb extends _$AppDb {
     return row?.value;
   }
 
+  Future<String?> getLegacyRuntimeManifestPath() async {
+    final rows = await (select(
+      appMeta,
+    )..orderBy([(t) => OrderingTerm.asc(t.key)])).get();
+    final values = rows
+        .where(
+          (row) =>
+              row.key.startsWith('project_runtime_default_') &&
+              row.key.endsWith('_yaml_path'),
+        )
+        .map((row) => row.value.trim())
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+    return values.length == 1 ? values.single : null;
+  }
+
+  Future<String?> migrateLegacyRuntimeManifestPathIfUnambiguous() =>
+      transaction(() async {
+        final current = (await getMetaString(
+          kProjectRuntimeDefaultManifestPath,
+        ))?.trim();
+        if (current != null && current.isNotEmpty) return current;
+        final legacyPath = await getLegacyRuntimeManifestPath();
+        if (legacyPath == null) return null;
+        await into(appMeta).insert(
+          AppMetaCompanion(
+            key: const Value(kProjectRuntimeDefaultManifestPath),
+            value: Value(legacyPath),
+          ),
+          mode: InsertMode.insertOrIgnore,
+        );
+        final resolved = (await getMetaString(
+          kProjectRuntimeDefaultManifestPath,
+        ))?.trim();
+        return resolved == null || resolved.isEmpty ? null : resolved;
+      });
+
   Future<void> setMetaString(String key, String? value) async {
     if (value == null || value.isEmpty) {
       await (delete(appMeta)..where((t) => t.key.equals(key))).go();

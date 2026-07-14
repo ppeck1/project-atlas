@@ -10,7 +10,7 @@ Last updated: 2026-07-14.
 
 - Repository: `ppeck1/project-atlas`
 - Default and only public branch: `main`
-- Current packaged release: `v1.4.1`
+- Current release line: `v1.4.2` (`1.4.2+3` application build)
 - Merge policy: pull request, passing `build` check, linear history, resolved
   conversations, and squash merge
 - Public authorship: Paul Peck / `ppeck1`
@@ -27,6 +27,9 @@ Last updated: 2026-07-14.
 5. Preserve Paul Peck / `ppeck1` as public authorship.
 6. Keep the remote MCP projection narrower than the trusted local MCP surface.
 7. Treat AI output as a proposal until an operator explicitly accepts it.
+8. Prefer current generic integration names, but preserve compatible persisted
+   settings and structurally valid project metadata when exactly one older
+   candidate exists. Current names win; ambiguous fallbacks fail closed.
 
 ## Screenshot refresh procedure
 
@@ -60,7 +63,7 @@ contains projects, work items, or documents.
 ## Verification baseline
 
 ```powershell
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 flutter analyze
 flutter test
 flutter build windows --release
@@ -95,3 +98,4 @@ For public changes, also verify:
 - The capture database override is a build-time definition, not a runtime
   profile switch.
 - Historical Git objects are not rewritten by normal public-tree cleanup.
+- Compatibility reads do not rename or modify linked project files.

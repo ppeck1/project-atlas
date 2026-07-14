@@ -38,7 +38,7 @@ Fix all analyzer warnings and test failures before opening a pull request.
 Any modification to `lib/db/tables.dart` or `lib/db/app_db.dart` requires regenerating the Drift-generated code:
 
 ```powershell
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 ```
 
 Commit the regenerated `.g.dart` files along with your schema change.

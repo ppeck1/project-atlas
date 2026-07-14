@@ -150,7 +150,7 @@ if ($needsBuild) {
     if ($LASTEXITCODE -ne 0) {
         Write-Host ""
         Write-Host "build_runner failed. Try:" -ForegroundColor Yellow
-        Write-Host "  dart run build_runner build --delete-conflicting-outputs"
+        Write-Host "  dart run build_runner build"
         exit $LASTEXITCODE
     }
 } else {
