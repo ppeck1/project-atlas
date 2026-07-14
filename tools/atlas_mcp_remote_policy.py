@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -87,6 +87,25 @@ FRESHNESS_REASON_VALUES = frozenset(
         "blocked_work_items",
         "high_priority_without_active_work",
         *{f"project_status_{status}" for status in PROJECT_STATUSES},
+    }
+)
+PLANNING_REASON_VALUES = frozenset(
+    {
+        "blocked_work_items",
+        "high_priority_without_active_work",
+        "capsule_errors",
+        *{f"project_status_{status}" for status in ATTENTION_PROJECT_STATUSES},
+    }
+)
+SIGNAL_REASON_CLASSES = frozenset(
+    {
+        "lifecycle",
+        "workload",
+        "local_evidence",
+        "remote_evidence",
+        "capsule",
+        "freshness_stale",
+        "freshness_unknown",
     }
 )
 WORKLOAD_READINESS_VALUES = frozenset(
@@ -702,7 +721,7 @@ def _project_list_projects(
     total = len(approved)
     page = approved[context.offset : context.offset + context.limit]
     projected = {
-        "schema": "project_atlas.remote_project_inventory.v2",
+        "schema": "project_atlas.remote_project_inventory.v3",
         "projects": page,
         "page": {
             "offset": context.offset,
@@ -737,7 +756,7 @@ def _project_status(
         raise RemoteProjectionError("not_found")
     return (
         {
-            "schema": "project_atlas.remote_project_status.v1",
+            "schema": "project_atlas.remote_project_status.v2",
             "project": _project_status_summary(payload, project),
         },
         1,
@@ -755,6 +774,7 @@ def _project_status_summary(
     blocks_progress = _safe_optional_count(row.get("blocksProgressWorkItems"))
     if blocks_progress is None:
         blocks_progress = blocked
+    signals = _signal_summary(status, freshness, blocks_progress)
     return {
         "projectId": project.alias,
         "title": project.label,
@@ -773,12 +793,8 @@ def _project_status_summary(
             "decisions": _safe_optional_count(row.get("decisions")),
         },
         "freshness": freshness,
-        "needsAttention": (
-            status in ATTENTION_PROJECT_STATUSES
-            or bool(freshness["staleReasons"])
-            or bool(freshness["attentionReasons"])
-            or bool(blocks_progress)
-        ),
+        "signals": signals,
+        "needsAttention": signals["planningActionRequired"],
     }
 
 
@@ -793,20 +809,16 @@ def _project_inventory_summary(
     blocks_progress = _safe_optional_count(row.get("blocksProgressWorkItems"))
     if blocks_progress is None:
         blocks_progress = blocked
+    signals = _signal_summary(status, freshness, blocks_progress)
     return {
         "projectId": project.alias,
         "title": project.label,
         "status": status,
         "phase": _safe_enum(row.get("phase"), PROJECT_PHASES),
         "priority": _safe_enum(row.get("priority"), PRIORITIES),
-        "needsAttention": (
-            status in ATTENTION_PROJECT_STATUSES
-            or freshness["status"] in {"stale", "unknown"}
-            or bool(freshness["staleReasons"])
-            or bool(freshness["attentionReasons"])
-            or bool(blocks_progress)
-        ),
+        "needsAttention": signals["planningActionRequired"],
         "freshness": {"status": freshness["status"]},
+        "signals": signals,
         "workItems": {
             "active": _safe_optional_count(row.get("activeWorkItems")),
             "blocked": blocked,
@@ -825,14 +837,122 @@ def _freshness_summary(value: Any) -> dict[str, Any]:
     attention_reasons = _safe_enum_list(
         source.get("attentionReasons"), FRESHNESS_REASON_VALUES
     )
+    data_refresh_required = (
+        status in {"stale", "unknown"}
+        or bool(stale_reasons)
+        or any(reason not in PLANNING_REASON_VALUES for reason in attention_reasons)
+    )
     return {
         "status": status,
         "confidence": _safe_enum(source.get("confidence"), CONFIDENCE_VALUES),
         "staleReasons": stale_reasons,
         "attentionReasons": attention_reasons,
-        "planningActionRequired": status in {"stale", "unknown"}
-        or bool(stale_reasons),
+        "dataRefreshRequired": data_refresh_required,
     }
+
+
+def _signal_summary(
+    project_status: str,
+    freshness: dict[str, Any],
+    blocks_progress: int | None,
+) -> dict[str, Any]:
+    stale_reasons = freshness["staleReasons"]
+    attention_reasons = freshness["attentionReasons"]
+    planning_action_required = (
+        project_status in ATTENTION_PROJECT_STATUSES
+        or any(reason in PLANNING_REASON_VALUES for reason in attention_reasons)
+        or bool(blocks_progress)
+    )
+    data_refresh_required = freshness["dataRefreshRequired"]
+    reason_classes = _signal_reason_classes(
+        project_status=project_status,
+        freshness_status=freshness["status"],
+        stale_reasons=stale_reasons,
+        attention_reasons=attention_reasons,
+        blocks_progress=blocks_progress,
+    )
+    severity = _signal_severity(
+        project_status=project_status,
+        freshness_status=freshness["status"],
+        attention_reasons=attention_reasons,
+        blocks_progress=blocks_progress,
+        planning_action_required=planning_action_required,
+        data_refresh_required=data_refresh_required,
+    )
+    return {
+        "planningActionRequired": planning_action_required,
+        "dataRefreshRequired": data_refresh_required,
+        "severity": severity,
+        "reasonClasses": reason_classes,
+    }
+
+
+def _signal_reason_classes(
+    *,
+    project_status: str,
+    freshness_status: str,
+    stale_reasons: list[str],
+    attention_reasons: list[str],
+    blocks_progress: int | None,
+) -> list[str]:
+    reasons = {*stale_reasons, *attention_reasons}
+    classes: set[str] = set()
+    if project_status in ATTENTION_PROJECT_STATUSES or any(
+        reason.startswith("project_status_") for reason in reasons
+    ):
+        classes.add("lifecycle")
+    if blocks_progress or reasons.intersection(
+        {"blocked_work_items", "high_priority_without_active_work"}
+    ):
+        classes.add("workload")
+    if any(
+        reason.startswith(
+            (
+                "missing_local_",
+                "linked_registry_",
+                "invalid_local_",
+                "old_local_",
+            )
+        )
+        or reason == "local_dirty_state"
+        for reason in reasons
+    ):
+        classes.add("local_evidence")
+    if any(
+        reason.startswith("github_") or reason == "old_github_check"
+        for reason in reasons
+    ):
+        classes.add("remote_evidence")
+    if any(reason.startswith("capsule_") for reason in reasons):
+        classes.add("capsule")
+    if freshness_status == "stale":
+        classes.add("freshness_stale")
+    elif freshness_status == "unknown":
+        classes.add("freshness_unknown")
+    return sorted(classes.intersection(SIGNAL_REASON_CLASSES))
+
+
+def _signal_severity(
+    *,
+    project_status: str,
+    freshness_status: str,
+    attention_reasons: list[str],
+    blocks_progress: int | None,
+    planning_action_required: bool,
+    data_refresh_required: bool,
+) -> str:
+    reasons = set(attention_reasons)
+    if (
+        blocks_progress
+        or project_status == "blocked"
+        or reasons.intersection({"blocked_work_items", "capsule_errors"})
+    ):
+        return "high"
+    if planning_action_required or freshness_status == "unknown":
+        return "medium"
+    if data_refresh_required:
+        return "low"
+    return "none"
 
 
 def _project_workload(
@@ -855,8 +975,8 @@ def _project_workload(
         payload.get("reviewNeededItems"), context, policy, context.limit
     )
     projected = {
-        "schema": "project_atlas.remote_workload_snapshot.v1",
-        "generatedAt": _safe_timestamp(payload.get("generatedAt")),
+        "schema": "project_atlas.remote_workload_snapshot.v2",
+        "generatedAt": _projection_timestamp(payload.get("generatedAt")),
         "scope": {
             "projectId": context.project_alias,
             "title": context.project.label if context.project is not None else None,
@@ -976,6 +1096,10 @@ def _recomputed_workload_counts(
         "importedChecklist": sum(
             row.get("originKind") == "imported_checklist" for row in rows
         ),
+        "workItems": sum(row.get("kind") == "work_item" for row in rows),
+        "llmQueueItems": sum(
+            row.get("kind") == "llm_queue_item" for row in rows
+        ),
     }
 
 
@@ -1042,19 +1166,24 @@ def _project_planning_context(
     blocked = _planning_card_list(workload.get("blockedItems"), project, context.limit)
     safe_constraints = payload.get("safeConstraints")
     verification = payload.get("verification")
+    freshness = _freshness_summary(project_source.get("freshness"))
+    signals = _signal_summary(
+        project_status,
+        freshness,
+        _safe_optional_count(project_source.get("blocksProgressWorkItems")),
+    )
     projected = {
-        "schema": "project_atlas.remote_planning_context.v1",
-        "generatedAt": _safe_timestamp(payload.get("generatedAt")),
+        "schema": "project_atlas.remote_planning_context.v2",
+        "generatedAt": _projection_timestamp(payload.get("generatedAt")),
         "project": {
             "projectId": project.alias,
             "title": project.label,
             "status": project_status,
             "phase": _safe_enum(project_source.get("phase"), PROJECT_PHASES),
             "priority": _safe_enum(project_source.get("priority"), PRIORITIES),
-            "needsAttention": project_source.get("needsAttention")
-            if isinstance(project_source.get("needsAttention"), bool)
-            else None,
-            "freshness": _freshness_summary(project_source.get("freshness")),
+            "needsAttention": signals["planningActionRequired"],
+            "freshness": freshness,
+            "signals": signals,
         },
         "workload": {
             "counts": {
@@ -1068,6 +1197,8 @@ def _project_planning_context(
                     "reviewNeeded",
                     "stale",
                     "demotedImportedChecklist",
+                    "workItems",
+                    "llmQueueItems",
                 )
             },
             "executionCandidates": ready,
@@ -1212,6 +1343,12 @@ def _safe_timestamp(value: Any) -> str | None:
     if parsed.year < 2000 or parsed.year > 2100:
         return None
     return parsed.isoformat().replace("+00:00", "Z")
+
+
+def _projection_timestamp(value: Any) -> str:
+    return _safe_timestamp(value) or datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
 
 
 def _reject_local_identifiers(value: Any, policy: DisclosurePolicy) -> None:

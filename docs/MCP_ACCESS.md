@@ -95,6 +95,14 @@ text blocks and rebuilt from exact output allowlists. Planning free text,
 accepted-truth claims, commands, notes, evidence excerpts, and broader reads
 remain blocked until their semantics are hardened.
 
+The calibrated remote schemas keep planning urgency separate from evidence
+maintenance. `signals.planningActionRequired` covers lifecycle/workload
+decisions and blockers, while `signals.dataRefreshRequired` covers stale,
+unknown, or incomplete evidence. `needsAttention` aliases planning action only.
+Severity and reason classes are fixed enums; no free-text reason crosses the
+gateway. Workload/planning count objects explicitly separate `workItems` from
+`llmQueueItems`, and both packet families emit a valid UTC `generatedAt`.
+
 Settings -> Integrations includes a local-only disclosure preview for this
 remote profile. It shows inventory and detail aliases separately, eligible
 unenrolled local candidates, proposed aliases, unsafe labels, title drift,

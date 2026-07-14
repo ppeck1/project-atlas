@@ -532,21 +532,21 @@ def assert_four_remote_tool_calls(
     request_id_start: int,
 ) -> dict[str, str]:
     calls = [
-        ("list_projects", {}, "project_atlas.remote_project_inventory.v2"),
+        ("list_projects", {}, "project_atlas.remote_project_inventory.v3"),
         (
             "get_project_status",
             {"projectId": project_alias},
-            "project_atlas.remote_project_status.v1",
+            "project_atlas.remote_project_status.v2",
         ),
         (
             "atlas.workload_snapshot",
             {"projectId": project_alias, "limit": 3},
-            "project_atlas.remote_workload_snapshot.v1",
+            "project_atlas.remote_workload_snapshot.v2",
         ),
         (
             "atlas.project_planning_context",
             {"projectId": project_alias},
-            "project_atlas.remote_planning_context.v1",
+            "project_atlas.remote_planning_context.v2",
         ),
     ]
     schemas: dict[str, str] = {}

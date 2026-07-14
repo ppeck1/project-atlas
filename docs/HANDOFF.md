@@ -4,17 +4,14 @@
 
 Project Atlas is a public Flutter Windows desktop repo. The active app repo is this directory, not the outer wrapper folder.
 
-Active work order `WO-RPI-1` is defined in
-`docs/MCP_PORTFOLIO_DISCLOSURE_WORK_ORDER.md`. It plans a tiered remote MCP
-disclosure model: an operator-reviewed compact inventory for every currently
-eligible project, separately approved detailed reads, the same exact four
-read-only tools, and no remote writes. The source implementation, focused tests,
-independent privacy review, and controlled optimization measurement are complete.
-The live gateway remains on the verified two-project policy: the 49-project
-candidate has 48 immediately safe labels, one title that needs an
-operator-approved remote replacement, and one safe alias fallback. Activation
-still requires full release verification, exact candidate review, and explicit
-approval.
+WO-PSC-1 is the current governed source-publication slice. Production runs the
+verified `24054b5` release with the retained v2 disclosure policy, OAuth/JWKS,
+tunnel, audit path, exact four read-only tools, 49 inventory approvals, and the
+2-detail/47-inventory-only authorization split. Authenticated connector
+readback verified inventory v3 plus status/workload/planning v2, calibrated
+planning-versus-refresh signals, explicit workload-family counts, non-null UTC
+packet timestamps, and uniform inventory-only detail denial. GitHub PR state is
+authoritative for the final source-publication gate.
 
 This v1.4 slice adds the Workboard Planning Layer. A later Shopify SEO hardening slice adds a draft-backed, stage-only Project Detail Shopify SEO review workflow; this document preserves the v1.4 release evidence below and should not be read as the newest feature inventory by itself.
 
@@ -47,15 +44,37 @@ remains explicitly unverified until process attestation exists.
 
 | Field | Value |
 |---|---|
-| Run ID | `20260714-wo-rpi1-implementation` |
-| Run State | WO-RPI-1 v2 portfolio inventory activated and verified on the retained ChatGPT tunnel |
+| Run ID | `20260714-wo-psc1-execution` |
+| Run State | WO-PSC-1 production activation and authenticated connector readback verified; source publication is governed by PR merge |
 | Last Verified At | 2026-07-14 |
-| Validation State | production v2 activation, authenticated connector readback, audit routing, detail isolation, and rollback evidence verified |
-| Release Commit | `e938f0a0096772df5ea6f2d31931dc44ed86cc8c` |
-| Accepted Public Main Hash | `242914c3db034da862881192876d78395ad49307` (accepted base before WO-RPI-1) |
+| Validation State | production inventory v3 and status/workload/planning v2, calibrated signals, audit routing, detail isolation, timestamps, and rollback evidence verified |
+| Release Commit | `24054b586ffbe0893d3381ef21dc0b7c94d9bce7` |
+| Accepted Public Main Hash | `709ec6405801eebb1b646f75ded620a16b8f8b13` (WO-PSC-1 base) |
 | Remote | `https://github.com/ppeck1/project-atlas.git` |
 
 ## Validation Evidence
+
+- WO-PSC-1 production activation completed from the immutable
+  `project-atlas-deploy-24054b5` checkout. Runner SHA-256:
+  `CD99E3ADCF4147B73A2BF37E90CE85AB31860A472FFAB7EF6D516A3C3EFA8B63`;
+  `data/app.so` SHA-256:
+  `FB124577CDB72BFC7929E0E6123D52B387483B2A69905BD8792FB46762A25912`.
+  The gateway-only replacement retained the existing tunnel, OAuth/JWKS,
+  ignored v2 policy, and metadata-only audit path.
+- Authenticated connector readback returned 49 inventory v3 rows with the
+  unchanged 2-detail/47-inventory-only split. It classified 28 planning-action
+  and 48 data-refresh projects; freshness stayed 2 current, 37 stale, and 10
+  unknown; severity was 2 high, 33 medium, 13 low, and 1 none. Inventory-only
+  detail remained unavailable.
+- Status, workload, and planning returned v2. Workload/planning generated valid
+  non-null UTC timestamps and separated 15 work items from 16 LLM queue items.
+  The surface retained exactly four tools and did not add remote writes.
+- WO-PSC-1 verification passed 29 Python tests, 51 focused Flutter tests, all
+  274 runnable full-suite Flutter tests with 1 expected environment-gated skip,
+  repo-wide Dart formatting with 0 changes, `flutter analyze`, Drift build
+  generation, Windows release build, full OAuth/JWKS gateway smoke with all 29
+  hidden tools rejected, populated-runtime probe, privacy scan, and clean-diff
+  checks.
 
 - WO-RPI-1 production activation completed from the immutable
   `project-atlas-deploy-e938f0a` checkout. The full 16-file Windows release

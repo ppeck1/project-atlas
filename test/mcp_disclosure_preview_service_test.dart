@@ -191,6 +191,12 @@ void main() {
         'project-atlas',
       ]);
       final serialized = jsonEncode(preview.toJson());
+      expect(serialized, contains('project_atlas.remote_project_inventory.v3'));
+      expect(serialized, contains('planningActionRequired'));
+      expect(serialized, contains('dataRefreshRequired'));
+      expect(serialized, contains('reasonClasses'));
+      expect(serialized, contains('workItems'));
+      expect(serialized, contains('llmQueueItems'));
       expect(serialized, isNot(contains('candidate-project')));
       expect(serialized, isNot(contains('Candidate Project')));
     },

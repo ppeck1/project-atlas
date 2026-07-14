@@ -163,6 +163,8 @@ void main() {
       expect(counts['blocked'], 1);
       expect(counts['blockedBoardGroup'], 1);
       expect(counts['blocksProgress'], 2);
+      expect(counts['workItems'], 4);
+      expect(counts['llmQueueItems'], 1);
       expect(
         ((json['executionCandidates'] as List).first as Map)['id'],
         readyId,
