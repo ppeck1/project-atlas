@@ -4,6 +4,15 @@
 
 Project Atlas is a public Flutter Windows desktop repo. The active app repo is this directory, not the outer wrapper folder.
 
+Active work order `WO-RPI-1` is defined in
+`docs/MCP_PORTFOLIO_DISCLOSURE_WORK_ORDER.md`. It plans a tiered remote MCP
+disclosure model: an operator-reviewed compact inventory for every currently
+eligible project, separately approved detailed reads, the same exact four
+read-only tools, and no remote writes. The work order is queued for execution;
+the live gateway remains on the verified two-project policy until the staged
+implementation, privacy review, optimization loop, release build, and explicit
+policy-activation gate pass.
+
 This v1.4 slice adds the Workboard Planning Layer. A later Shopify SEO hardening slice adds a draft-backed, stage-only Project Detail Shopify SEO review workflow; this document preserves the v1.4 release evidence below and should not be read as the newest feature inventory by itself.
 
 Current MCP hardening continuation: Settings -> Integrations now includes a
