@@ -34,7 +34,7 @@ jobs:
         run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Compile MCP gateway scripts
-        run: python -m py_compile tools\atlas_mcp_gateway.py tools\atlas_mcp_remote_policy.py tools\smoke_mcp_gateway.py tools\repair_drift_timestamps.py tools\apply_owner_continuity.py tools\import_runtime_manifest.py tools\test_atlas_mcp_remote_policy.py tools\test_timestamp_integrity.py
+        run: python -m py_compile tools\atlas_mcp_gateway.py tools\atlas_mcp_remote_policy.py tools\smoke_mcp_gateway.py tools\repair_drift_timestamps.py tools\apply_owner_continuity.py tools\import_runtime_manifest.py tools\seed_portfolio_capture.py tools\test_atlas_mcp_remote_policy.py tools\test_timestamp_integrity.py
 
       - name: Test MCP remote disclosure policy
         run: python -m unittest discover -s tools -p "test_*.py" -v
