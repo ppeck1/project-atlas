@@ -131,7 +131,7 @@ class _OperationsScreenState extends State<OperationsScreen>
           tabs: const [
             Tab(text: 'Scan Runs'),
             Tab(text: 'Review Candidates'),
-            Tab(text: 'Registered Projects'),
+            Tab(text: 'Project Sources'),
             Tab(text: 'Project Health'),
             Tab(text: 'Warnings'),
           ],
@@ -824,6 +824,7 @@ class _ObservationCard extends StatelessWidget {
               if (observation.dirtyCount != null)
                 _Pill(label: '${observation.dirtyCount} dirty'),
               if (observation.remoteUrl != null) const _Pill(label: 'remote'),
+              if (registry != null) ..._sourceTopologyPills(registry!),
             ],
           ),
           if (markers.isNotEmpty) ...[
@@ -1002,7 +1003,7 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Project health ${result.run.status}: ${result.run.openFindings} open findings across ${result.run.linkedProjects} linked projects.',
+            'Project health ${result.run.status}: ${result.run.openFindings} open findings across ${result.run.linkedSources} linked source(s).',
           ),
         ),
       );
@@ -1537,7 +1538,9 @@ class _EnrichmentRunTileState extends State<_EnrichmentRunTile> {
             spacing: 6,
             runSpacing: 6,
             children: [
-              _Pill(label: '${run.linkedProjects} linked'),
+              _Pill(label: '${run.linkedSources} linked sources'),
+              if (run.distinctLinkedProjects != null)
+                _Pill(label: '${run.distinctLinkedProjects} projects'),
               _Pill(label: '${run.createdItems} created'),
               _Pill(label: '${run.updatedItems} updated'),
               _Pill(label: '${run.openFindings} open findings'),
@@ -2702,6 +2705,36 @@ List<String> _findingEvidenceLines(ProjectEnrichmentFinding finding) {
       lines.add('${linkedPaths.length - 4} more linked path(s).');
     }
   }
+  final primaryPaths = _stringListFromEvidence(evidence['primaryLocalPaths']);
+  if (primaryPaths.isNotEmpty) {
+    for (final path in primaryPaths.take(4)) {
+      lines.add('Primary path: $path');
+    }
+    if (primaryPaths.length > 4) {
+      lines.add('${primaryPaths.length - 4} more primary path(s).');
+    }
+  }
+  final localPaths = _stringListFromEvidence(evidence['localPaths']);
+  if (localPaths.isNotEmpty) {
+    for (final path in localPaths.take(4)) {
+      lines.add('Source path: $path');
+    }
+    if (localPaths.length > 4) {
+      lines.add('${localPaths.length - 4} more source path(s).');
+    }
+  }
+  for (final entry in const [
+    ('sourceRole', 'Source role'),
+    ('sourceType', 'Source type'),
+    ('lifecycleState', 'Lifecycle'),
+    ('authorityLevel', 'Authority'),
+    ('normalizedIdentity', 'Identity'),
+  ]) {
+    final value = evidence[entry.$1]?.toString().trim();
+    if (value != null && value.isNotEmpty) {
+      lines.add('${entry.$2}: $value');
+    }
+  }
   final dirtyCount = evidence['dirtyCount']?.toString().trim();
   if (dirtyCount != null && dirtyCount.isNotEmpty) {
     lines.add('Dirty files observed: $dirtyCount');
@@ -2786,9 +2819,9 @@ class _RegistryTabState extends State<_RegistryTab> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Refresh linked projects'),
+        title: const Text('Refresh linked sources'),
         content: const Text(
-          'This refreshes every linked local project, including source-code files and atlas/card documents. Large generated/vendor/secret-like files are skipped by the refresh profile.',
+          'This refreshes every linked local source, including source-code files and atlas/card documents. Large generated/vendor/secret-like files are skipped by the refresh profile.',
         ),
         actions: [
           TextButton(
@@ -2798,7 +2831,7 @@ class _RegistryTabState extends State<_RegistryTab> {
           FilledButton.icon(
             onPressed: () => Navigator.of(ctx).pop(true),
             icon: const Icon(Icons.refresh, size: 16),
-            label: const Text('Refresh linked'),
+            label: const Text('Refresh linked sources'),
           ),
         ],
       ),
@@ -2812,8 +2845,8 @@ class _RegistryTabState extends State<_RegistryTab> {
       );
       if (!context.mounted) return;
       final message = result.alreadyRunning
-          ? 'Linked project refresh is already running.'
-          : 'Linked refresh: ${result.created} created, ${result.updated} updated, ${result.failed} failed across ${result.considered} projects.';
+          ? 'Linked source refresh is already running.'
+          : 'Linked refresh: ${result.created} created, ${result.updated} updated, ${result.failed} failed across ${result.considered} source(s).';
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -2836,7 +2869,7 @@ class _RegistryTabState extends State<_RegistryTab> {
         if (snap.hasError) {
           return _EmptyState(
             icon: Icons.error_outline,
-            title: 'Registered projects failed to load.',
+            title: 'Project sources failed to load.',
             details: '${snap.error}',
           );
         }
@@ -2847,7 +2880,7 @@ class _RegistryTabState extends State<_RegistryTab> {
         if (entries.isEmpty) {
           return const _EmptyState(
             icon: Icons.inventory_2_outlined,
-            title: 'No registered projects yet.',
+            title: 'No project sources yet.',
           );
         }
         return StreamBuilder<List<ProjectObservation>>(
@@ -2856,7 +2889,7 @@ class _RegistryTabState extends State<_RegistryTab> {
             if (observationSnap.hasError) {
               return _EmptyState(
                 icon: Icons.error_outline,
-                title: 'Registered projects failed to load.',
+                title: 'Project sources failed to load.',
                 details: '${observationSnap.error}',
               );
             }
@@ -2887,8 +2920,8 @@ class _RegistryTabState extends State<_RegistryTab> {
                       ? _EmptyState(
                           icon: Icons.done_all_outlined,
                           title: _filter == _RegistryFilter.needsAction
-                              ? 'No registered projects need action.'
-                              : 'No registered projects in this view.',
+                              ? 'No project sources need action.'
+                              : 'No project sources in this view.',
                         )
                       : ListView.separated(
                           padding: const EdgeInsets.all(16),
@@ -2968,7 +3001,7 @@ class _RegistryQueueToolbar extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.sync, size: 16),
-            label: const Text('Refresh linked'),
+            label: const Text('Refresh linked sources'),
           ),
         ],
       ),
@@ -3041,11 +3074,130 @@ class _RegistryTile extends StatelessWidget {
     }
   }
 
+  Future<void> _makeSolePrimary(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Make sole primary?'),
+        content: const Text(
+          'Atlas will use this linked local source as the project primary and keep other linked sources as supporting evidence. Source files are not changed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.flag_outlined, size: 16),
+            label: const Text('Make sole primary'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      final updated = await AppStateScope.of(
+        context,
+      ).markProjectRegistryEntryPrimarySource(entry.id);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Primary source set: ${updated.displayName}')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Make primary failed: $error')));
+    }
+  }
+
+  Future<void> _replaceSourceFolder(BuildContext context) async {
+    final path = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Choose replacement project folder',
+    );
+    if (path == null || path.trim().isEmpty || !context.mounted) return;
+    try {
+      final updated = await AppStateScope.of(context)
+          .replaceProjectRegistrySourceFolder(
+            registryId: entry.id,
+            selectedPath: path,
+          );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Source folder updated: ${updated.localPath}')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Replace folder failed: $error')));
+    }
+  }
+
+  Future<void> _ignoreSource(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ignore source?'),
+        content: const Text(
+          'Atlas will unlink and ignore this source row. Local files are not changed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            icon: const Icon(Icons.visibility_off_outlined, size: 16),
+            label: const Text('Ignore source'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      final updated = await AppStateScope.of(context)
+          .ignoreProjectRegistrySource(
+            entry.id,
+            note: 'Ignored from Project Sources.',
+          );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Source ignored: ${updated.displayName}')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Ignore source failed: $error')));
+    }
+  }
+
+  Future<void> _handleSourceAction(BuildContext context, String action) async {
+    switch (action) {
+      case 'make_primary':
+        await _makeSolePrimary(context);
+        break;
+      case 'replace_folder':
+        await _replaceSourceFolder(context);
+        break;
+      case 'ignore_source':
+        await _ignoreSource(context);
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final linkedProjectId = entry.atlasProjectId;
     final canCreateOrUpdate =
         linkedProjectId == null && entry.reviewState == 'accepted';
+    final canMarkPrimary = _canMarkPrimarySource(entry);
+    final canReplaceFolder =
+        linkedProjectId != null && entry.reviewState != 'ignored';
+    final canIgnoreSource = entry.reviewState != 'ignored';
     return _Panel(
       child: ListTile(
         contentPadding: EdgeInsets.zero,
@@ -3059,6 +3211,19 @@ class _RegistryTile extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             _RepositoryStatusPills(entry: entry, observation: observation),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _sourceTopologyPills(entry),
+            ),
+            if ((entry.normalizedIdentity ?? '').trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              SelectableText(
+                'Identity: ${entry.normalizedIdentity}',
+                style: const TextStyle(color: _text54, fontSize: 12),
+              ),
+            ],
           ],
         ),
         isThreeLine: true,
@@ -3080,14 +3245,49 @@ class _RegistryTile extends StatelessWidget {
                       ],
                     )
                   : null
-            : Row(
-                mainAxisSize: MainAxisSize.min,
+            : Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   OutlinedButton.icon(
                     icon: const Icon(Icons.refresh),
                     label: const Text('Refresh'),
                     onPressed: () => _refreshLinkedProject(context),
                   ),
+                  if (canMarkPrimary || canReplaceFolder || canIgnoreSource)
+                    PopupMenuButton<String>(
+                      tooltip: 'Source actions',
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (action) =>
+                          _handleSourceAction(context, action),
+                      itemBuilder: (context) => [
+                        if (canMarkPrimary)
+                          const PopupMenuItem(
+                            value: 'make_primary',
+                            child: ListTile(
+                              leading: Icon(Icons.flag_outlined),
+                              title: Text('Make sole primary'),
+                            ),
+                          ),
+                        if (canReplaceFolder)
+                          const PopupMenuItem(
+                            value: 'replace_folder',
+                            child: ListTile(
+                              leading: Icon(Icons.drive_folder_upload_outlined),
+                              title: Text('Replace folder'),
+                            ),
+                          ),
+                        if (canIgnoreSource)
+                          const PopupMenuItem(
+                            value: 'ignore_source',
+                            child: ListTile(
+                              leading: Icon(Icons.visibility_off_outlined),
+                              title: Text('Ignore source'),
+                            ),
+                          ),
+                      ],
+                    ),
                   IconButton(
                     tooltip: 'Open Atlas project',
                     icon: const Icon(Icons.open_in_new, color: _primary),
@@ -3537,7 +3737,9 @@ bool _candidateMatchesFilter(
 ) {
   switch (filter) {
     case _CandidateFilter.needsAction:
-      return registry == null || registry.reviewState == 'needs_review';
+      return registry == null ||
+          registry.reviewState == 'needs_review' ||
+          _hasUnresolvedSourceTopology(registry);
     case _CandidateFilter.known:
       return registry != null && registry.reviewState != 'ignored';
     case _CandidateFilter.ignored:
@@ -3549,6 +3751,7 @@ bool _candidateMatchesFilter(
 
 int _candidateRank(ProjectRegistryEntry? registry) {
   if (registry == null) return 0;
+  if (_hasUnresolvedSourceTopology(registry)) return 1;
   if (registry.reviewState == 'needs_review') return 1;
   if (registry.reviewState == 'accepted') return 2;
   if (registry.atlasProjectId != null || registry.reviewState == 'linked') {
@@ -3574,6 +3777,7 @@ bool _registryMatchesFilter(
   switch (filter) {
     case _RegistryFilter.needsAction:
       return entry.reviewState == 'needs_review' ||
+          _hasUnresolvedSourceTopology(entry) ||
           (entry.reviewState == 'accepted' &&
               (entry.atlasProjectId ?? '').isEmpty);
     case _RegistryFilter.linked:
@@ -3587,6 +3791,7 @@ bool _registryMatchesFilter(
 }
 
 int _registryRank(ProjectRegistryEntry entry) {
+  if (_hasUnresolvedSourceTopology(entry)) return 0;
   if (entry.reviewState == 'needs_review') return 0;
   if (entry.reviewState == 'accepted' && (entry.atlasProjectId ?? '').isEmpty) {
     return 1;
@@ -3597,6 +3802,38 @@ int _registryRank(ProjectRegistryEntry entry) {
   }
   if (entry.reviewState == 'ignored') return 3;
   return 4;
+}
+
+bool _hasUnresolvedSourceTopology(ProjectRegistryEntry entry) {
+  if (entry.reviewState == 'ignored') return false;
+  return entry.sourceRole == 'unresolved_candidate' ||
+      entry.lifecycleState == 'legacy_remote' ||
+      entry.authorityLevel == 'blocked_unresolved';
+}
+
+bool _canMarkPrimarySource(ProjectRegistryEntry entry) {
+  final linkedProjectId = entry.atlasProjectId?.trim();
+  if (linkedProjectId == null || linkedProjectId.isEmpty) return false;
+  if (entry.reviewState == 'ignored') return false;
+  if (entry.sourceRole == 'primary_working' &&
+      entry.lifecycleState == 'active') {
+    return false;
+  }
+  final localPath = entry.localPath.trim().toLowerCase();
+  if (entry.sourceType == 'remote_url_legacy') return false;
+  return !(localPath.startsWith('http://') ||
+      localPath.startsWith('https://') ||
+      localPath.startsWith('ssh://') ||
+      localPath.startsWith('git@'));
+}
+
+List<Widget> _sourceTopologyPills(ProjectRegistryEntry entry) {
+  return [
+    _Pill(label: entry.sourceRole),
+    _Pill(label: entry.sourceType),
+    _Pill(label: entry.lifecycleState),
+    _Pill(label: entry.authorityLevel),
+  ];
 }
 
 bool _isDescendantPath(String path, String root) {

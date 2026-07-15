@@ -282,9 +282,6 @@ class ProjectFreshnessService {
       staleReasons.add('capsule_errors');
       attentionReasons.add('capsule_errors');
     }
-    if (!capsule.hasMetadata) {
-      staleReasons.add('capsule_metadata_missing');
-    }
     return {
       'status': capsule.errors.isNotEmpty
           ? 'blocked'
@@ -375,8 +372,7 @@ class ProjectFreshnessService {
         staleReasons.contains('github_online_head_missing')) {
       return 'Refresh GitHub metadata before trusting remote state.';
     }
-    if (staleReasons.contains('capsule_errors') ||
-        staleReasons.contains('capsule_metadata_missing')) {
+    if (staleReasons.contains('capsule_errors')) {
       return 'Resolve capsule metadata before agent startup.';
     }
     return status == 'current'

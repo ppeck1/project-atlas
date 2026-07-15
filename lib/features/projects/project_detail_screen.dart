@@ -11,7 +11,6 @@ import 'package:path/path.dart' as p;
 import '../../db/app_db.dart';
 import '../../services/github_remote_metadata_service.dart';
 import '../../services/local_git_visibility_service.dart';
-import '../../services/local_project_refresh_service.dart';
 import '../../services/project_runtime_service.dart' as runtime;
 import '../../services/project_summary_models.dart';
 import '../../services/shopify_seo_analyzer.dart';
@@ -1224,7 +1223,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     onChooseLocalRepo: () => _replaceLocalRepoLink(context),
                     onAssociateFile: () => _associateLocalFile(context),
                     onAssociateFolder: () => _associateLocalFolder(context),
-                    onPreviewRefresh: () => _showLocalRefreshDialog(context),
+                    onPreviewRefresh: () =>
+                        _showProjectReconciliationDialog(context),
                     onExportBundle: () =>
                         _showProjectBundleExportDialog(context, project.title),
                     onInspectGit: () => _showGitVisibilityDialog(context),
@@ -1360,19 +1360,101 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   // ── Dialogs ───────────────────────────────────────────────────────────────
 
-  Future<void> _showLocalRefreshDialog(BuildContext context) async {
+  Future<void> _showProjectReconciliationDialog(BuildContext context) async {
     final state = AppStateScope.of(context);
-    LocalProjectRefreshPreview preview;
+    ProjectReconciliationPreview reconciliation;
     try {
-      preview = await state.previewLocalProjectRefresh(widget.projectId);
+      reconciliation = await state.previewProjectReconciliation(
+        widget.projectId,
+      );
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Refresh preview failed: $error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Reconcile preview failed: $error')),
+      );
       return;
     }
     if (!context.mounted) return;
+    final preview = reconciliation.localRefreshPreview;
+    if (reconciliation.outcome == 'blocked' || preview == null) {
+      await showDialog<void>(
+        context: context,
+        useRootNavigator: true,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: _kPanel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: _kLine),
+          ),
+          title: const Text('Project reconciliation'),
+          content: SizedBox(
+            width: 680,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 6,
+                  children: [
+                    _MiniPill('Outcome', reconciliation.outcome),
+                    _MiniPill('Boundary', reconciliation.writeBoundary),
+                    _MiniPill(
+                      'Source repos mutated',
+                      reconciliation.sourceReposMutated ? 'yes' : 'no',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (reconciliation.blockers.isNotEmpty) ...[
+                  const Text(
+                    'Blocked',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  for (final blocker in reconciliation.blockers)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        blocker,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.amber,
+                        ),
+                      ),
+                    ),
+                ] else
+                  const Text(
+                    'No local refresh plan is available for this project.',
+                    style: TextStyle(fontSize: 12, color: Colors.white70),
+                  ),
+                const SizedBox(height: 12),
+                for (final channel in reconciliation.channels)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 5),
+                    child: Text(
+                      '${channel.name}: ${channel.status} '
+                      '(${channel.processed} checked, ${channel.eligible} eligible)',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.white60,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(ctx, rootNavigator: true).maybePop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     final selected = preview.entries
         .where((entry) => entry.shouldApplyByDefault)
         .map((entry) => entry.action.id)
@@ -1387,7 +1469,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
             borderRadius: BorderRadius.circular(14),
             side: const BorderSide(color: _kLine),
           ),
-          title: const Text('Preview local repo refresh'),
+          title: const Text('Preview project reconciliation'),
           content: SizedBox(
             width: 760,
             height: 560,
@@ -1403,6 +1485,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   spacing: 10,
                   runSpacing: 6,
                   children: [
+                    _MiniPill('Outcome', reconciliation.outcome),
+                    _MiniPill('Boundary', reconciliation.writeBoundary),
                     _MiniPill('Profile', preview.profile),
                     if ((preview.branch ?? '').isNotEmpty)
                       _MiniPill('Branch', preview.branch!),
@@ -1412,10 +1496,10 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                       _MiniPill('Dirty', '${preview.dirtyCount}'),
                   ],
                 ),
-                if (preview.warnings.isNotEmpty) ...[
+                if (reconciliation.warnings.isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Text(
-                    preview.warnings.join('\n'),
+                    reconciliation.warnings.join('\n'),
                     style: const TextStyle(fontSize: 11, color: Colors.amber),
                   ),
                 ],
@@ -1476,7 +1560,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                       ).maybePop(Set<String>.from(selected));
                     },
               icon: const Icon(Icons.check, size: 16),
-              label: const Text('Apply selected'),
+              label: const Text('Apply selected to Atlas'),
             ),
           ],
         ),
@@ -1494,7 +1578,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Refresh applied: ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged.',
+            'Reconcile applied to Atlas: ${result.created} created, ${result.updated} updated, ${result.unchanged} unchanged.',
           ),
         ),
       );
@@ -1502,7 +1586,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       if (!context.mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Refresh apply failed: $error')));
+      ).showSnackBar(SnackBar(content: Text('Reconcile apply failed: $error')));
     }
   }
 
@@ -6732,7 +6816,7 @@ class _LocalRepoSection extends StatelessWidget {
                 FilledButton.icon(
                   onPressed: onPreviewRefresh,
                   icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('Preview refresh'),
+                  label: const Text('Reconcile'),
                 ),
                 OutlinedButton.icon(
                   onPressed: onChooseLocalRepo,

@@ -39,6 +39,7 @@ void main() {
       expect(names, contains('atlas.project_workload'));
       expect(names, contains('atlas.suggest_next_work'));
       expect(names, contains('atlas.work_item_context_bundle'));
+      expect(names, contains('atlas.project_reconciliation_preview'));
       expect(names, contains('get_github_remote_status'));
       expect(names, contains('refresh_github_remote_status'));
       expect(names, contains('list_project_enrichment_runs'));
@@ -379,6 +380,74 @@ void main() {
       expect(draftCountAfter, draftCountBefore);
     });
 
+    test(
+      'status and planning context agree when capsule metadata is missing',
+      () async {
+        final root = await Directory.systemTemp.createTemp(
+          'atlas_mcp_missing_capsule_test_',
+        );
+        try {
+          Directory(p.join(root.path, '.project')).createSync(recursive: true);
+          await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+          final scanId = await db.startProjectScanRun(
+            rootsJson: '[]',
+            startedAt: DateTime(2026, 7, 8),
+          );
+          await db.addProjectObservation(
+            id: 'obs-atlas',
+            scanRunId: scanId,
+            observedPath: root.path,
+            classificationGuess: 'software',
+            confidence: 95,
+            branch: 'main',
+            headSha: 'abc',
+            dirtyCount: 0,
+            remoteUrl: null,
+            markerFilesJson: '[]',
+            warningsJson: '[]',
+            rawJson: jsonEncode({'displayName': 'Atlas', 'gitRoot': root.path}),
+            observedAt: DateTime.now(),
+          );
+          await db.reviewProjectObservation(
+            observationId: 'obs-atlas',
+            reviewState: 'linked',
+            atlasProjectId: 'atlas',
+          );
+
+          final statusResult = await adapter.callTool('get_project_status', {
+            'projectId': 'atlas',
+          });
+          final planningResult = await adapter.callTool(
+            'atlas.project_planning_context',
+            {'projectId': 'atlas'},
+          );
+
+          expect(statusResult.isError, isFalse);
+          expect(planningResult.isError, isFalse);
+          final status = statusResult.data as Map;
+          final planning = planningResult.data as Map;
+          final statusFreshness = status['freshness'] as Map;
+          final planningProject = planning['project'] as Map;
+          final planningFreshness = planningProject['freshness'] as Map;
+          final acceptedTruth = planning['currentAcceptedTruth'] as Map;
+
+          expect(statusFreshness['status'], 'current');
+          expect(planningFreshness['status'], statusFreshness['status']);
+          expect(acceptedTruth['freshnessStatus'], statusFreshness['status']);
+          expect(
+            planningFreshness['staleReasons'],
+            isNot(contains('capsule_metadata_missing')),
+          );
+          expect(
+            (planningFreshness['capsule'] as Map)['evidenceAvailability'],
+            'metadata_missing',
+          );
+        } finally {
+          await root.delete(recursive: true);
+        }
+      },
+    );
+
     test('dispatches Atlas-only project enrichment tools', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
 
@@ -401,6 +470,70 @@ void main() {
       expect((getResult.data as Map)['findings'], isNotEmpty);
       expect((getResult.data as Map)['steps'], isNotEmpty);
       expect((getResult.data as Map)['proposals'], isNotEmpty);
+    });
+
+    test('dispatches read-only project reconciliation preview', () async {
+      await db.createProject(
+        'remote-legacy-project',
+        'Remote Legacy',
+        DateTime(2026, 1, 1),
+      );
+      final now =
+          DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+      await db.customStatement(
+        '''INSERT INTO project_registry (
+             id, atlas_project_id, display_name, local_path, git_root,
+             classification, review_state, source_role, source_type,
+             lifecycle_state, authority_level, precedence,
+             normalized_identity, notes, created_at, updated_at,
+             last_reviewed_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        [
+          'registry-remote-legacy',
+          'remote-legacy-project',
+          'Remote Legacy',
+          'https://github.com/example/remote-legacy',
+          null,
+          'software',
+          'linked',
+          'unresolved_candidate',
+          'remote_url_legacy',
+          'legacy_remote',
+          'blocked_unresolved',
+          100,
+          'remote:https://github.com/example/remote-legacy',
+          null,
+          now,
+          now,
+          now,
+        ],
+      );
+      final beforeLedgers = await _rowCount(db, 'local_project_refresh_items');
+      final beforeProject = await db.getProjectFull('remote-legacy-project');
+
+      final result = await adapter.callTool(
+        'atlas.project_reconciliation_preview',
+        {'projectId': 'remote-legacy-project'},
+      );
+
+      final afterLedgers = await _rowCount(db, 'local_project_refresh_items');
+      final afterProject = await db.getProjectFull('remote-legacy-project');
+      expect(result.isError, isFalse);
+      final preview = result.data as Map;
+      expect(preview['outcome'], 'blocked');
+      expect(preview['sourceReposMutated'], isFalse);
+      expect(preview['writeBoundary'], 'atlas_only_preview');
+      expect(preview['localRefresh'], isNull);
+      final channels = preview['channels'] as List;
+      final topology = channels.cast<Map>().singleWhere(
+        (channel) => channel['name'] == 'source_topology',
+      );
+      expect(topology['status'], 'blocked');
+      expect((topology['blockers'] as List).join('\n'), contains('remote'));
+      expect(afterLedgers, beforeLedgers);
+      expect(afterProject?.status, beforeProject?.status);
+      expect(afterProject?.toJson(), beforeProject?.toJson());
     });
 
     test('dispatches proposal tools without applying changes', () async {

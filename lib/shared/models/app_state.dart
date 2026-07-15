@@ -340,6 +340,118 @@ class LocalProjectBatchRefreshResult {
   });
 }
 
+class ProjectReconciliationChannelStatus {
+  final String name;
+  final String status;
+  final int eligible;
+  final int processed;
+  final int unchanged;
+  final int excludedByPolicy;
+  final int deferredByCap;
+  final int failed;
+  final List<String> blockers;
+  final List<String> warnings;
+  final Map<String, Object?> details;
+
+  const ProjectReconciliationChannelStatus({
+    required this.name,
+    required this.status,
+    this.eligible = 0,
+    this.processed = 0,
+    this.unchanged = 0,
+    this.excludedByPolicy = 0,
+    this.deferredByCap = 0,
+    this.failed = 0,
+    this.blockers = const [],
+    this.warnings = const [],
+    this.details = const {},
+  });
+
+  bool get isBlocked => status == 'blocked' || blockers.isNotEmpty;
+  bool get isFailed => status == 'failed' || failed > 0;
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'status': status,
+    'eligible': eligible,
+    'processed': processed,
+    'unchanged': unchanged,
+    'excludedByPolicy': excludedByPolicy,
+    'deferredByCap': deferredByCap,
+    'failed': failed,
+    'blockers': blockers,
+    'warnings': warnings,
+    'details': details,
+  };
+}
+
+class ProjectReconciliationPreview {
+  final String projectId;
+  final String projectTitle;
+  final String outcome;
+  final bool sourceReposMutated;
+  final String writeBoundary;
+  final List<ProjectReconciliationChannelStatus> channels;
+  final List<String> blockers;
+  final List<String> warnings;
+  final LocalProjectRefreshPreview? localRefreshPreview;
+  final Map<String, Object?> auditCoverage;
+
+  const ProjectReconciliationPreview({
+    required this.projectId,
+    required this.projectTitle,
+    required this.outcome,
+    required this.sourceReposMutated,
+    required this.writeBoundary,
+    required this.channels,
+    required this.blockers,
+    required this.warnings,
+    required this.auditCoverage,
+    this.localRefreshPreview,
+  });
+
+  int get refreshableActions =>
+      localRefreshPreview?.entries
+          .where((entry) => entry.shouldApplyByDefault)
+          .length ??
+      0;
+
+  Map<String, Object?> toJson() => {
+    'projectId': projectId,
+    'projectTitle': projectTitle,
+    'outcome': outcome,
+    'sourceReposMutated': sourceReposMutated,
+    'writeBoundary': writeBoundary,
+    'channels': channels.map((channel) => channel.toJson()).toList(),
+    'blockers': blockers,
+    'warnings': warnings,
+    'refreshableActions': refreshableActions,
+    'auditCoverage': auditCoverage,
+    if (localRefreshPreview != null)
+      'localRefresh': {
+        'registryId': localRefreshPreview!.registryId,
+        'localPath': localRefreshPreview!.localPath,
+        'profile': localRefreshPreview!.profile,
+        'branch': localRefreshPreview!.branch,
+        'headSha': localRefreshPreview!.headSha,
+        'dirtyCount': localRefreshPreview!.dirtyCount,
+        'remoteUrl': localRefreshPreview!.remoteUrl,
+        'observedAt': localRefreshPreview!.observedAt?.toIso8601String(),
+        'entries': localRefreshPreview!.entries.length,
+        'new': localRefreshPreview!.entries
+            .where((entry) => entry.status == 'new')
+            .length,
+        'changed': localRefreshPreview!.entries
+            .where((entry) => entry.status == 'changed')
+            .length,
+        'unchanged': localRefreshPreview!.entries
+            .where((entry) => entry.status == 'unchanged')
+            .length,
+        'warnings': localRefreshPreview!.warnings,
+      },
+  };
+}
+
 typedef ProjectEnrichmentStatusCallback =
     void Function(String status, {int? current, int? total});
 
@@ -4257,13 +4369,20 @@ class AppState extends ChangeNotifier {
       linkedProjects = scopedRegistryBefore
           .where((entry) => (entry.atlasProjectId ?? '').isNotEmpty)
           .length;
+      final distinctLinkedProjectsBefore = scopedRegistryBefore
+          .map((entry) => entry.atlasProjectId?.trim() ?? '')
+          .where((projectId) => projectId.isNotEmpty)
+          .toSet()
+          .length;
       await finishTrackedStep(
         registryStepId,
         status: 'completed',
         considered: registryEntries,
         output: {
           'registryEntries': registryEntries,
+          'linkedSources': linkedProjects,
           'linkedProjects': linkedProjects,
+          'distinctLinkedProjects': distinctLinkedProjectsBefore,
           'scopeProjectIds': _sortedProjectIdScope(scopedProjectIds),
           'unlinkedRegistryEntries': scopedRegistryBefore
               .where(
@@ -4404,6 +4523,11 @@ class AppState extends ChangeNotifier {
       linkedProjects = scopedRegistry
           .where((entry) => (entry.atlasProjectId ?? '').isNotEmpty)
           .length;
+      final distinctLinkedProjects = scopedRegistry
+          .map((entry) => entry.atlasProjectId?.trim() ?? '')
+          .where((projectId) => projectId.isNotEmpty)
+          .toSet()
+          .length;
       final allProjects = await db.getVisibleProjects();
       final projects = scopedProjectIds == null
           ? allProjects
@@ -4513,6 +4637,8 @@ class AppState extends ChangeNotifier {
           : 'completed';
       final output = {
         'mode': analyzeOnly ? 'analyze' : 'apply',
+        'linkedSources': linkedProjects,
+        'distinctLinkedProjects': distinctLinkedProjects,
         'coverage': verificationOutput,
         'refresh': refreshResult == null
             ? null
@@ -4570,7 +4696,9 @@ class AppState extends ChangeNotifier {
         outputJson: jsonEncode({
           'status': status,
           'registryEntries': registryEntries,
+          'linkedSources': linkedProjects,
           'linkedProjects': linkedProjects,
+          'distinctLinkedProjects': distinctLinkedProjects,
           'findings': savedFindings.length,
           'openFindings': openFindings,
         }),
@@ -4702,6 +4830,10 @@ class AppState extends ChangeNotifier {
     var projectsWithRisks = 0;
     var projectsWithDecisions = 0;
     var projectsWithGithubCache = 0;
+    var activePrimarySources = 0;
+    var unresolvedSources = 0;
+    var legacyRemoteSources = 0;
+    var duplicateSourceIdentities = 0;
 
     void addFinding({
       Project? project,
@@ -4824,8 +4956,59 @@ class AppState extends ChangeNotifier {
       );
     }
 
+    final duplicateIdentityGroups = <String, List<ProjectRegistryEntry>>{};
+    for (final entry in registry) {
+      if (entry.reviewState == 'ignored') continue;
+      final identity = _sourceTopologyIdentity(entry);
+      if (identity == null) continue;
+      duplicateIdentityGroups
+          .putIfAbsent(identity, () => <ProjectRegistryEntry>[])
+          .add(entry);
+    }
+    for (final group in duplicateIdentityGroups.entries.where(
+      (entry) => entry.value.length > 1,
+    )) {
+      duplicateSourceIdentities++;
+      final entries = group.value;
+      addFinding(
+        project: entries.first.atlasProjectId == null
+            ? null
+            : projectsById[entries.first.atlasProjectId],
+        registryEntry: entries.first,
+        severity: 'warning',
+        category: 'source_topology',
+        title: 'Multiple source rows share the same normalized identity.',
+        detail:
+            'Review these source rows before applying identity reconciliation.',
+        evidence: {
+          'normalizedIdentity': group.key,
+          'registryIds': entries.map((entry) => entry.id).toList(),
+          'atlasProjectIds': entries
+              .map((entry) => entry.atlasProjectId)
+              .whereType<String>()
+              .toSet()
+              .toList(),
+          'localPaths': entries.map((entry) => entry.localPath).toList(),
+        },
+      );
+    }
+
     for (final project in projects) {
-      final registryEntry = registryEntriesByProjectId[project.id]?.first;
+      final projectRegistryEntries =
+          registryEntriesByProjectId[project.id] ??
+          const <ProjectRegistryEntry>[];
+      final registryEntry = projectRegistryEntries.firstOrNull;
+      final projectPrimarySources = projectRegistryEntries
+          .where(_isActivePrimarySource)
+          .toList(growable: false);
+      final projectUnresolvedSources = projectRegistryEntries
+          .where(_isUnresolvedSource)
+          .toList(growable: false);
+      activePrimarySources += projectPrimarySources.length;
+      unresolvedSources += projectUnresolvedSources.length;
+      legacyRemoteSources += projectRegistryEntries
+          .where((entry) => entry.sourceType == 'remote_url_legacy')
+          .length;
       final docs = await db.getDocumentsForProject(project.id);
       final mediaItems = await getProjectMedia(project.id);
       final tags = await getTagsForProject(project.id);
@@ -4872,6 +5055,67 @@ class AppState extends ChangeNotifier {
           title: 'Atlas project is not linked to a local registry entry.',
           detail:
               'Run an Operations scan and link or upload the matching local project.',
+        );
+      } else if (projectPrimarySources.isEmpty) {
+        addFinding(
+          project: project,
+          registryEntry: registryEntry,
+          severity: 'error',
+          category: 'source_topology',
+          title: 'Project has no active primary working source.',
+          detail:
+              'Mark one valid local source as primary_working before identity reconciliation.',
+          evidence: {
+            'linkedRegistryIds': projectRegistryEntries
+                .map((entry) => entry.id)
+                .toList(),
+            'sourceRoles': projectRegistryEntries
+                .map((entry) => entry.sourceRole)
+                .toSet()
+                .toList(),
+            'lifecycleStates': projectRegistryEntries
+                .map((entry) => entry.lifecycleState)
+                .toSet()
+                .toList(),
+          },
+        );
+      } else if (projectPrimarySources.length > 1) {
+        addFinding(
+          project: project,
+          registryEntry: projectPrimarySources.first,
+          severity: 'error',
+          category: 'source_topology',
+          title: 'Project has multiple active primary working sources.',
+          detail:
+              'Resolve source authority before applying identity reconciliation.',
+          evidence: {
+            'primaryRegistryIds': projectPrimarySources
+                .map((entry) => entry.id)
+                .toList(),
+            'primaryLocalPaths': projectPrimarySources
+                .map((entry) => entry.localPath)
+                .toList(),
+          },
+        );
+      }
+      for (final source in projectUnresolvedSources) {
+        addFinding(
+          project: project,
+          registryEntry: source,
+          severity: source.authorityLevel == 'blocked_unresolved'
+              ? 'error'
+              : 'warning',
+          category: 'source_topology',
+          title: 'Source topology is unresolved for this project.',
+          detail:
+              'Review the source role, lifecycle state, and authority before reconciliation.',
+          evidence: {
+            'sourceRole': source.sourceRole,
+            'sourceType': source.sourceType,
+            'lifecycleState': source.lifecycleState,
+            'authorityLevel': source.authorityLevel,
+            'normalizedIdentity': source.normalizedIdentity,
+          },
         );
       }
       if (_isBlank(project.description)) {
@@ -4975,7 +5219,12 @@ class AppState extends ChangeNotifier {
     final coverage = {
       'projects': projects.length,
       'registryEntries': registry.length,
+      'linkedSources': registryEntriesByProjectId.values.fold<int>(
+        0,
+        (total, entries) => total + entries.length,
+      ),
       'linkedProjects': registryByProjectId.length,
+      'distinctLinkedProjects': registryByProjectId.length,
       'unlinkedRegistryEntries': registry
           .where(
             (entry) =>
@@ -5000,8 +5249,37 @@ class AppState extends ChangeNotifier {
       'projectsWithRisks': projectsWithRisks,
       'projectsWithDecisions': projectsWithDecisions,
       'projectsWithGithubCache': projectsWithGithubCache,
+      'sourceTopology': {
+        'activePrimarySources': activePrimarySources,
+        'unresolvedSources': unresolvedSources,
+        'legacyRemoteSources': legacyRemoteSources,
+        'duplicateNormalizedIdentities': duplicateSourceIdentities,
+      },
     };
     return _ProjectEnrichmentAudit(findings: findings, coverage: coverage);
+  }
+
+  bool _isActivePrimarySource(ProjectRegistryEntry entry) {
+    return entry.reviewState != 'ignored' &&
+        entry.sourceRole == 'primary_working' &&
+        entry.lifecycleState == 'active';
+  }
+
+  bool _isUnresolvedSource(ProjectRegistryEntry entry) {
+    return entry.reviewState != 'ignored' &&
+        (entry.sourceRole == 'unresolved_candidate' ||
+            entry.lifecycleState == 'legacy_remote' ||
+            entry.authorityLevel == 'blocked_unresolved');
+  }
+
+  String? _sourceTopologyIdentity(ProjectRegistryEntry entry) {
+    final normalized = entry.normalizedIdentity?.trim();
+    if (normalized != null && normalized.isNotEmpty) return normalized;
+    final gitRoot = entry.gitRoot?.trim();
+    if (gitRoot != null && gitRoot.isNotEmpty) return _pathKey(gitRoot);
+    final localPath = entry.localPath.trim();
+    if (localPath.isEmpty) return null;
+    return _pathKey(localPath);
   }
 
   bool _looksLikeSoftwareProject(
@@ -5087,6 +5365,159 @@ class AppState extends ChangeNotifier {
   Future<ProjectRegistryEntry?> getProjectRegistryForAtlasProject(
     String projectId,
   ) => db.getProjectRegistryByAtlasProjectId(projectId);
+
+  Future<ProjectRegistryEntry> markProjectRegistryEntryPrimarySource(
+    String registryId, {
+    String actor = 'Operator',
+  }) async {
+    final before = await db.getProjectRegistryEntry(registryId);
+    final updated = await db.markProjectRegistryEntryPrimarySource(
+      registryId: registryId,
+    );
+    await db.logEvent(
+      area: 'operations',
+      action: 'project_registry_primary_source_marked',
+      entityType: 'project_registry',
+      entityId: registryId,
+      inputJson: jsonEncode(before?.toJson()),
+      outputJson: jsonEncode({
+        'actor': actor,
+        'registryId': registryId,
+        'atlasProjectId': updated.atlasProjectId,
+        'sourceRole': updated.sourceRole,
+        'sourceType': updated.sourceType,
+        'lifecycleState': updated.lifecycleState,
+        'authorityLevel': updated.authorityLevel,
+        'precedence': updated.precedence,
+      }),
+    );
+    notifyListeners();
+    return updated;
+  }
+
+  Future<ProjectRegistryEntry> ignoreProjectRegistrySource(
+    String registryId, {
+    String actor = 'Operator',
+    String? note,
+  }) async {
+    final before = await db.getProjectRegistryEntry(registryId);
+    if (before == null) {
+      throw StateError('Project registry row not found: $registryId');
+    }
+    final notes = [
+      before.notes?.trim(),
+      note?.trim(),
+      'Source ignored by $actor at ${DateTime.now().toIso8601String()}.',
+    ].where((line) => line != null && line.isNotEmpty).join('\n');
+    await db.updateProjectRegistryEntryReviewState(
+      id: registryId,
+      reviewState: 'ignored',
+      notes: notes,
+      clearAtlasProjectId: true,
+    );
+    final updated = await db.getProjectRegistryEntry(registryId);
+    if (updated == null) {
+      throw StateError(
+        'Project registry row not found after update: $registryId',
+      );
+    }
+    await db.logEvent(
+      area: 'operations',
+      action: 'project_registry_source_ignored',
+      entityType: 'project_registry',
+      entityId: registryId,
+      inputJson: jsonEncode(before.toJson()),
+      outputJson: jsonEncode({
+        'actor': actor,
+        'registryId': registryId,
+        'previousAtlasProjectId': before.atlasProjectId,
+        'reviewState': updated.reviewState,
+        'sourceRole': updated.sourceRole,
+        'lifecycleState': updated.lifecycleState,
+        'authorityLevel': updated.authorityLevel,
+      }),
+    );
+    notifyListeners();
+    return updated;
+  }
+
+  Future<ProjectRegistryEntry> replaceProjectRegistrySourceFolder({
+    required String registryId,
+    required String selectedPath,
+    String actor = 'Operator',
+  }) async {
+    final registry = await db.getProjectRegistryEntry(registryId);
+    if (registry == null) {
+      throw StateError('Project registry row not found: $registryId');
+    }
+    final folderPath = selectedPath.trim();
+    if (folderPath.isEmpty) {
+      throw ArgumentError('Choose a project folder.');
+    }
+    if (isUnsafeOperationsScanRoot(folderPath)) {
+      throw ArgumentError('Choose a project folder, not a drive root.');
+    }
+    if (!Directory(folderPath).existsSync()) {
+      throw FileSystemException('Project folder not found', folderPath);
+    }
+    final existingForPath = await db.getProjectRegistryByPath(folderPath);
+    if (existingForPath != null && existingForPath.id != registry.id) {
+      throw StateError(
+        'That folder is already registered as ${existingForPath.displayName}.',
+      );
+    }
+
+    final gitReport = await const LocalGitVisibilityService().inspect(
+      folderPath,
+    );
+    final linkedProjectId = registry.atlasProjectId?.trim();
+    final now = DateTime.now();
+    final notes = [
+      registry.notes?.trim(),
+      'Folder replaced by $actor at ${now.toIso8601String()}: ${registry.localPath} -> $folderPath',
+    ].where((line) => line != null && line.isNotEmpty).join('\n');
+    var updated = await db.updateProjectRegistryEntryLocalPath(
+      id: registry.id,
+      localPath: folderPath,
+      gitRoot: gitReport.gitRoot,
+      reviewState: linkedProjectId == null || linkedProjectId.isEmpty
+          ? 'accepted'
+          : 'linked',
+      notes: notes,
+    );
+    if (linkedProjectId != null && linkedProjectId.isNotEmpty) {
+      updated = await db.markProjectRegistryEntryPrimarySource(
+        registryId: registry.id,
+      );
+      await db.updateProjectMeta(linkedProjectId, {
+        'scopeIncluded': 'Local project root: ${updated.localPath}',
+      });
+    }
+    await db.logEvent(
+      area: 'operations',
+      action: 'project_registry_source_folder_replaced',
+      entityType: linkedProjectId == null || linkedProjectId.isEmpty
+          ? 'project_registry'
+          : 'project',
+      entityId: linkedProjectId == null || linkedProjectId.isEmpty
+          ? registry.id
+          : linkedProjectId,
+      inputJson: registry.localPath,
+      outputJson: jsonEncode({
+        'actor': actor,
+        'registryId': registry.id,
+        'previousPath': registry.localPath,
+        'localPath': updated.localPath,
+        'gitRoot': updated.gitRoot,
+        'sourceRole': updated.sourceRole,
+        'sourceType': updated.sourceType,
+        'lifecycleState': updated.lifecycleState,
+        'authorityLevel': updated.authorityLevel,
+      }),
+    );
+    notifyListeners();
+    return updated;
+  }
 
   Future<ProjectLocalRepoSummary?> getProjectLocalRepoSummary(
     String projectId,
@@ -5639,6 +6070,224 @@ class AppState extends ChangeNotifier {
     return observations.firstWhere(
       (observation) => _pathKey(observation.observedPath) == normalizedRoot,
       orElse: () => observations.first,
+    );
+  }
+
+  Future<ProjectReconciliationPreview> previewProjectReconciliation(
+    String projectId, {
+    LocalProjectRefreshService service = const LocalProjectRefreshService(),
+  }) async {
+    final cleanProjectId = projectId.trim();
+    final project = await db.getProjectFull(cleanProjectId);
+    if (project == null) {
+      throw StateError('Atlas project not found: $cleanProjectId');
+    }
+    final registryEntries = await db.getProjectRegistryEntriesByAtlasProjectId(
+      cleanProjectId,
+    );
+    final activePrimarySources = registryEntries
+        .where(_isActivePrimarySource)
+        .toList(growable: false);
+    final unresolvedSources = registryEntries
+        .where(_isUnresolvedSource)
+        .toList(growable: false);
+    final legacyRemoteSources = registryEntries
+        .where((entry) => entry.sourceType == 'remote_url_legacy')
+        .toList(growable: false);
+    final topologyBlockers = <String>[];
+    final topologyWarnings = <String>[];
+
+    if (registryEntries.isEmpty) {
+      topologyBlockers.add('Project has no linked source registry rows.');
+    }
+    if (activePrimarySources.isEmpty) {
+      topologyBlockers.add('Project has no active primary working source.');
+    } else if (activePrimarySources.length > 1) {
+      topologyBlockers.add(
+        'Project has multiple active primary working sources.',
+      );
+    }
+    for (final source in unresolvedSources) {
+      final message =
+          '${source.displayName}: source topology is unresolved '
+          '(${source.sourceRole}, ${source.lifecycleState}, '
+          '${source.authorityLevel}).';
+      if (source.authorityLevel == 'blocked_unresolved' ||
+          source.lifecycleState == 'legacy_remote') {
+        topologyBlockers.add(message);
+      } else {
+        topologyWarnings.add(message);
+      }
+    }
+    for (final source in legacyRemoteSources.where(_isUnresolvedSource)) {
+      topologyBlockers.add(
+        '${source.displayName}: legacy remote source rows are evidence only.',
+      );
+    }
+    if (activePrimarySources.length == 1) {
+      final primary = activePrimarySources.single;
+      if (_looksLikeRemotePath(primary.localPath)) {
+        topologyBlockers.add(
+          '${primary.displayName}: primary source is a remote URL, not a local folder.',
+        );
+      } else if (!_directoryExistsSafely(primary.localPath)) {
+        topologyBlockers.add(
+          '${primary.displayName}: primary source folder does not exist.',
+        );
+      }
+    }
+
+    final audit = await _buildProjectEnrichmentAudit(
+      registry: registryEntries,
+      projects: [project],
+    );
+    final auditErrors = audit.findings
+        .where((finding) => finding.severity == 'error')
+        .length;
+    final auditWarnings = audit.findings
+        .where((finding) => finding.severity == 'warning')
+        .length;
+    final auditInfos = audit.findings
+        .where((finding) => finding.severity == 'info')
+        .length;
+
+    LocalProjectRefreshPreview? localRefreshPreview;
+    var localRefreshFailed = false;
+    final localRefreshWarnings = <String>[];
+    if (topologyBlockers.isEmpty && activePrimarySources.length == 1) {
+      try {
+        localRefreshPreview = await previewLocalProjectRefreshForRegistryEntry(
+          activePrimarySources.single.id,
+          cleanProjectId,
+          service: service,
+        );
+        localRefreshWarnings.addAll(localRefreshPreview.warnings);
+      } catch (error) {
+        localRefreshFailed = true;
+        localRefreshWarnings.add(error.toString());
+      }
+    }
+
+    final localEntries =
+        localRefreshPreview?.entries ??
+        const <LocalProjectRefreshPreviewEntry>[];
+    final refreshableActions = localEntries
+        .where((entry) => entry.shouldApplyByDefault)
+        .length;
+    final unchangedActions = localEntries
+        .where((entry) => entry.status == 'unchanged')
+        .length;
+    final deferredByCap = localRefreshWarnings
+        .where((warning) => warning.toLowerCase().contains('capped'))
+        .length;
+    final excludedByPolicy = localRefreshWarnings
+        .where(
+          (warning) =>
+              warning.toLowerCase().contains('excluded') ||
+              warning.toLowerCase().contains('over'),
+        )
+        .length;
+
+    final channels = [
+      ProjectReconciliationChannelStatus(
+        name: 'source_topology',
+        status: topologyBlockers.isEmpty ? 'eligible' : 'blocked',
+        eligible: activePrimarySources.length,
+        processed: registryEntries.length,
+        failed: topologyBlockers.length,
+        blockers: List.unmodifiable(topologyBlockers),
+        warnings: List.unmodifiable(topologyWarnings),
+        details: {
+          'linkedSources': registryEntries.length,
+          'activePrimarySources': activePrimarySources.length,
+          'unresolvedSources': unresolvedSources.length,
+          'legacyRemoteSources': legacyRemoteSources.length,
+          'primaryRegistryIds': activePrimarySources
+              .map((entry) => entry.id)
+              .toList(),
+        },
+      ),
+      ProjectReconciliationChannelStatus(
+        name: 'local_refresh_preview',
+        status: topologyBlockers.isNotEmpty
+            ? 'blocked'
+            : localRefreshFailed
+            ? 'failed'
+            : refreshableActions > 0
+            ? 'partial'
+            : localRefreshWarnings.isNotEmpty
+            ? 'current_with_declared_exclusions'
+            : 'current',
+        eligible: refreshableActions,
+        processed: localEntries.length,
+        unchanged: unchangedActions,
+        excludedByPolicy: excludedByPolicy,
+        deferredByCap: deferredByCap,
+        failed: localRefreshFailed ? 1 : 0,
+        blockers: topologyBlockers.isEmpty
+            ? const []
+            : const ['Source topology must be resolved first.'],
+        warnings: List.unmodifiable(localRefreshWarnings),
+        details: {
+          'registryId': localRefreshPreview?.registryId,
+          'profile': localRefreshPreview?.profile,
+          'new': localEntries.where((entry) => entry.status == 'new').length,
+          'changed': localEntries
+              .where((entry) => entry.status == 'changed')
+              .length,
+          'unchanged': unchangedActions,
+        },
+      ),
+      ProjectReconciliationChannelStatus(
+        name: 'atlas_audit',
+        status: auditErrors > 0
+            ? 'partial'
+            : auditWarnings > 0
+            ? 'partial'
+            : 'current',
+        processed: audit.findings.length,
+        failed: auditErrors,
+        warnings: audit.findings
+            .where((finding) => finding.severity != 'error')
+            .map((finding) => finding.title)
+            .toList(growable: false),
+        details: {
+          'errors': auditErrors,
+          'warnings': auditWarnings,
+          'info': auditInfos,
+        },
+      ),
+    ];
+
+    final allBlockers = channels
+        .expand((channel) => channel.blockers)
+        .toSet()
+        .toList(growable: false);
+    final allWarnings = channels
+        .expand((channel) => channel.warnings)
+        .toSet()
+        .toList(growable: false);
+    final outcome = allBlockers.isNotEmpty
+        ? 'blocked'
+        : localRefreshFailed
+        ? 'failed'
+        : refreshableActions > 0 || auditErrors > 0 || auditWarnings > 0
+        ? 'partial'
+        : allWarnings.isNotEmpty
+        ? 'current_with_declared_exclusions'
+        : 'current';
+
+    return ProjectReconciliationPreview(
+      projectId: cleanProjectId,
+      projectTitle: project.title,
+      outcome: outcome,
+      sourceReposMutated: false,
+      writeBoundary: 'atlas_only_preview',
+      channels: List.unmodifiable(channels),
+      blockers: List.unmodifiable(allBlockers),
+      warnings: List.unmodifiable(allWarnings),
+      localRefreshPreview: localRefreshPreview,
+      auditCoverage: audit.coverage,
     );
   }
 

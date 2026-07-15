@@ -172,6 +172,34 @@ class ProjectEnrichmentRun {
   List<String> get warnings => _decodeStringList(warningsJson);
   Map<String, Object?> get scope => _decodeObjectMap(scopeJson);
   Map<String, Object?> get output => _decodeObjectMap(outputJson);
+  int get linkedSources {
+    final raw = output['linkedSources'];
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw) ?? linkedProjects;
+    return linkedProjects;
+  }
+
+  int? get distinctLinkedProjects {
+    final direct = output['distinctLinkedProjects'];
+    if (direct is int) return direct;
+    if (direct is num) return direct.toInt();
+    if (direct is String) {
+      final parsed = int.tryParse(direct);
+      if (parsed != null) return parsed;
+    }
+    final coverage = output['coverage'];
+    if (coverage is Map) {
+      final raw =
+          coverage['distinctLinkedProjects'] ??
+          coverage['linkedProjects'] ??
+          coverage['linkedAtlasProjects'];
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+      if (raw is String) return int.tryParse(raw);
+    }
+    return linkedProjects;
+  }
 
   Map<String, Object?> toJson() => {
     'id': id,
@@ -180,7 +208,9 @@ class ProjectEnrichmentRun {
     'status': status,
     'scope': scope,
     'registryEntries': registryEntries,
+    'linkedSources': linkedSources,
     'linkedProjects': linkedProjects,
+    'distinctLinkedProjects': distinctLinkedProjects,
     'refreshedProjects': refreshedProjects,
     'createdItems': createdItems,
     'updatedItems': updatedItems,
@@ -635,6 +665,70 @@ Map<String, Object?> _decodeObjectMap(String? rawJson) {
   return const <String, Object?>{};
 }
 
+bool _isRemoteProjectSourcePath(String path) {
+  final normalized = path.trim().toLowerCase();
+  return normalized.startsWith('http://') ||
+      normalized.startsWith('https://') ||
+      normalized.startsWith('ssh://') ||
+      normalized.startsWith('git@');
+}
+
+String _projectRegistrySourceType({
+  required String localPath,
+  String? gitRoot,
+}) {
+  if (_isRemoteProjectSourcePath(localPath)) return 'remote_url_legacy';
+  if (gitRoot != null && gitRoot.trim().isNotEmpty) return 'local_git';
+  return 'local_path';
+}
+
+String _projectRegistrySourceRole({
+  required String localPath,
+  required String reviewState,
+}) {
+  if (reviewState == 'ignored') return 'ignored_candidate';
+  if (_isRemoteProjectSourcePath(localPath)) return 'unresolved_candidate';
+  if (reviewState == 'accepted' || reviewState == 'linked') {
+    return 'primary_working';
+  }
+  return 'unresolved_candidate';
+}
+
+String _projectRegistryLifecycleState({
+  required String localPath,
+  required String reviewState,
+}) {
+  if (reviewState == 'ignored') return 'ignored';
+  if (_isRemoteProjectSourcePath(localPath)) return 'legacy_remote';
+  if (reviewState == 'needs_review' || reviewState == 'unreviewed') {
+    return 'candidate';
+  }
+  return 'active';
+}
+
+String _projectRegistryAuthorityLevel({
+  required String localPath,
+  required String reviewState,
+}) {
+  if (reviewState == 'ignored') return 'none';
+  if (_isRemoteProjectSourcePath(localPath)) return 'blocked_unresolved';
+  if (reviewState == 'accepted' || reviewState == 'linked') {
+    return 'evidence_only';
+  }
+  return 'candidate';
+}
+
+String _normalizedProjectSourceIdentity({
+  required String localPath,
+  String? gitRoot,
+}) {
+  final identity = (gitRoot != null && gitRoot.trim().isNotEmpty)
+      ? gitRoot.trim()
+      : localPath.trim();
+  if (_isRemoteProjectSourcePath(identity)) return identity.toLowerCase();
+  return p.normalize(identity).toLowerCase();
+}
+
 // ---------------------------------------------------------------------------
 // AppDb
 // ---------------------------------------------------------------------------
@@ -705,7 +799,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 21;
+  int get schemaVersion => 22;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -877,9 +971,13 @@ class AppDb extends _$AppDb {
       if (from < 21) {
         await _repairLegacyMillisecondTimestamps();
       }
+      if (from < 22) {
+        await _ensureProjectRegistrySourceColumns();
+      }
     },
     beforeOpen: (_) async {
       await _ensureProjectCompatibilityColumns();
+      await _ensureProjectRegistrySourceColumns();
       await _ensureWorkItemTagsTable();
       await _ensureMediaLinksTable();
       await _ensureProjectRuntimeTables();
@@ -958,6 +1056,77 @@ class AppDb extends _$AppDb {
       'PRAGMA table_info("${field.table}")',
     ).get();
     return columns.any((row) => row.data['name'] == field.column);
+  }
+
+  Future<void> _ensureProjectRegistrySourceColumns() async {
+    final table = await customSelect(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_registry' LIMIT 1",
+    ).getSingleOrNull();
+    if (table == null) return;
+
+    final addColumns = <String>[
+      "ALTER TABLE project_registry ADD COLUMN source_role TEXT NOT NULL DEFAULT 'unresolved_candidate'",
+      "ALTER TABLE project_registry ADD COLUMN source_type TEXT NOT NULL DEFAULT 'local_path'",
+      "ALTER TABLE project_registry ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active'",
+      "ALTER TABLE project_registry ADD COLUMN authority_level TEXT NOT NULL DEFAULT 'candidate'",
+      'ALTER TABLE project_registry ADD COLUMN precedence INTEGER NOT NULL DEFAULT 100',
+      'ALTER TABLE project_registry ADD COLUMN normalized_identity TEXT NULL',
+    ];
+    for (final stmt in addColumns) {
+      try {
+        await customStatement(stmt);
+      } catch (_) {}
+    }
+
+    await customStatement('''
+      UPDATE project_registry
+      SET
+        source_type = CASE
+          WHEN lower(trim(local_path)) LIKE 'http://%'
+            OR lower(trim(local_path)) LIKE 'https://%'
+            OR lower(trim(local_path)) LIKE 'ssh://%'
+            OR lower(trim(local_path)) LIKE 'git@%'
+          THEN 'remote_url_legacy'
+          WHEN git_root IS NOT NULL AND trim(git_root) != ''
+          THEN 'local_git'
+          ELSE 'local_path'
+        END,
+        source_role = CASE
+          WHEN review_state = 'ignored' THEN 'ignored_candidate'
+          WHEN lower(trim(local_path)) LIKE 'http://%'
+            OR lower(trim(local_path)) LIKE 'https://%'
+            OR lower(trim(local_path)) LIKE 'ssh://%'
+            OR lower(trim(local_path)) LIKE 'git@%'
+          THEN 'unresolved_candidate'
+          WHEN review_state IN ('accepted', 'linked')
+          THEN 'primary_working'
+          ELSE 'unresolved_candidate'
+        END,
+        lifecycle_state = CASE
+          WHEN review_state = 'ignored' THEN 'ignored'
+          WHEN lower(trim(local_path)) LIKE 'http://%'
+            OR lower(trim(local_path)) LIKE 'https://%'
+            OR lower(trim(local_path)) LIKE 'ssh://%'
+            OR lower(trim(local_path)) LIKE 'git@%'
+          THEN 'legacy_remote'
+          WHEN review_state IN ('needs_review', 'unreviewed') THEN 'candidate'
+          ELSE 'active'
+        END,
+        authority_level = CASE
+          WHEN review_state = 'ignored' THEN 'none'
+          WHEN lower(trim(local_path)) LIKE 'http://%'
+            OR lower(trim(local_path)) LIKE 'https://%'
+            OR lower(trim(local_path)) LIKE 'ssh://%'
+            OR lower(trim(local_path)) LIKE 'git@%'
+          THEN 'blocked_unresolved'
+          WHEN review_state IN ('accepted', 'linked')
+          THEN 'evidence_only'
+          ELSE 'candidate'
+        END,
+        normalized_identity = lower(trim(COALESCE(NULLIF(git_root, ''), local_path)))
+      WHERE normalized_identity IS NULL
+        OR trim(normalized_identity) = ''
+    ''');
   }
 
   /// Repairs older or partially migrated local databases that already report
@@ -3838,12 +4007,55 @@ class AppDb extends _$AppDb {
     String? notes,
     bool clearAtlasProjectId = false,
   }) async {
+    final existing = await getProjectRegistryEntry(id);
+    final localPath = existing?.localPath ?? '';
+    final gitRoot = existing?.gitRoot;
     await (update(projectRegistry)..where((t) => t.id.equals(id))).write(
       ProjectRegistryCompanion(
         atlasProjectId: clearAtlasProjectId
             ? const Value(null)
             : const Value.absent(),
         reviewState: Value(reviewState),
+        sourceRole: localPath.isEmpty
+            ? const Value.absent()
+            : Value(
+                _projectRegistrySourceRole(
+                  localPath: localPath,
+                  reviewState: reviewState,
+                ),
+              ),
+        sourceType: localPath.isEmpty
+            ? const Value.absent()
+            : Value(
+                _projectRegistrySourceType(
+                  localPath: localPath,
+                  gitRoot: gitRoot,
+                ),
+              ),
+        lifecycleState: localPath.isEmpty
+            ? const Value.absent()
+            : Value(
+                _projectRegistryLifecycleState(
+                  localPath: localPath,
+                  reviewState: reviewState,
+                ),
+              ),
+        authorityLevel: localPath.isEmpty
+            ? const Value.absent()
+            : Value(
+                _projectRegistryAuthorityLevel(
+                  localPath: localPath,
+                  reviewState: reviewState,
+                ),
+              ),
+        normalizedIdentity: localPath.isEmpty
+            ? const Value.absent()
+            : Value(
+                _normalizedProjectSourceIdentity(
+                  localPath: localPath,
+                  gitRoot: gitRoot,
+                ),
+              ),
         notes: notes == null ? const Value.absent() : Value(notes),
         updatedAt: Value(DateTime.now()),
         lastReviewedAt: Value(DateTime.now()),
@@ -3858,6 +4070,8 @@ class AppDb extends _$AppDb {
     String? reviewState,
     String? notes,
   }) async {
+    final existing = await getProjectRegistryEntry(id);
+    final nextReviewState = reviewState ?? existing?.reviewState ?? 'accepted';
     await (update(projectRegistry)..where((t) => t.id.equals(id))).write(
       ProjectRegistryCompanion(
         localPath: Value(localPath),
@@ -3865,6 +4079,33 @@ class AppDb extends _$AppDb {
         reviewState: reviewState == null
             ? const Value.absent()
             : Value(reviewState),
+        sourceRole: Value(
+          _projectRegistrySourceRole(
+            localPath: localPath,
+            reviewState: nextReviewState,
+          ),
+        ),
+        sourceType: Value(
+          _projectRegistrySourceType(localPath: localPath, gitRoot: gitRoot),
+        ),
+        lifecycleState: Value(
+          _projectRegistryLifecycleState(
+            localPath: localPath,
+            reviewState: nextReviewState,
+          ),
+        ),
+        authorityLevel: Value(
+          _projectRegistryAuthorityLevel(
+            localPath: localPath,
+            reviewState: nextReviewState,
+          ),
+        ),
+        normalizedIdentity: Value(
+          _normalizedProjectSourceIdentity(
+            localPath: localPath,
+            gitRoot: gitRoot,
+          ),
+        ),
         notes: notes == null ? const Value.absent() : Value(notes),
         updatedAt: Value(DateTime.now()),
         lastReviewedAt: Value(DateTime.now()),
@@ -3913,6 +4154,24 @@ class AppDb extends _$AppDb {
         ProjectRegistryCompanion(
           atlasProjectId: const Value(null),
           reviewState: const Value('accepted'),
+          sourceRole: Value(
+            _projectRegistrySourceRole(
+              localPath: row.localPath,
+              reviewState: 'accepted',
+            ),
+          ),
+          lifecycleState: Value(
+            _projectRegistryLifecycleState(
+              localPath: row.localPath,
+              reviewState: 'accepted',
+            ),
+          ),
+          authorityLevel: Value(
+            _projectRegistryAuthorityLevel(
+              localPath: row.localPath,
+              reviewState: 'accepted',
+            ),
+          ),
           updatedAt: Value(DateTime.now()),
         ),
       );
@@ -3923,16 +4182,115 @@ class AppDb extends _$AppDb {
     required String registryId,
     required String atlasProjectId,
   }) async {
+    final existing = await getProjectRegistryEntry(registryId);
+    if (existing == null) {
+      throw StateError('Project registry row not found: $registryId');
+    }
     await (update(
       projectRegistry,
     )..where((t) => t.id.equals(registryId))).write(
       ProjectRegistryCompanion(
         atlasProjectId: Value(atlasProjectId),
         reviewState: const Value('linked'),
+        sourceRole: Value(
+          _projectRegistrySourceRole(
+            localPath: existing.localPath,
+            reviewState: 'linked',
+          ),
+        ),
+        lifecycleState: Value(
+          _projectRegistryLifecycleState(
+            localPath: existing.localPath,
+            reviewState: 'linked',
+          ),
+        ),
+        authorityLevel: Value(
+          _projectRegistryAuthorityLevel(
+            localPath: existing.localPath,
+            reviewState: 'linked',
+          ),
+        ),
         updatedAt: Value(DateTime.now()),
         lastReviewedAt: Value(DateTime.now()),
       ),
     );
+  }
+
+  Future<ProjectRegistryEntry> markProjectRegistryEntryPrimarySource({
+    required String registryId,
+  }) async {
+    final selected = await getProjectRegistryEntry(registryId);
+    if (selected == null) {
+      throw StateError('Project registry row not found: $registryId');
+    }
+    final atlasProjectId = selected.atlasProjectId?.trim();
+    if (atlasProjectId == null || atlasProjectId.isEmpty) {
+      throw StateError('Registry row is not linked to an Atlas project.');
+    }
+    if (selected.reviewState == 'ignored') {
+      throw StateError('Ignored registry rows cannot be primary sources.');
+    }
+    if (_isRemoteProjectSourcePath(selected.localPath) ||
+        selected.sourceType == 'remote_url_legacy') {
+      throw StateError('Remote URL registry rows cannot be primary sources.');
+    }
+
+    final now = DateTime.now();
+    await transaction(() async {
+      final siblings = await getProjectRegistryEntriesByAtlasProjectId(
+        atlasProjectId,
+      );
+      for (final sibling in siblings) {
+        if (sibling.reviewState == 'ignored') continue;
+        if (sibling.id == selected.id) {
+          await (update(
+            projectRegistry,
+          )..where((t) => t.id.equals(sibling.id))).write(
+            ProjectRegistryCompanion(
+              reviewState: const Value('linked'),
+              sourceRole: const Value('primary_working'),
+              sourceType: Value(
+                _projectRegistrySourceType(
+                  localPath: sibling.localPath,
+                  gitRoot: sibling.gitRoot,
+                ),
+              ),
+              lifecycleState: const Value('active'),
+              authorityLevel: const Value('evidence_only'),
+              precedence: const Value(0),
+              normalizedIdentity: Value(
+                _normalizedProjectSourceIdentity(
+                  localPath: sibling.localPath,
+                  gitRoot: sibling.gitRoot,
+                ),
+              ),
+              updatedAt: Value(now),
+              lastReviewedAt: Value(now),
+            ),
+          );
+        } else {
+          await (update(
+            projectRegistry,
+          )..where((t) => t.id.equals(sibling.id))).write(
+            ProjectRegistryCompanion(
+              sourceRole: const Value('supporting_evidence'),
+              lifecycleState: const Value('active'),
+              authorityLevel: const Value('evidence_only'),
+              precedence: const Value(100),
+              updatedAt: Value(now),
+            ),
+          );
+        }
+      }
+    });
+
+    final updated = await getProjectRegistryEntry(registryId);
+    if (updated == null) {
+      throw StateError(
+        'Project registry row not found after update: $registryId',
+      );
+    }
+    return updated;
   }
 
   Future<ProjectObservation?> getLatestProjectObservationForPath(
@@ -3964,6 +4322,8 @@ class AppDb extends _$AppDb {
     final raw = _decodeObjectMap(observation.rawJson);
     final now = DateTime.now();
     final registryId = existing?.id ?? _newMicrosId('registry');
+    final localPath = observation.observedPath;
+    final gitRoot = raw['gitRoot']?.toString();
     await into(projectRegistry).insertOnConflictUpdate(
       ProjectRegistryCompanion(
         id: Value(registryId),
@@ -3973,12 +4333,40 @@ class AppDb extends _$AppDb {
         displayName: Value(
           raw['displayName']?.toString().trim().isNotEmpty == true
               ? raw['displayName'].toString()
-              : p.basename(observation.observedPath),
+              : p.basename(localPath),
         ),
-        localPath: Value(observation.observedPath),
-        gitRoot: Value(raw['gitRoot']?.toString()),
+        localPath: Value(localPath),
+        gitRoot: Value(gitRoot),
         classification: Value(observation.classificationGuess),
         reviewState: Value(reviewState),
+        sourceRole: Value(
+          _projectRegistrySourceRole(
+            localPath: localPath,
+            reviewState: reviewState,
+          ),
+        ),
+        sourceType: Value(
+          _projectRegistrySourceType(localPath: localPath, gitRoot: gitRoot),
+        ),
+        lifecycleState: Value(
+          _projectRegistryLifecycleState(
+            localPath: localPath,
+            reviewState: reviewState,
+          ),
+        ),
+        authorityLevel: Value(
+          _projectRegistryAuthorityLevel(
+            localPath: localPath,
+            reviewState: reviewState,
+          ),
+        ),
+        precedence: const Value(100),
+        normalizedIdentity: Value(
+          _normalizedProjectSourceIdentity(
+            localPath: localPath,
+            gitRoot: gitRoot,
+          ),
+        ),
         notes: Value(notes ?? existing?.notes),
         createdAt: Value(existing?.createdAt ?? now),
         updatedAt: Value(now),

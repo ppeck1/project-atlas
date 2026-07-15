@@ -643,10 +643,13 @@ class AtlasAgentService {
   ) async {
     final project = await _visibleProject(projectId);
     if (project == null) return null;
-    final status = await _buildProjectStatus(project);
     final workload = await projectWorkload(projectId, suggestionLimit: 5);
     final capsule = await getProjectCapsuleStatus(projectId);
     final freshness = await _buildProjectFreshness(project, capsule: capsule);
+    final status = await _buildProjectStatus(
+      project,
+      freshnessOverride: freshness,
+    );
     final validation = capsule?.toJson()['validation'];
     final observation = await state.getLatestLocalProjectObservation(projectId);
 
@@ -806,6 +809,15 @@ class AtlasAgentService {
 
   Future<LocalProjectRefreshPreview> previewLocalRefresh(String projectId) =>
       state.previewLocalProjectRefresh(projectId);
+
+  Future<ProjectReconciliationPreview> previewProjectReconciliation(
+    String projectId,
+  ) async {
+    final errors = <String>[];
+    await _validateProject(projectId, errors);
+    if (errors.isNotEmpty) throw StateError(errors.join(' '));
+    return state.previewProjectReconciliation(projectId);
+  }
 
   Future<LocalGitVisibilityReport> inspectGitVisibility(String projectId) =>
       state.inspectLocalGitVisibility(projectId);
@@ -1681,7 +1693,10 @@ class AtlasAgentService {
     return project;
   }
 
-  Future<AtlasProjectStatus> _buildProjectStatus(Project project) async {
+  Future<AtlasProjectStatus> _buildProjectStatus(
+    Project project, {
+    AtlasProjectFreshnessSnapshot? freshnessOverride,
+  }) async {
     final items = await state.getWorkItemsForProject(project.id);
     final activeItems = items
         .where((item) => !{'done', 'archived'}.contains(item.status))
@@ -1706,14 +1721,16 @@ class AtlasAgentService {
           ),
         )
         .length;
-    final freshness = const ProjectFreshnessService().build(
-      project: project,
-      registry: registry,
-      observation: observation,
-      githubRemote: githubRemote,
-      activeWorkItems: activeItems.length,
-      blockedWorkItems: blockedWorkItems,
-    );
+    final freshness =
+        freshnessOverride ??
+        const ProjectFreshnessService().build(
+          project: project,
+          registry: registry,
+          observation: observation,
+          githubRemote: githubRemote,
+          activeWorkItems: activeItems.length,
+          blockedWorkItems: blockedWorkItems,
+        );
 
     return AtlasProjectStatus(
       id: project.id,
@@ -1760,7 +1777,13 @@ class AtlasAgentService {
       capsule: capsule,
       activeWorkItems: activeItems.length,
       blockedWorkItems: activeItems
-          .where((item) => _clean(item.blockedReason) != null)
+          .where(
+            (item) => workloadBlocksProgress(
+              readiness: item.readiness,
+              status: item.status,
+              blockerReason: item.blockedReason,
+            ),
+          )
           .length,
     );
   }
