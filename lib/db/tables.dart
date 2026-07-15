@@ -366,6 +366,16 @@ class ProjectRegistry extends Table {
   TextColumn get gitRoot => text().nullable()();
   TextColumn get classification => text()();
   TextColumn get reviewState => text()();
+  TextColumn get sourceRole =>
+      text().withDefault(const Constant('unresolved_candidate'))();
+  TextColumn get sourceType =>
+      text().withDefault(const Constant('local_path'))();
+  TextColumn get lifecycleState =>
+      text().withDefault(const Constant('active'))();
+  TextColumn get authorityLevel =>
+      text().withDefault(const Constant('candidate'))();
+  IntColumn get precedence => integer().withDefault(const Constant(100))();
+  TextColumn get normalizedIdentity => text().nullable()();
   TextColumn get notes => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();

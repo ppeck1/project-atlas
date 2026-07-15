@@ -136,7 +136,7 @@ void main() {
         'after': after.toJson(),
         'checks': {
           'sourceUserVersionIs19': before.userVersion == 19,
-          'migratedUserVersionIs21': after.userVersion == 21,
+          'migratedUserVersionIs22': after.userVersion == 22,
           'workItemPlanningColumnsPresent': after.hasColumns(
             'work_items',
             _workItemPlanningColumns,
@@ -159,7 +159,7 @@ void main() {
         );
       }
 
-      expect(after.userVersion, 21);
+      expect(after.userVersion, 22);
       expect(after.hasColumns('work_items', _workItemPlanningColumns), isTrue);
       expect(after.hasColumns('llm_task_queue', _queuePlanningColumns), isTrue);
       expect(rowCountsPreserved.values, everyElement(isTrue));

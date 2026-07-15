@@ -130,6 +130,54 @@ DOCUMENTS = (
     ),
 )
 
+PROJECT_SOURCES = (
+    (
+        "registry-portfolio-local",
+        "atlas-portfolio-demo",
+        "Atlas Portfolio Demo",
+        r"C:\AtlasPortfolioCapture\AtlasPortfolioDemo",
+        r"C:\AtlasPortfolioCapture\AtlasPortfolioDemo",
+        "software",
+        "linked",
+        "primary_working",
+        "local_path",
+        "active",
+        "evidence_only",
+        10,
+        r"c:\atlasportfoliocapture\atlasportfoliodemo",
+    ),
+    (
+        "registry-portfolio-legacy-remote",
+        "atlas-portfolio-demo",
+        "Atlas Portfolio Demo",
+        "https://github.com/example/atlas-portfolio-demo",
+        None,
+        "software",
+        "linked",
+        "unresolved_candidate",
+        "remote_url_legacy",
+        "legacy_remote",
+        "blocked_unresolved",
+        100,
+        "https://github.com/example/atlas-portfolio-demo",
+    ),
+    (
+        "registry-release-local",
+        "atlas-release-demo",
+        "Release Readiness Demo",
+        r"C:\AtlasPortfolioCapture\ReleaseReadinessDemo",
+        r"C:\AtlasPortfolioCapture\ReleaseReadinessDemo",
+        "software",
+        "linked",
+        "primary_working",
+        "local_path",
+        "active",
+        "evidence_only",
+        10,
+        r"c:\atlasportfoliocapture\releasereadinessdemo",
+    ),
+)
+
 
 def seed_database(database_path: Path) -> None:
     resolved = database_path.resolve()
@@ -260,6 +308,52 @@ def seed_database(database_path: Path) -> None:
                         now,
                         body,
                         body,
+                    ),
+                )
+
+            for (
+                registry_id,
+                project_id,
+                display_name,
+                local_path,
+                git_root,
+                classification,
+                review_state,
+                source_role,
+                source_type,
+                lifecycle_state,
+                authority_level,
+                precedence,
+                normalized_identity,
+            ) in PROJECT_SOURCES:
+                connection.execute(
+                    """
+                    INSERT INTO project_registry (
+                        id, atlas_project_id, display_name, local_path,
+                        git_root, classification, review_state, source_role,
+                        source_type, lifecycle_state, authority_level,
+                        precedence, normalized_identity, notes, created_at,
+                        updated_at, last_reviewed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL,
+                              ?, ?, ?)
+                    """,
+                    (
+                        registry_id,
+                        project_id,
+                        display_name,
+                        local_path,
+                        git_root,
+                        classification,
+                        review_state,
+                        source_role,
+                        source_type,
+                        lifecycle_state,
+                        authority_level,
+                        precedence,
+                        normalized_identity,
+                        now,
+                        now,
+                        now,
                     ),
                 )
 

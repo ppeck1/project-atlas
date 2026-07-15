@@ -48,9 +48,9 @@ void main() {
   });
 
   test(
-    'schema v21 creates local operations, runtime, git remote, enrichment, and queue tables',
+    'schema v22 creates local operations, source topology, runtime, git remote, enrichment, and queue tables',
     () async {
-      expect(db.schemaVersion, 21);
+      expect(db.schemaVersion, 22);
 
       final tables = await db
           .customSelect(
@@ -73,6 +73,89 @@ void main() {
       expect(tableNames, contains('work_item_tags'));
       expect(tableNames, contains('project_runtime_profiles'));
       expect(tableNames, contains('project_runtime_runs'));
+
+      final projectRegistryColumns = await db
+          .customSelect('PRAGMA table_info(project_registry)')
+          .get();
+      final columnNames = projectRegistryColumns
+          .map((row) => row.data['name'])
+          .toSet();
+      expect(columnNames, contains('source_role'));
+      expect(columnNames, contains('source_type'));
+      expect(columnNames, contains('lifecycle_state'));
+      expect(columnNames, contains('authority_level'));
+      expect(columnNames, contains('precedence'));
+      expect(columnNames, contains('normalized_identity'));
+    },
+  );
+
+  test(
+    'schema v21 migration backfills project source topology safely',
+    () async {
+      final dbPath = p.join(tempDir.path, 'schema21_source_topology.sqlite');
+      final legacy = sqlite3.sqlite3.open(dbPath);
+      final now =
+          DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+      try {
+        legacy.execute('PRAGMA user_version = 21');
+        legacy.execute('''
+        CREATE TABLE project_registry (
+          id TEXT NOT NULL PRIMARY KEY,
+          atlas_project_id TEXT NULL,
+          display_name TEXT NOT NULL,
+          local_path TEXT NOT NULL UNIQUE,
+          git_root TEXT NULL,
+          classification TEXT NOT NULL,
+          review_state TEXT NOT NULL,
+          notes TEXT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          last_reviewed_at INTEGER NULL
+        )
+      ''');
+        legacy.execute(
+          '''INSERT INTO project_registry (
+             id, atlas_project_id, display_name, local_path, git_root,
+             classification, review_state, notes, created_at, updated_at,
+             last_reviewed_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+          [
+            'legacy-source-1',
+            'atlas-project-1',
+            'Legacy Source',
+            'https://github.com/example/repo.git',
+            null,
+            'software',
+            'accepted',
+            null,
+            now,
+            now,
+            now,
+          ],
+        );
+      } finally {
+        legacy.dispose();
+      }
+
+      final migrated = AppDb.withExecutor(NativeDatabase(File(dbPath)));
+      try {
+        final rows = await migrated.getProjectRegistry();
+        final row = rows.single;
+
+        expect(migrated.schemaVersion, 22);
+        expect(row.id, 'legacy-source-1');
+        expect(row.localPath, 'https://github.com/example/repo.git');
+        expect(row.atlasProjectId, 'atlas-project-1');
+        expect(row.sourceRole, 'unresolved_candidate');
+        expect(row.sourceType, 'remote_url_legacy');
+        expect(row.lifecycleState, 'legacy_remote');
+        expect(row.authorityLevel, 'blocked_unresolved');
+        expect(row.precedence, 100);
+        expect(row.normalizedIdentity, 'https://github.com/example/repo.git');
+      } finally {
+        await migrated.close();
+      }
     },
   );
 
@@ -137,6 +220,14 @@ void main() {
           lastImportedAt: DateTime(2026, 1, 2),
         );
 
+        final registry = await migrated.getProjectRegistryEntry(registryId);
+        expect(registry, isNotNull);
+        expect(registry!.sourceRole, 'primary_working');
+        expect(registry.sourceType, 'local_path');
+        expect(registry.lifecycleState, 'active');
+        expect(registry.authorityLevel, 'evidence_only');
+        expect(registry.precedence, 100);
+        expect(registry.normalizedIdentity, isNotEmpty);
         expect(refreshItem, isNotNull);
         expect(refreshItem!.registryId, registryId);
       } finally {
@@ -1318,6 +1409,11 @@ Pressure flakes a useful edge.
       final coverage = result.run.output['coverage'] as Map;
 
       expect(result.run.linkedProjects, 1);
+      expect(result.run.linkedSources, 1);
+      expect(result.run.distinctLinkedProjects, 1);
+      expect(result.run.toJson()['linkedSources'], 1);
+      expect(result.run.toJson()['linkedProjects'], 1);
+      expect(result.run.toJson()['distinctLinkedProjects'], 1);
       expect(result.run.createdItems, greaterThan(0));
       expect(result.run.findings, result.findings.length);
       expect(result.steps, isNotEmpty);
@@ -2192,6 +2288,8 @@ Pressure flakes a useful edge.
       final titles = result.findings.map((finding) => finding.title).toSet();
 
       expect(result.run.status, 'completed_with_findings');
+      expect(result.run.linkedSources, 2);
+      expect(result.run.distinctLinkedProjects, 1);
       expect(
         titles,
         contains(
@@ -2199,6 +2297,550 @@ Pressure flakes a useful edge.
         ),
       );
       expect(steps.where((step) => step.status == 'running'), isEmpty);
+    },
+  );
+
+  test(
+    'project enrichment reports source topology preflight findings',
+    () async {
+      final now =
+          DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+      final missingPrimary = Directory(p.join(tempDir.path, 'non_primary'))
+        ..createSync(recursive: true);
+      final primaryOne = Directory(p.join(tempDir.path, 'primary_one'))
+        ..createSync(recursive: true);
+      final primaryTwo = Directory(p.join(tempDir.path, 'primary_two'))
+        ..createSync(recursive: true);
+      final identityOne = Directory(p.join(tempDir.path, 'identity_one'))
+        ..createSync(recursive: true);
+      final identityTwo = Directory(p.join(tempDir.path, 'identity_two'))
+        ..createSync(recursive: true);
+
+      for (final project in [
+        ('missing-primary-project', 'Missing Primary'),
+        ('multi-primary-project', 'Multi Primary'),
+        ('identity-project-1', 'Identity One'),
+        ('identity-project-2', 'Identity Two'),
+        ('remote-legacy-project', 'Remote Legacy'),
+      ]) {
+        await db.createProject(project.$1, project.$2, DateTime(2026));
+      }
+
+      Future<void> insertSource({
+        required String id,
+        required String projectId,
+        required String displayName,
+        required String localPath,
+        required String sourceRole,
+        required String sourceType,
+        required String lifecycleState,
+        required String authorityLevel,
+        required String normalizedIdentity,
+      }) async {
+        await db.customStatement(
+          '''INSERT INTO project_registry (
+               id, atlas_project_id, display_name, local_path, git_root,
+               classification, review_state, source_role, source_type,
+               lifecycle_state, authority_level, precedence,
+               normalized_identity, notes, created_at, updated_at,
+               last_reviewed_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+          [
+            id,
+            projectId,
+            displayName,
+            localPath,
+            null,
+            'software',
+            'linked',
+            sourceRole,
+            sourceType,
+            lifecycleState,
+            authorityLevel,
+            100,
+            normalizedIdentity,
+            null,
+            now,
+            now,
+            now,
+          ],
+        );
+      }
+
+      await insertSource(
+        id: 'registry_non_primary',
+        projectId: 'missing-primary-project',
+        displayName: 'Non Primary',
+        localPath: missingPrimary.path,
+        sourceRole: 'unresolved_candidate',
+        sourceType: 'local_path',
+        lifecycleState: 'active',
+        authorityLevel: 'candidate',
+        normalizedIdentity: missingPrimary.path.toLowerCase(),
+      );
+      await insertSource(
+        id: 'registry_primary_1',
+        projectId: 'multi-primary-project',
+        displayName: 'Primary One',
+        localPath: primaryOne.path,
+        sourceRole: 'primary_working',
+        sourceType: 'local_path',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        normalizedIdentity: primaryOne.path.toLowerCase(),
+      );
+      await insertSource(
+        id: 'registry_primary_2',
+        projectId: 'multi-primary-project',
+        displayName: 'Primary Two',
+        localPath: primaryTwo.path,
+        sourceRole: 'primary_working',
+        sourceType: 'local_path',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        normalizedIdentity: primaryTwo.path.toLowerCase(),
+      );
+      const duplicateIdentity = 'local:shared-normalized-identity';
+      await insertSource(
+        id: 'registry_identity_1',
+        projectId: 'identity-project-1',
+        displayName: 'Identity One',
+        localPath: identityOne.path,
+        sourceRole: 'primary_working',
+        sourceType: 'local_path',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        normalizedIdentity: duplicateIdentity,
+      );
+      await insertSource(
+        id: 'registry_identity_2',
+        projectId: 'identity-project-2',
+        displayName: 'Identity Two',
+        localPath: identityTwo.path,
+        sourceRole: 'primary_working',
+        sourceType: 'local_path',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        normalizedIdentity: duplicateIdentity,
+      );
+      await insertSource(
+        id: 'registry_remote_legacy',
+        projectId: 'remote-legacy-project',
+        displayName: 'Remote Legacy',
+        localPath: 'https://github.com/example-owner/sample-repository',
+        sourceRole: 'unresolved_candidate',
+        sourceType: 'remote_url_legacy',
+        lifecycleState: 'legacy_remote',
+        authorityLevel: 'blocked_unresolved',
+        normalizedIdentity:
+            'https://github.com/example-owner/sample-repository',
+      );
+
+      final result = await state.runProjectEnrichment(
+        refreshLinkedProjects: false,
+        analyzeOnly: true,
+        refreshSummaries: false,
+      );
+      final byTitle = {
+        for (final finding in result.findings)
+          if (finding.category == 'source_topology') finding.title: finding,
+      };
+      final missingPrimaryFinding = result.findings.singleWhere(
+        (finding) =>
+            finding.category == 'source_topology' &&
+            finding.title == 'Project has no active primary working source.' &&
+            finding.projectId == 'missing-primary-project',
+      );
+      final remoteUnresolved = result.findings.singleWhere(
+        (finding) =>
+            finding.category == 'source_topology' &&
+            finding.title ==
+                'Source topology is unresolved for this project.' &&
+            finding.registryId == 'registry_remote_legacy',
+      );
+      final coverage = result.run.output['coverage'] as Map;
+      final sourceTopology = coverage['sourceTopology'] as Map;
+
+      expect(result.run.status, 'analyzed_with_findings');
+      expect(missingPrimaryFinding.projectId, 'missing-primary-project');
+      expect(
+        missingPrimaryFinding.evidence['linkedRegistryIds'],
+        contains('registry_non_primary'),
+      );
+      expect(
+        byTitle['Project has multiple active primary working sources.']
+            ?.projectId,
+        'multi-primary-project',
+      );
+      expect(
+        byTitle['Project has multiple active primary working sources.']
+            ?.evidence['primaryRegistryIds'],
+        containsAll(['registry_primary_1', 'registry_primary_2']),
+      );
+      expect(
+        byTitle['Multiple source rows share the same normalized identity.']
+            ?.evidence['normalizedIdentity'],
+        duplicateIdentity,
+      );
+      expect(remoteUnresolved.registryId, 'registry_remote_legacy');
+      expect(sourceTopology['activePrimarySources'], 4);
+      expect(sourceTopology['unresolvedSources'], 2);
+      expect(sourceTopology['legacyRemoteSources'], 1);
+      expect(sourceTopology['duplicateNormalizedIdentities'], 1);
+    },
+  );
+
+  test(
+    'project reconciliation preview blocks unresolved source topology',
+    () async {
+      await db.createProject(
+        'remote-legacy-project',
+        'Remote Legacy',
+        DateTime(2026),
+      );
+      final now =
+          DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+      await db.customStatement(
+        '''INSERT INTO project_registry (
+             id, atlas_project_id, display_name, local_path, git_root,
+             classification, review_state, source_role, source_type,
+             lifecycle_state, authority_level, precedence,
+             normalized_identity, notes, created_at, updated_at,
+             last_reviewed_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        [
+          'registry_remote_legacy_reconcile',
+          'remote-legacy-project',
+          'Remote Legacy',
+          'https://github.com/example/remote-legacy',
+          null,
+          'software',
+          'linked',
+          'unresolved_candidate',
+          'remote_url_legacy',
+          'legacy_remote',
+          'blocked_unresolved',
+          100,
+          'remote:https://github.com/example/remote-legacy',
+          null,
+          now,
+          now,
+          now,
+        ],
+      );
+
+      final preview = await state.previewProjectReconciliation(
+        'remote-legacy-project',
+      );
+      final ledgers = await db.select(db.localProjectRefreshItems).get();
+
+      expect(preview.outcome, 'blocked');
+      expect(preview.sourceReposMutated, isFalse);
+      expect(preview.writeBoundary, 'atlas_only_preview');
+      expect(preview.localRefreshPreview, isNull);
+      expect(
+        preview.channels
+            .singleWhere((channel) => channel.name == 'source_topology')
+            .status,
+        'blocked',
+      );
+      expect(preview.blockers.join('\n'), contains('legacy remote'));
+      expect(ledgers, isEmpty);
+    },
+  );
+
+  test(
+    'marking a local registry row primary resolves source topology blockers',
+    () async {
+      final root = _makeOperationsCandidate(tempDir);
+      await db.createProject(
+        'topology-resolution-project',
+        'Topology Resolution',
+        DateTime(2026),
+      );
+      final now =
+          DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+      Future<void> insertSource({
+        required String id,
+        required String displayName,
+        required String localPath,
+        required String sourceRole,
+        required String sourceType,
+        required String lifecycleState,
+        required String authorityLevel,
+        required String normalizedIdentity,
+      }) async {
+        await db.customStatement(
+          '''INSERT INTO project_registry (
+             id, atlas_project_id, display_name, local_path, git_root,
+             classification, review_state, source_role, source_type,
+             lifecycle_state, authority_level, precedence,
+             normalized_identity, notes, created_at, updated_at,
+             last_reviewed_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+          [
+            id,
+            'topology-resolution-project',
+            displayName,
+            localPath,
+            sourceType == 'local_path' ? localPath : null,
+            'software',
+            'linked',
+            sourceRole,
+            sourceType,
+            lifecycleState,
+            authorityLevel,
+            100,
+            normalizedIdentity,
+            null,
+            now,
+            now,
+            now,
+          ],
+        );
+      }
+
+      await insertSource(
+        id: 'registry-local-unresolved',
+        displayName: 'Local Unresolved',
+        localPath: root.path,
+        sourceRole: 'unresolved_candidate',
+        sourceType: 'local_path',
+        lifecycleState: 'active',
+        authorityLevel: 'candidate',
+        normalizedIdentity: root.path.toLowerCase(),
+      );
+      await insertSource(
+        id: 'registry-remote-legacy',
+        displayName: 'Remote Legacy',
+        localPath: 'https://github.com/example/legacy',
+        sourceRole: 'unresolved_candidate',
+        sourceType: 'remote_url_legacy',
+        lifecycleState: 'legacy_remote',
+        authorityLevel: 'blocked_unresolved',
+        normalizedIdentity: 'remote:https://github.com/example/legacy',
+      );
+
+      final before = await state.previewProjectReconciliation(
+        'topology-resolution-project',
+      );
+      final updated = await state.markProjectRegistryEntryPrimarySource(
+        'registry-local-unresolved',
+      );
+      final rows = await db.getProjectRegistryEntriesByAtlasProjectId(
+        'topology-resolution-project',
+      );
+      final after = await state.previewProjectReconciliation(
+        'topology-resolution-project',
+      );
+      final topology = after.channels.singleWhere(
+        (channel) => channel.name == 'source_topology',
+      );
+      final remote = rows.singleWhere(
+        (row) => row.id == 'registry-remote-legacy',
+      );
+
+      expect(before.outcome, 'blocked');
+      expect(updated.sourceRole, 'primary_working');
+      expect(updated.lifecycleState, 'active');
+      expect(updated.authorityLevel, 'evidence_only');
+      expect(updated.precedence, 0);
+      expect(remote.sourceRole, 'supporting_evidence');
+      expect(remote.lifecycleState, 'active');
+      expect(remote.authorityLevel, 'evidence_only');
+      expect(topology.status, 'eligible');
+      expect(topology.blockers, isEmpty);
+      expect(after.blockers, isEmpty);
+    },
+  );
+
+  test('ignoring a registry source clears a legacy remote blocker', () async {
+    final root = _makeOperationsCandidate(tempDir);
+    await db.createProject(
+      'ignore-source-project',
+      'Ignore Source',
+      DateTime(2026),
+    );
+    final now =
+        DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
+        Duration.millisecondsPerSecond;
+    for (final source in [
+      (
+        'registry-valid-primary',
+        'Valid Primary',
+        root.path,
+        root.path,
+        'primary_working',
+        'local_path',
+        'active',
+        'evidence_only',
+        root.path.toLowerCase(),
+      ),
+      (
+        'registry-legacy-blocker',
+        'Legacy Blocker',
+        'https://github.com/example/legacy-blocker',
+        null,
+        'unresolved_candidate',
+        'remote_url_legacy',
+        'legacy_remote',
+        'blocked_unresolved',
+        'remote:https://github.com/example/legacy-blocker',
+      ),
+    ]) {
+      await db.customStatement(
+        '''INSERT INTO project_registry (
+             id, atlas_project_id, display_name, local_path, git_root,
+             classification, review_state, source_role, source_type,
+             lifecycle_state, authority_level, precedence,
+             normalized_identity, notes, created_at, updated_at,
+             last_reviewed_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        [
+          source.$1,
+          'ignore-source-project',
+          source.$2,
+          source.$3,
+          source.$4,
+          'software',
+          'linked',
+          source.$5,
+          source.$6,
+          source.$7,
+          source.$8,
+          100,
+          source.$9,
+          null,
+          now,
+          now,
+          now,
+        ],
+      );
+    }
+
+    final before = await state.previewProjectReconciliation(
+      'ignore-source-project',
+    );
+    final ignored = await state.ignoreProjectRegistrySource(
+      'registry-legacy-blocker',
+    );
+    final after = await state.previewProjectReconciliation(
+      'ignore-source-project',
+    );
+    final topology = after.channels.singleWhere(
+      (channel) => channel.name == 'source_topology',
+    );
+
+    expect(before.outcome, 'blocked');
+    expect(ignored.reviewState, 'ignored');
+    expect(ignored.atlasProjectId, isNull);
+    expect(topology.status, 'eligible');
+    expect(after.blockers, isEmpty);
+  });
+
+  test(
+    'replacing a legacy remote source folder makes it local primary',
+    () async {
+      final replacement = _makeOperationsCandidate(tempDir);
+      await db.createProject(
+        'replace-source-project',
+        'Replace Source',
+        DateTime(2026),
+      );
+      final now =
+          DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+      await db.customStatement(
+        '''INSERT INTO project_registry (
+             id, atlas_project_id, display_name, local_path, git_root,
+             classification, review_state, source_role, source_type,
+             lifecycle_state, authority_level, precedence,
+             normalized_identity, notes, created_at, updated_at,
+             last_reviewed_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        [
+          'registry-replace-legacy',
+          'replace-source-project',
+          'Replace Legacy',
+          'https://github.com/example/replace-legacy',
+          null,
+          'software',
+          'linked',
+          'unresolved_candidate',
+          'remote_url_legacy',
+          'legacy_remote',
+          'blocked_unresolved',
+          100,
+          'remote:https://github.com/example/replace-legacy',
+          null,
+          now,
+          now,
+          now,
+        ],
+      );
+
+      final updated = await state.replaceProjectRegistrySourceFolder(
+        registryId: 'registry-replace-legacy',
+        selectedPath: replacement.path,
+      );
+      final preview = await state.previewProjectReconciliation(
+        'replace-source-project',
+      );
+      final topology = preview.channels.singleWhere(
+        (channel) => channel.name == 'source_topology',
+      );
+
+      expect(updated.localPath, replacement.path);
+      expect(updated.sourceType, 'local_path');
+      expect(updated.sourceRole, 'primary_working');
+      expect(updated.lifecycleState, 'active');
+      expect(updated.authorityLevel, 'evidence_only');
+      expect(topology.status, 'eligible');
+    },
+  );
+
+  test(
+    'project reconciliation preview reports eligible Atlas-only refresh work',
+    () async {
+      final root = _makeOperationsCandidate(tempDir);
+      final runId = await state.runLocalOperationsScan(
+        scanner: LocalOperationsScanner(roots: [tempDir.path], maxDepth: 2),
+      );
+      final observation = (await db.getProjectObservationsForScanRun(
+        runId,
+      )).singleWhere((row) => row.observedPath == root.path);
+      await state.acceptProjectObservation(observation.id);
+      final registry = (await db.getProjectRegistry()).single;
+      final projectId = await state.importProjectRegistryEntryAsProject(
+        registry.id,
+        refresh: false,
+      );
+
+      final beforeLedgers = await db.select(db.localProjectRefreshItems).get();
+      final preview = await state.previewProjectReconciliation(projectId);
+      final afterLedgers = await db.select(db.localProjectRefreshItems).get();
+      final topology = preview.channels.singleWhere(
+        (channel) => channel.name == 'source_topology',
+      );
+      final localRefresh = preview.channels.singleWhere(
+        (channel) => channel.name == 'local_refresh_preview',
+      );
+
+      expect(preview.projectId, projectId);
+      expect(preview.outcome, anyOf('partial', 'current'));
+      expect(preview.sourceReposMutated, isFalse);
+      expect(preview.writeBoundary, 'atlas_only_preview');
+      expect(preview.localRefreshPreview, isNotNull);
+      expect(preview.refreshableActions, greaterThan(0));
+      expect(topology.status, 'eligible');
+      expect(topology.eligible, 1);
+      expect(localRefresh.processed, greaterThan(0));
+      expect(localRefresh.eligible, preview.refreshableActions);
+      expect(beforeLedgers, isEmpty);
+      expect(afterLedgers, isEmpty);
     },
   );
 

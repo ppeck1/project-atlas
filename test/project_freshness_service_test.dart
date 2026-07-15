@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_atlas/db/app_db.dart';
+import 'package:project_atlas/services/project_identity_resolver.dart';
 import 'package:project_atlas/services/project_freshness_service.dart';
 
 void main() {
@@ -22,6 +23,11 @@ void main() {
         gitRoot: r'C:\Projects\Project_Atlas\project-atlas-main',
         classification: 'software',
         reviewState: 'linked',
+        sourceRole: 'primary_working',
+        sourceType: 'local_git',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        precedence: 100,
         createdAt: DateTime(2026, 6, 29),
         updatedAt: DateTime(2026, 6, 29),
       );
@@ -81,6 +87,11 @@ void main() {
         gitRoot: r'C:\Projects\Project_Atlas\project-atlas-main',
         classification: 'software',
         reviewState: 'linked',
+        sourceRole: 'primary_working',
+        sourceType: 'local_git',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        precedence: 100,
         createdAt: DateTime(2026, 7, 8),
         updatedAt: DateTime(2026, 7, 8),
       );
@@ -136,6 +147,153 @@ void main() {
       expect(snapshot.localObservation['evidenceSource'], 'direct_scan');
     });
 
+    test('does not mark fresh project stale for missing capsule metadata', () {
+      final project = Project(
+        id: 'atlas',
+        title: 'Project Atlas',
+        createdAt: DateTime(2026, 6, 29),
+        status: 'active',
+        priority: 'normal',
+      );
+      final registry = ProjectRegistryEntry(
+        id: 'registry-atlas',
+        atlasProjectId: 'atlas',
+        displayName: 'Project Atlas',
+        localPath: r'C:\Projects\Project_Atlas\project-atlas-main',
+        gitRoot: r'C:\Projects\Project_Atlas\project-atlas-main',
+        classification: 'software',
+        reviewState: 'linked',
+        sourceRole: 'primary_working',
+        sourceType: 'local_git',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        precedence: 100,
+        createdAt: DateTime(2026, 7, 8),
+        updatedAt: DateTime(2026, 7, 8),
+      );
+      final observation = ProjectObservation(
+        id: 'obs-atlas',
+        registryId: registry.id,
+        scanRunId: 'scan-1',
+        observedPath: registry.localPath,
+        classificationGuess: 'software',
+        confidence: 95,
+        branch: 'main',
+        headSha: 'abc',
+        dirtyCount: 0,
+        remoteUrl: null,
+        markerFilesJson: '[]',
+        warningsJson: '[]',
+        rawJson: '{}',
+        observedAt: DateTime(2026, 7, 8, 9),
+      );
+      const capsule = AtlasCapsuleStatus(
+        projectId: 'atlas',
+        localPath: r'C:\Projects\Project_Atlas\project-atlas-main',
+        evidenceAvailability: 'metadata_missing',
+        projectManifest: null,
+        opsCapsule: null,
+        counts: {},
+        warnings: ['Capsule metadata files are missing or unreadable.'],
+        errors: [],
+      );
+
+      final snapshot = const ProjectFreshnessService().build(
+        project: project,
+        registry: registry,
+        observation: observation,
+        githubRemote: null,
+        capsule: capsule,
+        activeWorkItems: 1,
+        blockedWorkItems: 0,
+        now: DateTime(2026, 7, 8, 10),
+      );
+
+      expect(snapshot.status, 'current');
+      expect(
+        snapshot.staleReasons,
+        isNot(contains('capsule_metadata_missing')),
+      );
+      expect(snapshot.capsule['status'], 'unknown');
+      expect(snapshot.capsule['evidenceAvailability'], 'metadata_missing');
+      expect(
+        snapshot.actionRequiredBeforePlanning,
+        'No freshness preflight action is required.',
+      );
+    });
+
+    test('keeps capsule errors as stale freshness blockers', () {
+      final project = Project(
+        id: 'atlas',
+        title: 'Project Atlas',
+        createdAt: DateTime(2026, 6, 29),
+        status: 'active',
+        priority: 'normal',
+      );
+      final registry = ProjectRegistryEntry(
+        id: 'registry-atlas',
+        atlasProjectId: 'atlas',
+        displayName: 'Project Atlas',
+        localPath: r'C:\Projects\Project_Atlas\project-atlas-main',
+        gitRoot: r'C:\Projects\Project_Atlas\project-atlas-main',
+        classification: 'software',
+        reviewState: 'linked',
+        sourceRole: 'primary_working',
+        sourceType: 'local_git',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        precedence: 100,
+        createdAt: DateTime(2026, 7, 8),
+        updatedAt: DateTime(2026, 7, 8),
+      );
+      final observation = ProjectObservation(
+        id: 'obs-atlas',
+        registryId: registry.id,
+        scanRunId: 'scan-1',
+        observedPath: registry.localPath,
+        classificationGuess: 'software',
+        confidence: 95,
+        branch: 'main',
+        headSha: 'abc',
+        dirtyCount: 0,
+        remoteUrl: null,
+        markerFilesJson: '[]',
+        warningsJson: '[]',
+        rawJson: '{}',
+        observedAt: DateTime(2026, 7, 8, 9),
+      );
+      const capsule = AtlasCapsuleStatus(
+        projectId: 'atlas',
+        localPath: r'C:\Projects\Project_Atlas\project-atlas-main',
+        evidenceAvailability: 'metadata_missing',
+        projectManifest: null,
+        opsCapsule: null,
+        counts: {},
+        warnings: [],
+        errors: ['invalid JSON'],
+      );
+
+      final snapshot = const ProjectFreshnessService().build(
+        project: project,
+        registry: registry,
+        observation: observation,
+        githubRemote: null,
+        capsule: capsule,
+        activeWorkItems: 1,
+        blockedWorkItems: 0,
+        now: DateTime(2026, 7, 8, 10),
+      );
+
+      expect(snapshot.status, 'stale');
+      expect(snapshot.staleReasons, contains('capsule_errors'));
+      expect(snapshot.attentionReasons, contains('capsule_errors'));
+      expect(snapshot.capsule['status'], 'blocked');
+      expect(
+        snapshot.actionRequiredBeforePlanning,
+        'Resolve capsule metadata before agent startup.',
+      );
+    });
+
     test('normalizes impossible local observation timestamps', () {
       final project = Project(
         id: 'atlas',
@@ -152,6 +310,11 @@ void main() {
         gitRoot: r'C:\Projects\Project_Atlas\project-atlas-main',
         classification: 'software',
         reviewState: 'linked',
+        sourceRole: 'primary_working',
+        sourceType: 'local_git',
+        lifecycleState: 'active',
+        authorityLevel: 'evidence_only',
+        precedence: 100,
         createdAt: DateTime(2026, 7, 8),
         updatedAt: DateTime(2026, 7, 8),
       );

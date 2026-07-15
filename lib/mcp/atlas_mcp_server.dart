@@ -191,6 +191,12 @@ class AtlasMcpAdapter {
       inputSchema: _projectIdSchema,
     ),
     AtlasMcpTool(
+      name: 'atlas.project_reconciliation_preview',
+      description:
+          'Preview project reconciliation readiness and blockers. Read-only; does not mutate source repositories or Atlas records.',
+      inputSchema: _projectIdSchema,
+    ),
+    AtlasMcpTool(
       name: 'inspect_git_visibility',
       description:
           'Inspect read-only local git visibility for a linked registry project.',
@@ -531,6 +537,10 @@ class AtlasMcpAdapter {
       'preview_local_refresh' => _refreshPreviewToJson(
         await agent.previewLocalRefresh(_requiredString(args, 'projectId')),
       ),
+      'atlas.project_reconciliation_preview' =>
+        (await agent.previewProjectReconciliation(
+          _requiredString(args, 'projectId'),
+        )).toJson(),
       'inspect_git_visibility' => _gitReportToJson(
         await agent.inspectGitVisibility(_requiredString(args, 'projectId')),
       ),

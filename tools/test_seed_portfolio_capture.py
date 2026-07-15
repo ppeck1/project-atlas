@@ -64,6 +64,25 @@ CREATE TABLE app_meta (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
 );
+CREATE TABLE project_registry (
+  id TEXT PRIMARY KEY NOT NULL,
+  atlas_project_id TEXT,
+  display_name TEXT NOT NULL,
+  local_path TEXT NOT NULL UNIQUE,
+  git_root TEXT,
+  classification TEXT NOT NULL,
+  review_state TEXT NOT NULL,
+  source_role TEXT NOT NULL DEFAULT 'unresolved_candidate',
+  source_type TEXT NOT NULL DEFAULT 'local_path',
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  authority_level TEXT NOT NULL DEFAULT 'candidate',
+  precedence INTEGER NOT NULL DEFAULT 100,
+  normalized_identity TEXT,
+  notes TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_reviewed_at INTEGER
+);
 """
 
 
@@ -91,6 +110,22 @@ class SeedPortfolioCaptureTest(unittest.TestCase):
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0],
                 4,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM project_registry"
+                ).fetchone()[0],
+                3,
+            )
+            self.assertEqual(
+                connection.execute(
+                    """
+                    SELECT source_type
+                    FROM project_registry
+                    WHERE id = 'registry-portfolio-legacy-remote'
+                    """
+                ).fetchone()[0],
+                "remote_url_legacy",
             )
             self.assertEqual(
                 connection.execute(

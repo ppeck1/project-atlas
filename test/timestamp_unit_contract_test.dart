@@ -9,7 +9,7 @@ import 'package:sqlite3/sqlite3.dart' as sqlite3;
 
 void main() {
   test(
-    'schema v21 installs insert and update guards for every Drift timestamp',
+    'schema v22 installs insert and update guards for every Drift timestamp',
     () async {
       final db = AppDb.withExecutor(NativeDatabase.memory());
       try {
@@ -88,10 +88,10 @@ void main() {
   );
 
   test(
-    'schema v21 repairs legacy milliseconds once and preserves custom ms',
+    'schema v22 repairs legacy milliseconds once and preserves custom ms',
     () async {
       final temp = await Directory.systemTemp.createTemp(
-        'atlas_timestamp_v21_',
+        'atlas_timestamp_v22_',
       );
       final path = p.join(temp.path, 'migration.sqlite');
       try {
@@ -171,7 +171,7 @@ void main() {
             'ok',
           );
           expect(verified.select('PRAGMA foreign_key_check'), isEmpty);
-          expect(verified.userVersion, 21);
+          expect(verified.userVersion, 22);
         } finally {
           verified.dispose();
         }

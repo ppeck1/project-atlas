@@ -4,7 +4,7 @@ This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
 contact data, machine-specific paths, and unrelated project references.
 
-Last updated: 2026-07-14.
+Last updated: 2026-07-15.
 
 ## Current public state
 
@@ -16,6 +16,9 @@ Last updated: 2026-07-14.
 - Public authorship: Paul Peck / `ppeck1`
 - README images: captures of the real Windows application using an isolated
   public-safe demo database
+- Current source-topology line: schema `22` with Project Sources,
+  reconciliation preview, local/remote source roles, and Atlas-only source
+  bookkeeping updates
 
 ## Portfolio maintenance invariants
 
@@ -30,6 +33,8 @@ Last updated: 2026-07-14.
 8. Prefer current generic integration names, but preserve compatible persisted
    settings and structurally valid project metadata when exactly one older
    candidate exists. Current names win; ambiguous fallbacks fail closed.
+9. Reconciliation previews may update Atlas records after operator review, but
+   they must not mutate the linked source repositories.
 
 ## Screenshot refresh procedure
 
@@ -55,6 +60,8 @@ Use an ignored local directory whose name includes `portfolio-capture`.
    resolve the wrong build.
 6. Visually inspect every saved image and verify dimensions, metadata, visible
    text, repository diff, and privacy canaries before staging.
+7. Include the Operations Project Sources surface when source topology or
+   reconciliation behavior changes.
 
 The capture seeder is fail-closed: it requires an Atlas-initialized database,
 requires `portfolio-capture` in the path, and refuses a database that already
