@@ -4,7 +4,7 @@ This matrix describes the configuration variables used by the current public
 Project Atlas source. It intentionally contains names, defaults, and handling
 rules only—never live values, credentials, or machine-specific paths.
 
-Last reviewed: 2026-07-14.
+Last reviewed: 2026-07-15.
 
 ## Build-time Dart definitions
 
@@ -50,7 +50,8 @@ server, and exactly one token-validation mechanism: JWKS or introspection.
 `tools/seed_portfolio_capture.py` takes an explicit `--db` argument instead of
 an environment variable. It refuses paths that do not contain
 `portfolio-capture`, requires an Atlas-initialized schema, and refuses to seed a
-database that already contains projects, work items, or documents.
+database that already contains projects, work items, or documents. The fixture
+also seeds public-safe Project Sources rows for Operations screenshots.
 
 ## In-application settings
 

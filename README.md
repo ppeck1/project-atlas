@@ -21,7 +21,7 @@ from the running application using an isolated, public-safe demo database._
 |---|---|
 | Product design | One desktop workflow spanning Today, Workboard, Projects, Operations, Library, Review, and Settings |
 | Desktop engineering | Flutter for Windows, responsive information-dense surfaces, navigation, dialogs, and long-lived local state |
-| Data integrity | Drift/SQLite persistence, schema migrations, timestamp contracts, linked documents, and repository-style queries |
+| Data integrity | Drift/SQLite persistence, schema migrations, timestamp contracts, linked sources, documents, and repository-style queries |
 | Governed automation | Operator-defined runtime actions, proposal-first AI writes, leases, review drafts, and auditable outcomes |
 | Security boundaries | Local-first storage, no telemetry, ignored local policy files, and a deny-by-default remote MCP projection |
 | Delivery discipline | Automated analysis, unit/widget/policy tests, Windows release builds, artifact scanning, and MCP smoke coverage |
@@ -44,6 +44,15 @@ first-class planning fields rather than free-form conventions.
 
 ![Project Atlas Workboard screen](docs/screenshots/workboard.jpg)
 
+### Reconcile project sources before refreshing evidence
+
+Operations separates canonical Atlas projects from the source rows that support
+them. Source topology chips make local working folders, legacy remote URLs,
+ignored rows, and unresolved authority visible before a refresh can change
+Atlas bookkeeping.
+
+![Project Atlas Operations Project Sources screen](docs/screenshots/operations-project-sources.jpg)
+
 ### Keep source material beside the work
 
 The Library imports and previews project-linked documents while preserving the
@@ -59,7 +68,7 @@ available without turning a project brief into an untraceable summary.
 - A workload model that distinguishes execution-ready work from blocked,
   stale, review-dependent, and decision-dependent items.
 - Project discovery and health review with shallow scans, candidate triage,
-  refresh previews, findings, and operator acceptance.
+  source topology, reconciliation previews, findings, and operator acceptance.
 - Searchable document and media import with format-aware extraction and
   Markdown previews.
 - Runtime profiles for launch, stop, test, URL, port, and health-check actions.

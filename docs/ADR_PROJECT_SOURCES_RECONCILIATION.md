@@ -1,6 +1,6 @@
 # ADR: Project Sources, Reconciliation, and Freshness Projection Consistency
 
-Status: Proposed
+Status: Accepted; MVP implemented in schema 22
 
 Date: 2026-07-15
 
@@ -33,6 +33,11 @@ project as stale due to `capsule_metadata_missing`.
 Project Atlas will introduce an explicit `ProjectSource` concept and a
 project-scoped reconciliation contract. A source is evidence for a project; it
 is not itself a project.
+
+The schema 22 implementation keeps the persisted table name
+`project_registry`, adds explicit source-topology fields, exposes Project
+Sources in Operations, adds an Atlas-only reconciliation preview, and keeps
+semantic identity writes proposal-first.
 
 `General Tasks` remains a normal project. It is miscellaneous work, not a
 system container, and should be counted in project totals.
@@ -214,7 +219,7 @@ Future schema work must preserve these invariants:
    - public mirror plus primary working source
    - archive/export rows
    - stale/deleted source files
-   - Project Atlas, Bag of Holding, and Coheronia dry runs
+   - representative local-project dry runs
    - MCP agreement checks across remote projections
 
 ## Acceptance Criteria

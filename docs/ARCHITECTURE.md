@@ -17,6 +17,12 @@ The desktop process is the authority for local writes. AI and MCP callers use
 proposal or queue workflows where review matters; they do not bypass the data
 layer or silently mutate unrelated repositories.
 
+Project source reconciliation is deliberately Atlas-scoped. Operations keeps
+source rows separate from canonical projects, stores source topology in
+`project_registry`, and blocks identity-sensitive refresh work when source
+authority is unresolved. Reconcile previews can update Atlas bookkeeping after
+operator review, but they do not mutate the linked source repositories.
+
 ## Data flow
 
 - UI actions call `AppState` methods.
@@ -25,6 +31,9 @@ layer or silently mutate unrelated repositories.
 - Durable changes are recorded in SQLite, including relevant run history and
   review state.
 - Screens subscribe to state changes and render the persisted result.
+- Project freshness, planning-context completeness, and source topology use
+  shared model paths so UI, local MCP, and remote projection views do not
+  independently calculate contradictory project status.
 
 ## External boundaries
 
@@ -32,6 +41,11 @@ Atlas is usable without any network integration. GitHub reads, Telegram sends,
 Ollama requests, runtime commands, and the remote MCP gateway are opt-in and
 operator-configured. Each boundary has a deliberately narrower data contract
 than the internal model.
+
+The trusted local MCP server exposes broader read and preview tools for the
+desktop process. The remote gateway remains allowlisted and read-only by
+policy; source-reconciliation preview details are not automatically projected
+to remote callers.
 
 ## Failure model
 
