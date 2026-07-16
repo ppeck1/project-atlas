@@ -79,7 +79,9 @@ class _OperationsScreenState extends State<OperationsScreen>
   Future<void> _ensureScanFolder() async {
     try {
       await AppStateScope.of(context).ensureOperationsScansFolder();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _ensureScanFolder: ensureOperationsScansFolder failed: $e');
+    }
   }
 
   Future<void> _openScanFolder() async {
@@ -1466,7 +1468,9 @@ class _EnrichmentRunTileState extends State<_EnrichmentRunTile> {
               _cachedFindings = findings;
             }
           })
-          .catchError((_) {}),
+          .catchError((Object e) {
+            debugPrint('[Atlas] _loadFindings: getProjectEnrichmentFindingsForRun cache update failed: $e');
+          }),
     );
     return future;
   }
@@ -3921,7 +3925,9 @@ List<String> _decodeList(String raw) {
   try {
     final decoded = jsonDecode(raw);
     if (decoded is List) return decoded.map((item) => '$item').toList();
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _decodeList (operations_screen): JSON decode failed: $e');
+  }
   return const [];
 }
 
@@ -3934,7 +3940,9 @@ String _displayName(ProjectObservation observation) {
       final value = (decoded['displayName'] as String).trim();
       if (value.isNotEmpty) return value;
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _displayName (operations_screen): JSON decode of observation.rawJson failed: $e');
+  }
   final parts = observation.observedPath.split(RegExp(r'[\\/]'));
   return parts.isEmpty ? observation.observedPath : parts.last;
 }

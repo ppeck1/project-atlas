@@ -72,7 +72,9 @@ Map<String, Object?> _tryParseJsonObject(String? raw) {
     if (decoded is Map) {
       return decoded.map((key, value) => MapEntry('$key', value));
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _tryParseJsonObject (project_detail_screen): JSON decode failed: $e');
+  }
   return const <String, Object?>{};
 }
 
@@ -227,16 +229,22 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     List<LlmTaskQueueItem> llmTasks = _llmQueueItems;
     try {
       llmTasks = await state.getLlmTasksForProject(widget.projectId, limit: 50);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _loadProjectDetail: getLlmTasksForProject failed (continuing with cached): $e');
+    }
     final people = await state.getProjectPeople(widget.projectId);
     List<ProjectRisk> risks = _risks;
     try {
       risks = await state.getProjectRisks(widget.projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _loadProjectDetail: getProjectRisks failed (continuing with cached): $e');
+    }
     List<ProjectDecision> decisions = _decisions;
     try {
       decisions = await state.getProjectDecisions(widget.projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _loadProjectDetail: getProjectDecisions failed (continuing with cached): $e');
+    }
     final summarySettings = await state.loadProjectAiSummarySettings();
     final sectionVisibility = await state.loadProjectDetailSectionVisibility(
       widget.projectId,
@@ -249,7 +257,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         cachedDraft = await state.getLatestProjectSummaryDraft(
           widget.projectId,
         );
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Atlas] _loadProjectDetail: getLatestProjectSummaryDraft failed (continuing without cached draft): $e');
+      }
     }
 
     if (!mounted) return;
@@ -313,7 +323,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         _summaryEvidencePacket = packet;
         _summaryEvidenceLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[Atlas] _loadSummaryEvidence: buildProjectSummaryEvidencePacket failed: $e');
       if (!mounted) return;
       setState(() => _summaryEvidenceLoading = false);
     }

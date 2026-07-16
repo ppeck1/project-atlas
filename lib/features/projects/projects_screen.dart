@@ -782,7 +782,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               entityId: projectId,
               error: error.toString(),
             );
-          } catch (_) {}
+          } catch (e) {
+            debugPrint('[Atlas] _queueProjectSummaryRefresh: logEvent failed: $e');
+          }
         }
       })(),
     );
@@ -1483,7 +1485,8 @@ Set<String> _decodeStringSetSetting(String? value) {
       if (trimmed.isNotEmpty) result.add(trimmed);
     }
     return result;
-  } catch (_) {
+  } catch (e) {
+    debugPrint('[Atlas] _decodeStringSetSetting: JSON decode failed: $e');
     return <String>{};
   }
 }
@@ -2835,7 +2838,9 @@ List<String> _decodeStringList(String raw) {
     if (decoded is List) {
       return decoded.map((item) => '$item').toList(growable: false);
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _decodeStringList (projects_screen): JSON decode failed: $e');
+  }
   return const [];
 }
 
@@ -2846,7 +2851,9 @@ String _observationDisplayName(ProjectObservation observation) {
       final displayName = (decoded['displayName'] as String).trim();
       if (displayName.isNotEmpty) return displayName;
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _observationDisplayName (projects_screen): JSON decode failed: $e');
+  }
   final normalized = observation.observedPath.replaceAll('/', r'\');
   final parts = normalized
       .split(r'\')

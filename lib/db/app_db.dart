@@ -642,6 +642,18 @@ class LlmTaskQueueItem {
   };
 }
 
+/// Logs a tolerated schema-setup failure, staying quiet for the expected
+/// idempotency case (table/column/index already exists) so routine DB opens
+/// don't flood the log with known-benign errors.
+void _logToleratedSchemaError(String context, Object e) {
+  final message = e.toString();
+  if (message.contains('duplicate column name') ||
+      message.contains('already exists')) {
+    return;
+  }
+  debugPrint('[Atlas] $context failed (continuing): $e');
+}
+
 List<String> _decodeStringList(String? rawJson) {
   if (rawJson == null || rawJson.trim().isEmpty) return const <String>[];
   try {
@@ -649,7 +661,9 @@ List<String> _decodeStringList(String? rawJson) {
     if (decoded is List) {
       return decoded.map((item) => item.toString()).toList(growable: false);
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _decodeStringList: JSON decode failed: $e');
+  }
   return const <String>[];
 }
 
@@ -661,7 +675,9 @@ Map<String, Object?> _decodeObjectMap(String? rawJson) {
     if (decoded is Map) {
       return decoded.map((key, value) => MapEntry(key.toString(), value));
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _decodeObjectMap: JSON decode failed: $e');
+  }
   return const <String, Object?>{};
 }
 
@@ -852,7 +868,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v5 createTable', e);
+          }
         }
         for (final col in [
           projects.description,
@@ -864,12 +882,16 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await m.addColumn(projects, col);
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v5 addColumn projects.${col.name}', e);
+          }
         }
         for (final col in [stages.bottleneckOwner, stages.isBottleneck]) {
           try {
             await m.addColumn(stages, col);
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v5 addColumn stages.${col.name}', e);
+          }
         }
       }
       if (from < 6) {
@@ -883,7 +905,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await m.addColumn(projects, col);
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v6 addColumn projects.${col.name}', e);
+          }
         }
       }
       if (from < 7) {
@@ -893,13 +917,17 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v7 createTable', e);
+          }
         }
       }
       if (from < 8) {
         try {
           await m.createTable(contacts);
-        } catch (_) {}
+        } catch (e) {
+          _logToleratedSchemaError('migration v8 createTable contacts', e);
+        }
       }
       if (from < 9) {
         for (final fn in <Future<void> Function()>[
@@ -909,7 +937,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v9 createTable', e);
+          }
         }
       }
       if (from < 10) {
@@ -926,13 +956,17 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v11 createTable', e);
+          }
         }
       }
       if (from < 12) {
         try {
           await m.createTable(localProjectRefreshItems);
-        } catch (_) {}
+        } catch (e) {
+          _logToleratedSchemaError('migration v12 createTable localProjectRefreshItems', e);
+        }
       }
       // Intentional gap: there are no `from < 13` … `from < 17` steps.
       // schemaVersion jumped 12 -> 18 in a single commit ("Add operations
@@ -942,10 +976,14 @@ class AppDb extends _$AppDb {
       if (from < 18) {
         try {
           await m.addColumn(projects, projects.category);
-        } catch (_) {}
+        } catch (e) {
+          _logToleratedSchemaError('migration v18 addColumn projects.category', e);
+        }
         try {
           await m.createTable(mediaLinks);
-        } catch (_) {}
+        } catch (e) {
+          _logToleratedSchemaError('migration v18 createTable mediaLinks', e);
+        }
       }
       if (from < 19) {
         for (final fn in <Future<void> Function()>[
@@ -954,7 +992,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v19 createTable', e);
+          }
         }
       }
       if (from < 20) {
@@ -970,7 +1010,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await m.addColumn(workItems, col);
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v20 addColumn work_items.${col.name}', e);
+          }
         }
       }
       if (from < 21) {
@@ -1080,7 +1122,9 @@ class AppDb extends _$AppDb {
     for (final stmt in addColumns) {
       try {
         await customStatement(stmt);
-      } catch (_) {}
+      } catch (e) {
+        _logToleratedSchemaError('_ensureProjectRegistrySourceColumns: addColumn', e);
+      }
     }
 
     await customStatement('''
@@ -1183,8 +1227,9 @@ class AppDb extends _$AppDb {
     for (final stmt in addColumns) {
       try {
         await customStatement(stmt);
-      } catch (_) {
+      } catch (e) {
         // Expected when column already exists — ignore.
+        _logToleratedSchemaError('_ensureProjectCompatibilityColumns: addColumn', e);
       }
     }
 
@@ -1261,14 +1306,18 @@ class AppDb extends _$AppDb {
     for (final stmt in createTables) {
       try {
         await customStatement(stmt);
-      } catch (_) {}
+      } catch (e) {
+        _logToleratedSchemaError('_ensureProjectCompatibilityColumns: createTable', e);
+      }
     }
 
     try {
       await customStatement(
         'ALTER TABLE project_media ADD COLUMN is_cover INTEGER NOT NULL DEFAULT 0',
       );
-    } catch (_) {}
+    } catch (e) {
+      _logToleratedSchemaError('_ensureProjectCompatibilityColumns: addColumn project_media.is_cover', e);
+    }
 
     // If project_people came from an alternate schema branch (role_type / authority_level),
     // rebuild it into the current expected shape so inserts don't fail on NOT NULL legacy cols.
@@ -1321,8 +1370,9 @@ class AppDb extends _$AppDb {
           );
         });
       }
-    } catch (_) {
+    } catch (e) {
       // If table doesn't exist yet or pragma fails, regular migrations handle creation.
+      debugPrint('[Atlas] _ensureProjectCompatibilityColumns: project_people schema rebuild failed (continuing): $e');
     }
     // Backfill any rows where non-nullable columns ended up NULL due to
     // partial migrations or SQLite schema-default edge cases.
@@ -1342,7 +1392,9 @@ class AppDb extends _$AppDb {
     for (final stmt in backfills) {
       try {
         await customStatement(stmt);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Atlas] _ensureProjectCompatibilityColumns: backfill UPDATE failed (continuing): $e');
+      }
     }
   }
 
@@ -1393,7 +1445,9 @@ class AppDb extends _$AppDb {
     for (final statement in statements) {
       try {
         await customStatement(statement);
-      } catch (_) {}
+      } catch (e) {
+        _logToleratedSchemaError('_ensureProjectRuntimeTables: statement', e);
+      }
     }
   }
 
@@ -2832,8 +2886,9 @@ class AppDb extends _$AppDb {
           }
         }
       }
-    } catch (_) {
+    } catch (e) {
       // Extraction failure must not prevent the DB record from being created.
+      debugPrint('[Atlas] importDocument: text extraction failed (continuing without extracted text): $e');
       extractedTextValue = null;
       renderedMarkdownValue = null;
     }
@@ -2868,7 +2923,9 @@ class AppDb extends _$AppDb {
       try {
         final copied = File(destPath);
         if (await copied.exists()) await copied.delete();
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Atlas] importDocument: cleanup of copied file after insert failure failed: $e');
+      }
       rethrow;
     }
     return id;
@@ -3513,7 +3570,9 @@ class AppDb extends _$AppDb {
     ]) {
       try {
         await customStatement(stmt);
-      } catch (_) {}
+      } catch (e) {
+        _logToleratedSchemaError('_ensureLlmTaskQueueTable: addColumn', e);
+      }
     }
     await customStatement(
       'CREATE INDEX IF NOT EXISTS idx_llm_task_queue_project_status '
