@@ -1,6 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+/// Resolves the selected nav-rail index for [location] against [destinationPaths].
+///
+/// Returns the index of the longest path in [destinationPaths] that is an
+/// exact match or a proper prefix of [location] (i.e. followed by '/').
+/// Returns -1 when no destination matches, so callers can suppress highlighting
+/// on routes like /review, /export, /governance, /log, and / that don't belong
+/// to any nav destination.
+int resolveNavSelectedIndex(String location, List<String> destinationPaths) {
+  int selectedIndex = -1;
+  int bestLen = 0;
+  for (var i = 0; i < destinationPaths.length; i++) {
+    final p = destinationPaths[i];
+    if ((location == p || location.startsWith('$p/')) && p.length > bestLen) {
+      selectedIndex = i;
+      bestLen = p.length;
+    }
+  }
+  return selectedIndex;
+}
+
 class AtlasShell extends StatelessWidget {
   final Widget child;
   const AtlasShell({super.key, required this.child});
@@ -33,14 +53,10 @@ class AtlasShell extends StatelessWidget {
       '/settings',
     );
 
-    int selectedIndex = 0;
-    for (var i = 0; i < destinations.length; i++) {
-      final p = destinations[i].path;
-      if (location.startsWith(p)) {
-        selectedIndex = i;
-        break;
-      }
-    }
+    final selectedIndex = resolveNavSelectedIndex(
+      location,
+      destinations.map((d) => d.path).toList(),
+    );
     final settingsSelected = location.startsWith('/settings');
 
     return Scaffold(
