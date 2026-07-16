@@ -98,6 +98,11 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   final Set<String> _visibleCategories = <String>{};
   bool _loadedOrderingPreferences = false;
 
+  Stream<List<Project>>? _projects;
+  Stream<List<Tag>>? _tags;
+  Stream<Map<String, ProjectUpdateAttribution>>? _projectUpdateAttributions;
+  Stream<Project?>? _activeProject;
+
   bool get _hasFilters =>
       _tagFilterId != null ||
       _statusFilter != null ||
@@ -108,6 +113,11 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _projects ??= state.watchProjects();
+    _tags ??= state.watchTags();
+    _projectUpdateAttributions ??= state.watchProjectUpdateAttributions();
+    _activeProject ??= state.watchActiveProject();
     if (_loadedOrderingPreferences) return;
     _loadedOrderingPreferences = true;
     unawaited(_loadOrderingPreferences());
@@ -966,9 +976,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       body: Stack(
         children: [
           StreamBuilder<List<Project>>(
-            stream: state.watchProjects(),
+            stream: _projects,
             builder: (context, projectSnap) {
-              if (projectSnap.connectionState == ConnectionState.waiting) {
+              if (projectSnap.connectionState == ConnectionState.waiting &&
+                  projectSnap.data == null) {
                 return const Center(child: CircularProgressIndicator());
               }
               if (projectSnap.hasError) {
@@ -976,7 +987,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               }
               final projects = projectSnap.data ?? const <Project>[];
               return StreamBuilder<List<Tag>>(
-                stream: state.watchTags(),
+                stream: _tags,
                 builder: (context, tagSnap) {
                   if (tagSnap.hasError) {
                     return _ProjectsLoadError(error: tagSnap.error);
@@ -997,7 +1008,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       return StreamBuilder<
                         Map<String, ProjectUpdateAttribution>
                       >(
-                        stream: state.watchProjectUpdateAttributions(),
+                        stream: _projectUpdateAttributions,
                         builder: (context, projectUpdateSnap) {
                           if (projectUpdateSnap.hasError) {
                             return _ProjectsLoadError(
@@ -1052,7 +1063,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                               const Divider(height: 1, color: _kLine),
                               Expanded(
                                 child: StreamBuilder<Project?>(
-                                  stream: state.watchActiveProject(),
+                                  stream: _activeProject,
                                   builder: (context, activeSnap) {
                                     if (activeSnap.hasError) {
                                       return _ProjectsLoadError(
@@ -2229,11 +2240,42 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
   bool _testing = false;
   bool _checkingCapsule = false;
 
+  Stream<ProjectRuntimeProfile?>? _runtimeProfile;
+  Stream<List<ProjectRuntimeRun>>? _runtimeRuns;
+  String? _runtimeProjectId;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_runtimeProjectId != widget.project.id) {
+      _runtimeProjectId = widget.project.id;
+      final state = AppStateScope.of(context);
+      _runtimeProfile = state.watchProjectRuntimeProfile(widget.project.id);
+      _runtimeRuns = state.watchProjectRuntimeRuns(
+        widget.project.id,
+        limit: 5,
+      );
+    }
+  }
+
+  @override
+  void didUpdateWidget(_RuntimeProjectActions oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.project.id != widget.project.id) {
+      _runtimeProjectId = widget.project.id;
+      final state = AppStateScope.of(context);
+      _runtimeProfile = state.watchProjectRuntimeProfile(widget.project.id);
+      _runtimeRuns = state.watchProjectRuntimeRuns(
+        widget.project.id,
+        limit: 5,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<ProjectRuntimeProfile?>(
-      stream: state.watchProjectRuntimeProfile(widget.project.id),
+      stream: _runtimeProfile,
       builder: (context, profileSnap) {
         final profile = profileSnap.data;
         if (profile == null || !profile.enabled) {
@@ -2241,7 +2283,7 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
         }
         final tests = runtime.decodeStringList(profile.testCommandsJson);
         return StreamBuilder<List<ProjectRuntimeRun>>(
-          stream: state.watchProjectRuntimeRuns(widget.project.id, limit: 5),
+          stream: _runtimeRuns,
           builder: (context, runSnap) {
             final runs = runSnap.data ?? const <ProjectRuntimeRun>[];
             final latestTest = _latestRuntimeRun(runs, 'test');
@@ -2256,7 +2298,9 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
                   color: _runtimeRunColor(_latestRuntimeRun(runs, 'launch')),
                   onPressed: () => _runRuntimeAction(
                     action: 'launch',
-                    body: () => state.launchProjectRuntime(widget.project.id),
+                    body: () => AppStateScope.of(
+                      context,
+                    ).launchProjectRuntime(widget.project.id),
                   ),
                 ),
                 _RuntimeIconButton(
@@ -2268,8 +2312,9 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
                       ? null
                       : () => _runRuntimeAction(
                           action: 'test',
-                          body: () =>
-                              state.runProjectRuntimeTest(widget.project.id),
+                          body: () => AppStateScope.of(
+                            context,
+                          ).runProjectRuntimeTest(widget.project.id),
                           showResult: true,
                         ),
                 ),
@@ -2283,8 +2328,9 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
                   onPressed: profile.capsuleEnabled
                       ? () => _runRuntimeAction(
                           action: 'capsule',
-                          body: () =>
-                              state.runProjectRuntimeCapsule(widget.project.id),
+                          body: () => AppStateScope.of(
+                            context,
+                          ).runProjectRuntimeCapsule(widget.project.id),
                           showResult: true,
                         )
                       : null,

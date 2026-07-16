@@ -44,7 +44,8 @@ class DocumentPreview extends StatelessWidget {
           : null,
       builder: (context, snapshot) {
         final body = parsed ?? snapshot.data ?? '';
-        if (snapshot.connectionState == ConnectionState.waiting) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            snapshot.data == null) {
           return const Center(child: CircularProgressIndicator());
         }
         return _renderBody(context, body);

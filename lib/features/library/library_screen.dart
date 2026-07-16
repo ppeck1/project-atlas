@@ -137,6 +137,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String? _filterProjectId;
   String _filterType = 'all';
 
+  Stream<List<Project>>? _projects;
+  Stream<List<Document>>? _documents;
+  Stream<List<Draft>>? _drafts;
+  Stream<List<ProjectMediaItem>>? _media;
+
   @override
   void initState() {
     super.initState();
@@ -148,6 +153,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (projectId != null && projectId.isNotEmpty) {
       _filterProjectId = projectId;
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _projects ??= state.watchProjects();
+    _documents ??= state.watchDocuments();
+    _drafts ??= state.watchDrafts();
+    _media ??= state.watchAllProjectMedia();
   }
 
   @override
@@ -322,8 +337,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final state = AppStateScope.of(context);
 
     return StreamBuilder<List<Project>>(
-      stream: state.watchProjects(),
+      stream: _projects,
       builder: (context, projectSnap) {
+        if (projectSnap.connectionState == ConnectionState.waiting &&
+            projectSnap.data == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final loadError = projectSnap.error;
         if (projectSnap.hasError) {
           return _LibraryLoadError(error: loadError);
@@ -331,13 +350,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
         final projects = projectSnap.data ?? const <Project>[];
 
         return StreamBuilder<List<Document>>(
-          stream: state.watchDocuments(),
+          stream: _documents,
           builder: (context, docSnap) {
             return StreamBuilder<List<Draft>>(
-              stream: state.watchDrafts(),
+              stream: _drafts,
               builder: (context, draftSnap) {
                 return StreamBuilder<List<ProjectMediaItem>>(
-                  stream: state.watchAllProjectMedia(),
+                  stream: _media,
                   builder: (context, mediaSnap) {
                     final loadError =
                         docSnap.error ?? draftSnap.error ?? mediaSnap.error;

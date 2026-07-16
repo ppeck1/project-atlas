@@ -159,7 +159,7 @@ class _OperationsScreenState extends State<OperationsScreen>
   }
 }
 
-class _ScanRunsTab extends StatelessWidget {
+class _ScanRunsTab extends StatefulWidget {
   final List<String> roots;
   final bool scanning;
   final VoidCallback onAddFolder;
@@ -179,10 +179,22 @@ class _ScanRunsTab extends StatelessWidget {
   });
 
   @override
+  State<_ScanRunsTab> createState() => _ScanRunsTabState();
+}
+
+class _ScanRunsTabState extends State<_ScanRunsTab> {
+  Stream<List<ProjectScanRun>>? _scanRunsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scanRunsStream ??= AppStateScope.of(context).watchProjectScanRuns();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectScanRun>>(
-      stream: state.watchProjectScanRuns(),
+      stream: _scanRunsStream,
       builder: (context, snap) {
         if (snap.hasError) {
           return _EmptyState(
@@ -199,16 +211,17 @@ class _ScanRunsTab extends StatelessWidget {
           itemBuilder: (context, index) {
             if (index == 0) {
               return _ScanRootsPanel(
-                roots: roots,
-                scanning: scanning,
-                onAddFolder: onAddFolder,
-                onRemoveRoot: onRemoveRoot,
-                onResetRoots: onResetRoots,
-                onOpenFolder: onOpenFolder,
-                onRunScan: onRunScan,
+                roots: widget.roots,
+                scanning: widget.scanning,
+                onAddFolder: widget.onAddFolder,
+                onRemoveRoot: widget.onRemoveRoot,
+                onResetRoots: widget.onResetRoots,
+                onOpenFolder: widget.onOpenFolder,
+                onRunScan: widget.onRunScan,
               );
             }
-            if (snap.connectionState == ConnectionState.waiting) {
+            if (snap.connectionState == ConnectionState.waiting &&
+                snap.data == null) {
               return const Center(child: CircularProgressIndicator());
             }
             if (runs.isEmpty) {
@@ -472,6 +485,16 @@ class _ReviewCandidatesTab extends StatefulWidget {
 class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
   _CandidateFilter _filter = _CandidateFilter.needsAction;
   final Set<String> _selectedIds = {};
+  Stream<List<ProjectObservation>>? _observationsStream;
+  Stream<List<ProjectRegistryEntry>>? _registryStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _observationsStream ??= state.watchRecentProjectObservations();
+    _registryStream ??= state.watchProjectRegistry();
+  }
 
   Future<void> _bulkReview(
     BuildContext context,
@@ -524,9 +547,8 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectObservation>>(
-      stream: state.watchRecentProjectObservations(),
+      stream: _observationsStream,
       builder: (context, observationSnap) {
         if (observationSnap.hasError) {
           return _EmptyState(
@@ -539,7 +561,7 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
           observationSnap.data ?? const <ProjectObservation>[],
         );
         return StreamBuilder<List<ProjectRegistryEntry>>(
-          stream: state.watchProjectRegistry(),
+          stream: _registryStream,
           builder: (context, registrySnap) {
             if (registrySnap.hasError) {
               return _EmptyState(
@@ -562,7 +584,8 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
                   .toList(growable: false),
               registryByPath,
             );
-            if (observationSnap.connectionState == ConnectionState.waiting) {
+            if (observationSnap.connectionState == ConnectionState.waiting &&
+                observationSnap.data == null) {
               return const Center(child: CircularProgressIndicator());
             }
             if (observations.isEmpty) {
@@ -1044,7 +1067,8 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
           );
         }
         final runs = snap.data ?? const <ProjectEnrichmentRun>[];
-        if (snap.connectionState == ConnectionState.waiting) {
+        if (snap.connectionState == ConnectionState.waiting &&
+            snap.data == null) {
           return const Center(child: CircularProgressIndicator());
         }
         return ListView.separated(
@@ -2813,6 +2837,16 @@ class _RegistryTab extends StatefulWidget {
 class _RegistryTabState extends State<_RegistryTab> {
   _RegistryFilter _filter = _RegistryFilter.needsAction;
   bool _refreshingLinked = false;
+  Stream<List<ProjectRegistryEntry>>? _registryStream;
+  Stream<List<ProjectObservation>>? _observationsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _registryStream ??= state.watchProjectRegistry();
+    _observationsStream ??= state.watchRecentProjectObservations(limit: 1000);
+  }
 
   Future<void> _refreshLinkedProjects(BuildContext context) async {
     if (_refreshingLinked) return;
@@ -2864,7 +2898,7 @@ class _RegistryTabState extends State<_RegistryTab> {
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectRegistryEntry>>(
-      stream: state.watchProjectRegistry(),
+      stream: _registryStream,
       builder: (context, snap) {
         if (snap.hasError) {
           return _EmptyState(
@@ -2874,7 +2908,8 @@ class _RegistryTabState extends State<_RegistryTab> {
           );
         }
         final entries = snap.data ?? const <ProjectRegistryEntry>[];
-        if (snap.connectionState == ConnectionState.waiting) {
+        if (snap.connectionState == ConnectionState.waiting &&
+            snap.data == null) {
           return const Center(child: CircularProgressIndicator());
         }
         if (entries.isEmpty) {
@@ -2884,7 +2919,7 @@ class _RegistryTabState extends State<_RegistryTab> {
           );
         }
         return StreamBuilder<List<ProjectObservation>>(
-          stream: state.watchRecentProjectObservations(limit: 1000),
+          stream: _observationsStream,
           builder: (context, observationSnap) {
             if (observationSnap.hasError) {
               return _EmptyState(
@@ -3300,8 +3335,24 @@ class _RegistryTile extends StatelessWidget {
   }
 }
 
-class _WarningsTab extends StatelessWidget {
+class _WarningsTab extends StatefulWidget {
   const _WarningsTab();
+
+  @override
+  State<_WarningsTab> createState() => _WarningsTabState();
+}
+
+class _WarningsTabState extends State<_WarningsTab> {
+  Stream<List<ProjectScanRun>>? _scanRunsStream;
+  Stream<List<ProjectObservation>>? _observationsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _scanRunsStream ??= state.watchProjectScanRuns();
+    _observationsStream ??= state.watchRecentProjectObservations();
+  }
 
   Future<void> _copyWarningsJson(BuildContext context) async {
     final json = await AppStateScope.of(
@@ -3378,9 +3429,8 @@ class _WarningsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectScanRun>>(
-      stream: state.watchProjectScanRuns(),
+      stream: _scanRunsStream,
       builder: (context, runSnap) {
         if (runSnap.hasError) {
           return _EmptyState(
@@ -3390,7 +3440,7 @@ class _WarningsTab extends StatelessWidget {
           );
         }
         return StreamBuilder<List<ProjectObservation>>(
-          stream: state.watchRecentProjectObservations(),
+          stream: _observationsStream,
           builder: (context, observationSnap) {
             if (observationSnap.hasError) {
               return _EmptyState(
@@ -3411,8 +3461,10 @@ class _WarningsTab extends StatelessWidget {
                 rows.add('${_displayName(observation)}: $warning');
               }
             }
-            if (runSnap.connectionState == ConnectionState.waiting ||
-                observationSnap.connectionState == ConnectionState.waiting) {
+            if ((runSnap.connectionState == ConnectionState.waiting &&
+                    runSnap.data == null) ||
+                (observationSnap.connectionState == ConnectionState.waiting &&
+                    observationSnap.data == null)) {
               return const Center(child: CircularProgressIndicator());
             }
             if (rows.isEmpty) {

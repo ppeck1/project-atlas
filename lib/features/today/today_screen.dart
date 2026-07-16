@@ -25,11 +25,18 @@ class _TodayScreenState extends State<TodayScreen> {
   int _taskListRevision = 0;
 
   Timer? _midnightTimer;
+  Stream<List<WorkItem>>? _items;
 
   @override
   void initState() {
     super.initState();
     _scheduleMidnightRefresh();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _items ??= AppStateScope.of(context).watchAllActiveWorkItems();
   }
 
   void _scheduleMidnightRefresh() {
@@ -50,8 +57,6 @@ class _TodayScreenState extends State<TodayScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Today'),
@@ -74,9 +79,10 @@ class _TodayScreenState extends State<TodayScreen> {
         ],
       ),
       body: StreamBuilder<List<WorkItem>>(
-        stream: state.watchAllActiveWorkItems(),
+        stream: _items,
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
+          if (snap.connectionState == ConnectionState.waiting &&
+              snap.data == null) {
             return const Center(child: CircularProgressIndicator());
           }
           if (snap.hasError) {

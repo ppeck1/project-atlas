@@ -19,11 +19,18 @@ class ContactOwnerField extends StatefulWidget {
 
 class _ContactOwnerFieldState extends State<ContactOwnerField> {
   String? _selected;
+  Stream<List<Contact>>? _contacts;
 
   @override
   void initState() {
     super.initState();
     _selected = _clean(widget.controller.text);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _contacts ??= AppStateScope.of(context).watchContacts();
   }
 
   String? _clean(String? value) {
@@ -33,9 +40,8 @@ class _ContactOwnerFieldState extends State<ContactOwnerField> {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<List<Contact>>(
-      stream: state.watchContacts(),
+      stream: _contacts,
       builder: (context, snap) {
         final contacts = snap.data ?? const <Contact>[];
         final names = <String>{for (final c in contacts) c.name.trim()};

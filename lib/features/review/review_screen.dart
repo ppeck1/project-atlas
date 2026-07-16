@@ -532,14 +532,27 @@ class _OllamaReviewDialog extends StatelessWidget {
   }
 }
 
-class _DraftReviewSection extends StatelessWidget {
+class _DraftReviewSection extends StatefulWidget {
   const _DraftReviewSection();
+
+  @override
+  State<_DraftReviewSection> createState() => _DraftReviewSectionState();
+}
+
+class _DraftReviewSectionState extends State<_DraftReviewSection> {
+  Stream<List<Draft>>? _draftsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _draftsStream ??= AppStateScope.of(context).watchDrafts();
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     return StreamBuilder<List<Draft>>(
-      stream: state.watchDrafts(),
+      stream: _draftsStream,
       builder: (context, snap) {
         final drafts = snap.data ?? const <Draft>[];
         if (drafts.isEmpty) {
