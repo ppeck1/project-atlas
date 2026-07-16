@@ -929,7 +929,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> setActiveById(String id) async {
     await db.setActiveProjectId(id);
-    notifyListeners();
+    // No notifyListeners(): _activeProjectSub (watchActiveProject listener in
+    // the constructor) fires on this meta write and notifies.
   }
 
   String _projectDetailVisibleSectionsKey(String projectId) =>
@@ -1011,28 +1012,23 @@ class AppState extends ChangeNotifier {
     String stageId,
   ) async {
     await db.setActiveStageIdForProject(projectId, stageId);
-    notifyListeners();
   }
 
-  // Stage management
+  // Stage management (stage consumers read via watchStagesForProject streams)
   Future<void> addStage(String projectId, String title) async {
     await db.addStage(projectId, title);
-    notifyListeners();
   }
 
   Future<void> updateStageTitle(String stageId, String title) async {
     await db.updateStageTitle(stageId, title);
-    notifyListeners();
   }
 
   Future<void> deleteStage(String stageId) async {
     await db.deleteStage(stageId);
-    notifyListeners();
   }
 
   Future<void> reorderStage(String stageId, int newPosition) async {
     await db.reorderStage(stageId, newPosition);
-    notifyListeners();
   }
 
   // Daily reviews
@@ -1303,12 +1299,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> setWorkItemStatus(String id, String status) async {
     await db.setWorkItemStatus(id, status);
-    notifyListeners();
   }
 
   Future<void> toggleWorkDone(String workItemId) async {
     await db.toggleWorkDone(workItemId);
-    notifyListeners();
   }
 
   Future<WorkItem?> getWorkItem(String id) => db.getWorkItem(id);
@@ -1559,20 +1553,17 @@ class AppState extends ChangeNotifier {
   Stream<String?> watchWorkOwner(String id) => db.watchWorkOwner(id);
   Future<void> setWorkOwner(String id, String? owner) async {
     await db.setWorkOwner(id, owner);
-    notifyListeners();
   }
 
   Stream<String?> watchBottleneckOwner(String id) =>
       db.watchBottleneckOwner(id);
   Future<void> setBottleneckOwner(String id, String? owner) async {
     await db.setBottleneckOwner(id, owner);
-    notifyListeners();
   }
 
   Stream<bool> watchIsBottleneck(String id) => db.watchIsBottleneck(id);
   Future<void> setIsBottleneck(String id, bool v) async {
     await db.setIsBottleneck(id, v);
-    notifyListeners();
   }
 
   // ---------------------------------------------------------------------------
@@ -1721,7 +1712,6 @@ class AppState extends ChangeNotifier {
       projectId: projectId,
       workItemId: workItemId,
     );
-    notifyListeners();
     return id;
   }
 
@@ -1737,12 +1727,10 @@ class AppState extends ChangeNotifier {
       inputJson: inputJson,
       body: body,
     );
-    notifyListeners();
   }
 
   Future<void> deleteDraft(String id) async {
     await db.deleteDraft(id);
-    notifyListeners();
   }
 
   Future<Draft?> getLatestShopifySeoReviewDraft(String projectId) =>
@@ -1782,7 +1770,6 @@ class AppState extends ChangeNotifier {
         'source': snapshot.source,
       }),
     );
-    notifyListeners();
     return id;
   }
 
@@ -2094,7 +2081,6 @@ class AppState extends ChangeNotifier {
       entityId: projectId,
       outputJson: jsonEncode({'enabled': draft.enabled}),
     );
-    notifyListeners();
     return profile;
   }
 
@@ -2106,7 +2092,6 @@ class AppState extends ChangeNotifier {
       entityType: 'project',
       entityId: projectId,
     );
-    notifyListeners();
   }
 
   Future<ProjectRuntimeProfile?> importRuntimeProfileFromManifest(
@@ -2142,7 +2127,6 @@ class AppState extends ChangeNotifier {
   Future<ProjectRuntimeRun> launchProjectRuntime(String projectId) async {
     final profile = await _runtimeProfileForAction(projectId);
     final run = await ProjectRuntimeService(db: db).runLaunch(profile);
-    notifyListeners();
     return run;
   }
 
@@ -2154,14 +2138,12 @@ class AppState extends ChangeNotifier {
     final run = await ProjectRuntimeService(
       db: db,
     ).runTest(profile, command: command);
-    notifyListeners();
     return run;
   }
 
   Future<ProjectRuntimeRun> runProjectRuntimeCapsule(String projectId) async {
     final profile = await _runtimeProfileForAction(projectId);
     final run = await ProjectRuntimeService(db: db).runCapsule(profile);
-    notifyListeners();
     return run;
   }
 
@@ -2465,7 +2447,6 @@ class AppState extends ChangeNotifier {
       entityId: contactId,
       inputJson: name,
     );
-    notifyListeners();
     return contactId;
   }
 
@@ -2477,7 +2458,6 @@ class AppState extends ChangeNotifier {
       entityType: 'contact',
       entityId: id,
     );
-    notifyListeners();
   }
 
   Future<ContactResponsibilities> getContactResponsibilities(
@@ -2595,7 +2575,6 @@ class AppState extends ChangeNotifier {
       action: 'contacts_imported',
       outputJson: jsonEncode({'path': path, 'count': count}),
     );
-    notifyListeners();
     return count;
   }
 
@@ -2793,7 +2772,6 @@ class AppState extends ChangeNotifier {
       source: source,
       metadataJson: metadataJson,
     );
-    notifyListeners();
     return mediaId;
   }
 
@@ -2827,7 +2805,6 @@ class AppState extends ChangeNotifier {
       source: sourcePayload,
       metadataJson: metadataPayload,
     );
-    notifyListeners();
     return mediaId;
   }
 
@@ -2847,12 +2824,10 @@ class AppState extends ChangeNotifier {
       source: source,
       metadataJson: metadataJson,
     );
-    notifyListeners();
   }
 
   Future<void> setProjectCoverMedia(String projectId, String mediaId) async {
     await db.setProjectCoverMedia(projectId, mediaId);
-    notifyListeners();
   }
 
   Future<void> deleteProjectMedia(String id) async {
@@ -2861,7 +2836,6 @@ class AppState extends ChangeNotifier {
     if (media != null) {
       await _deleteAppOwnedMediaFileBestEffort(media);
     }
-    notifyListeners();
   }
 
   Stream<List<ProjectMediaItem>> watchMediaForWorkItem(String workItemId) =>
@@ -2895,7 +2869,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item',
       entityId: workItemId,
     );
-    notifyListeners();
   }
 
   Future<String> importWorkItemMediaFromPath(
@@ -2927,7 +2900,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item',
       entityId: workItemId,
     );
-    notifyListeners();
   }
 
   Future<void> attachProjectMediaToLlmTask(
@@ -2946,7 +2918,6 @@ class AppState extends ChangeNotifier {
       entityType: 'llm_task',
       entityId: taskId,
     );
-    notifyListeners();
   }
 
   Future<String> importLlmTaskMediaFromPath(
@@ -2978,12 +2949,10 @@ class AppState extends ChangeNotifier {
       entityType: 'llm_task',
       entityId: taskId,
     );
-    notifyListeners();
   }
 
   Future<void> deleteDocument(String id) async {
     await db.deleteDocument(id);
-    notifyListeners();
   }
 
   Future<Directory> _projectMediaDirectory(String projectId) async {
@@ -5391,7 +5360,6 @@ class AppState extends ChangeNotifier {
         'precedence': updated.precedence,
       }),
     );
-    notifyListeners();
     return updated;
   }
 
@@ -5437,7 +5405,6 @@ class AppState extends ChangeNotifier {
         'authorityLevel': updated.authorityLevel,
       }),
     );
-    notifyListeners();
     return updated;
   }
 
@@ -5940,7 +5907,6 @@ class AppState extends ChangeNotifier {
       source: 'associated_file:$filePath',
       metadataJson: metadataJson,
     );
-    notifyListeners();
     return id;
   }
 
@@ -7081,7 +7047,6 @@ class AppState extends ChangeNotifier {
           'totalSeen': result.totalSeen,
         }),
       );
-      notifyListeners();
       return runId;
     } catch (error, stackTrace) {
       await db.finishProjectScanRun(
@@ -7101,7 +7066,6 @@ class AppState extends ChangeNotifier {
         entityType: 'project_scan_run',
         entityId: runId,
       );
-      notifyListeners();
       rethrow;
     }
   }
@@ -7111,7 +7075,6 @@ class AppState extends ChangeNotifier {
       observationId: observationId,
       reviewState: 'accepted',
     );
-    notifyListeners();
   }
 
   Future<void> acceptProjectObservations(
@@ -7129,7 +7092,6 @@ class AppState extends ChangeNotifier {
       reviewState: 'linked',
       atlasProjectId: atlasProjectId,
     );
-    notifyListeners();
   }
 
   Future<void> ignoreProjectObservation(String observationId) async {
@@ -7137,7 +7099,6 @@ class AppState extends ChangeNotifier {
       observationId: observationId,
       reviewState: 'ignored',
     );
-    notifyListeners();
   }
 
   Future<void> ignoreProjectObservations(
@@ -7151,7 +7112,6 @@ class AppState extends ChangeNotifier {
       observationId: observationId,
       reviewState: 'needs_review',
     );
-    notifyListeners();
   }
 
   Future<void> markProjectObservationsNeedsReview(
@@ -7172,7 +7132,6 @@ class AppState extends ChangeNotifier {
         reviewState: reviewState,
       );
     }
-    notifyListeners();
   }
 
   Future<String> buildProjectScanRunExportJson(String scanRunId) async {
@@ -8143,7 +8102,6 @@ class AppState extends ChangeNotifier {
         path,
         projectId: projectId ?? activeProject?.id,
       );
-      notifyListeners();
     } catch (e, st) {
       await db.logError(
         area: 'documents',
@@ -8171,7 +8129,6 @@ class AppState extends ChangeNotifier {
       entityId: workItemId,
       inputJson: jsonEncode({'documentId': documentId}),
     );
-    notifyListeners();
   }
 
   Future<void> unlinkDocumentFromWorkItem(
@@ -8186,7 +8143,6 @@ class AppState extends ChangeNotifier {
       entityId: workItemId,
       inputJson: jsonEncode({'documentId': documentId}),
     );
-    notifyListeners();
   }
 
   Stream<List<WorkItemNote>> watchNotesForWorkItem(String workItemId) =>
@@ -8202,7 +8158,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item',
       entityId: workItemId,
     );
-    notifyListeners();
   }
 
   Future<void> updateWorkItemNote(String noteId, String body) async {
@@ -8215,7 +8170,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item_note',
       entityId: noteId,
     );
-    notifyListeners();
   }
 
   Future<void> deleteWorkItemNote(String noteId) async {
@@ -8226,7 +8180,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item_note',
       entityId: noteId,
     );
-    notifyListeners();
   }
 
   Stream<List<WorkItemAnalysis>> watchAnalysesForWorkItem(String workItemId) =>
@@ -8299,7 +8252,6 @@ class AppState extends ChangeNotifier {
           entityId: workItemId,
           outputJson: jsonEncode({'model': modelName}),
         );
-        notifyListeners();
       } else {
         await db.logEvent(
           level: 'error',
