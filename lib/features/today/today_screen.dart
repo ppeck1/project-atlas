@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../db/app_db.dart';
@@ -5,6 +7,7 @@ import '../../services/workload_planning_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/widgets/contact_picker.dart';
+import 'today_bucketing.dart';
 import 'work_item_detail_sheet.dart';
 import '../work/status_priority_helpers.dart';
 
@@ -20,6 +23,30 @@ class _TodayScreenState extends State<TodayScreen> {
   String? _tagFilterId;
   String? _statusFilter;
   int _taskListRevision = 0;
+
+  Timer? _midnightTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleMidnightRefresh();
+  }
+
+  void _scheduleMidnightRefresh() {
+    _midnightTimer?.cancel();
+    final now = DateTime.now();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _midnightTimer = Timer(nextMidnight.difference(now) + const Duration(seconds: 1), () {
+      if (mounted) setState(() {});
+      _scheduleMidnightRefresh();
+    });
+  }
+
+  @override
+  void dispose() {
+    _midnightTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -89,47 +116,12 @@ class _TodayScreenState extends State<TodayScreen> {
             );
           }
 
-          final now = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
-          final tomorrow = today.add(const Duration(days: 1));
-
-          final doing = items.where((i) => i.status == 'doing').toList();
-          final overdue = items
-              .where(
-                (i) =>
-                    i.dueAt != null &&
-                    i.dueAt!.isBefore(today) &&
-                    i.status != 'doing',
-              )
-              .toList();
-          final dueToday = items
-              .where(
-                (i) =>
-                    i.dueAt != null &&
-                    !i.dueAt!.isBefore(today) &&
-                    i.dueAt!.isBefore(tomorrow) &&
-                    i.status != 'doing',
-              )
-              .toList();
-          final phoneQueue = items
-              .where(
-                (i) =>
-                    i.phoneQueue &&
-                    i.status != 'doing' &&
-                    !overdue.contains(i) &&
-                    !dueToday.contains(i),
-              )
-              .toList();
-          final highPrio = items
-              .where(
-                (i) =>
-                    ['high', 'urgent'].contains(i.priority) &&
-                    i.status != 'doing' &&
-                    !overdue.contains(i) &&
-                    !dueToday.contains(i) &&
-                    !phoneQueue.contains(i),
-              )
-              .toList();
+          final buckets = bucketTodayItems(items, now: DateTime.now());
+          final doing = buckets.doing;
+          final overdue = buckets.overdue;
+          final dueToday = buckets.dueToday;
+          final phoneQueue = buckets.phoneQueue;
+          final highPrio = buckets.highPrio;
 
           return ListView(
             padding: const EdgeInsets.all(16),

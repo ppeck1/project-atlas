@@ -106,3 +106,6 @@ For public changes, also verify:
   profile switch.
 - Historical Git objects are not rewritten by normal public-tree cleanup.
 - Compatibility reads do not rename or modify linked project files.
+- The Today screen's midnight rollover uses a wall-clock `Timer`; wall-clock
+  timers do not reliably survive OS sleep/resume, so the date header may lag
+  until the next rebuild after a resume.
