@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../theme/atlas_colors.dart';
 import 'atlas_shortcuts.dart';
 
 /// Resolves the selected nav-rail index for [location] against [destinationPaths].
@@ -110,20 +111,18 @@ class _AtlasNavRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const bg = Color(0xFF151A22);
-    const line = Color(0xFF273044);
-    const primary = Color(0xFF79A7FF);
+    final colors = Theme.of(context).extension<AtlasColors>()!;
 
     return Container(
       width: 72,
-      color: bg,
+      color: colors.panel,
       child: Column(
         children: [
           // Logo mark
           Container(
             padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: line)),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: colors.line)),
             ),
             child: Column(
               children: [
@@ -131,23 +130,23 @@ class _AtlasNavRail extends StatelessWidget {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0F1115),
+                    color: colors.bg,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: line),
+                    border: Border.all(color: colors.line),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.location_on,
-                    color: primary,
+                    color: colors.primary,
                     size: 20,
                   ),
                 ),
                 const SizedBox(height: 4),
-                const Text(
+                Text(
                   'ATLAS',
                   style: TextStyle(
                     fontSize: 8,
                     fontWeight: FontWeight.w800,
-                    color: primary,
+                    color: colors.primary,
                     letterSpacing: 1.5,
                   ),
                 ),
@@ -174,8 +173,8 @@ class _AtlasNavRail extends StatelessWidget {
 
           // Settings pinned to bottom
           Container(
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: line)),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: colors.line)),
             ),
             child: _NavItem(
               dest: settingsDest,
@@ -202,8 +201,7 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const primary = Color(0xFF79A7FF);
-    const inactive = Color(0xFF879AB5);
+    final colors = Theme.of(context).extension<AtlasColors>()!;
 
     return InkWell(
       onTap: onTap,
@@ -215,15 +213,13 @@ class _NavItem extends StatelessWidget {
               duration: const Duration(milliseconds: 150),
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
               decoration: BoxDecoration(
-                color: isSelected
-                    ? const Color(0x26799AFF)
-                    : Colors.transparent,
+                color: isSelected ? colors.selectedFill : Colors.transparent,
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Icon(
                 isSelected ? dest.selectedIcon : dest.icon,
                 size: 22,
-                color: isSelected ? primary : inactive,
+                color: isSelected ? colors.primary : colors.inactive,
               ),
             ),
             const SizedBox(height: 2),
@@ -231,7 +227,7 @@ class _NavItem extends StatelessWidget {
               dest.label,
               style: TextStyle(
                 fontSize: 10,
-                color: isSelected ? primary : inactive,
+                color: isSelected ? colors.primary : colors.inactive,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
               ),
             ),

@@ -90,6 +90,9 @@ For public changes, also verify:
 ## Maintainer map
 
 - Product surfaces: `lib/features/`
+- Design tokens: `lib/shared/theme/atlas_colors.dart`
+  (`ThemeExtension<AtlasColors>`, registered in `lib/app/theme.dart`)
+- App-level keyboard shortcuts: `lib/shared/widgets/atlas_shortcuts.dart`
 - State and orchestration: `lib/shared/models/app_state.dart`
 - Persistence: `lib/db/`
 - Runtime and integrations: `lib/services/`

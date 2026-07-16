@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../db/app_db.dart';
+import '../../shared/theme/atlas_colors.dart';
 import '../../services/workload_planning_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
@@ -394,10 +395,11 @@ class _TodayTaskList extends StatelessWidget {
             ? const <_TodayTaskGroup>[]
             : _groupTodayTasks(filtered, contextData.projectByItem);
 
+        final colors = Theme.of(context).extension<AtlasColors>()!;
         return Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF151A22),
-            border: Border.all(color: const Color(0xFF273044)),
+            color: colors.panel,
+            border: Border.all(color: colors.line),
             borderRadius: BorderRadius.circular(8),
           ),
           padding: const EdgeInsets.all(12),
@@ -515,16 +517,17 @@ class _TodayTaskGroupPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: group.isGeneral
-            ? const Color(0x1A79A7FF)
-            : const Color(0xFF10141B),
+            ? colors.primary.withAlpha(0x1A)
+            : colors.surfaceDeep,
         border: Border.all(
           color: group.isGeneral
-              ? const Color(0x5579A7FF)
-              : const Color(0xFF273044),
+              ? colors.primary.withAlpha(0x55)
+              : colors.line,
         ),
         borderRadius: BorderRadius.circular(8),
       ),
@@ -537,7 +540,7 @@ class _TodayTaskGroupPanel extends StatelessWidget {
           leading: Icon(
             group.isGeneral ? Icons.push_pin_outlined : Icons.folder_outlined,
             size: 18,
-            color: group.isGeneral ? const Color(0xFF79A7FF) : Colors.white70,
+            color: group.isGeneral ? colors.primary : Colors.white70,
           ),
           title: Text(
             group.title,
@@ -701,11 +704,12 @@ class _TaskListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF10141B),
-        border: Border.all(color: const Color(0xFF273044)),
+        color: colors.surfaceDeep,
+        border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: InkWell(
@@ -748,14 +752,14 @@ class _TaskListTile extends StatelessWidget {
                           _SmallChip(
                             icon: Icons.folder_outlined,
                             label: project!.title,
-                            color: const Color(0xFF79A7FF),
+                            color: colors.primary,
                           ),
                         statusChip(normalizeStatusValue(item.status)),
                         for (final tag in tags)
                           _SmallChip(
                             icon: Icons.label_outline,
                             label: tag.name,
-                            color: _tagColor(tag),
+                            color: _tagColor(tag, fallback: colors.primary),
                           ),
                       ],
                     ),
@@ -1382,13 +1386,14 @@ List<String> _splitTagNames(String value) {
   return names;
 }
 
-Color _tagColor(Tag tag) {
+Color _tagColor(Tag tag, {Color? fallback}) {
   final raw = tag.color;
   if (raw != null && raw.startsWith('#') && raw.length == 7) {
     final parsed = int.tryParse(raw.substring(1), radix: 16);
     if (parsed != null) return Color(0xFF000000 | parsed);
   }
-  return const Color(0xFF79A7FF);
+  // Fallback to AtlasColors.primary; caller should supply it from the theme.
+  return fallback ?? AtlasColors.defaults.primary;
 }
 
 class _TodayLoadError extends StatelessWidget {
@@ -1550,6 +1555,7 @@ class _MetricBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -1557,8 +1563,8 @@ class _MetricBox extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           decoration: BoxDecoration(
-            color: const Color(0xFF151A22),
-            border: Border.all(color: const Color(0xFF273044)),
+            color: colors.panel,
+            border: Border.all(color: colors.line),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Column(

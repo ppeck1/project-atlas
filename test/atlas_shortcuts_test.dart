@@ -18,6 +18,7 @@ import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:project_atlas/app/theme.dart';
 import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
 import 'package:project_atlas/shared/models/app_state_scope.dart';
@@ -27,6 +28,9 @@ Widget _buildHarness({required AppState state}) {
   return AppStateScope(
     state: state,
     child: MaterialApp(
+      // Real app theme so ThemeExtension<AtlasColors> lookups succeed in any
+      // widget this harness ends up building.
+      theme: buildAtlasTheme(),
       home: Shortcuts(
         shortcuts: atlasShortcuts,
         child: Actions(

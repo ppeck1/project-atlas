@@ -4,6 +4,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:project_atlas/app/theme.dart';
 import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/features/today/today_screen.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
@@ -32,7 +33,9 @@ void main() {
       await tester.pumpWidget(
         AppStateScope(
           state: state,
-          child: const MaterialApp(home: TodayScreen()),
+          // Use the real app theme so ThemeExtension<AtlasColors> lookups
+          // (with `!`) succeed like they do in production.
+          child: MaterialApp(theme: buildAtlasTheme(), home: const TodayScreen()),
         ),
       );
 
