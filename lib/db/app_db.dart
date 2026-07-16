@@ -934,6 +934,11 @@ class AppDb extends _$AppDb {
           await m.createTable(localProjectRefreshItems);
         } catch (_) {}
       }
+      // Intentional gap: there are no `from < 13` … `from < 17` steps.
+      // schemaVersion jumped 12 -> 18 in a single commit ("Add operations
+      // registry and agent bridge"); versions 13-17 were never shipped in
+      // any committed build, so no database can exist at those versions.
+      // Everything added during that span is migrated by this v18 block.
       if (from < 18) {
         try {
           await m.addColumn(projects, projects.category);
