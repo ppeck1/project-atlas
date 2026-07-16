@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'atlas_shortcuts.dart';
 
 /// Resolves the selected nav-rail index for [location] against [destinationPaths].
 ///
@@ -59,20 +60,32 @@ class AtlasShell extends StatelessWidget {
     );
     final settingsSelected = location.startsWith('/settings');
 
-    return Scaffold(
-      body: Row(
-        children: [
-          _AtlasNavRail(
-            destinations: destinations,
-            selectedIndex: settingsSelected ? -1 : selectedIndex,
-            settingsDest: settingsDest,
-            settingsSelected: settingsSelected,
-            onDestinationSelected: (i) => context.go(destinations[i].path),
-            onSettingsSelected: () => context.go('/settings'),
+    return Shortcuts(
+      shortcuts: atlasShortcuts,
+      child: Actions(
+        actions: atlasActions(),
+        child: Focus(
+          autofocus: true,
+          // Allow the focus node to receive key events without stealing focus
+          // from text fields: descendant focus always wins over this node.
+          child: Scaffold(
+            body: Row(
+              children: [
+                _AtlasNavRail(
+                  destinations: destinations,
+                  selectedIndex: settingsSelected ? -1 : selectedIndex,
+                  settingsDest: settingsDest,
+                  settingsSelected: settingsSelected,
+                  onDestinationSelected: (i) =>
+                      context.go(destinations[i].path),
+                  onSettingsSelected: () => context.go('/settings'),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(child: child),
+              ],
+            ),
           ),
-          const VerticalDivider(width: 1),
-          Expanded(child: child),
-        ],
+        ),
       ),
     );
   }
