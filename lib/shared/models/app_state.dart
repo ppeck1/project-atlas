@@ -959,7 +959,9 @@ class AppState extends ChangeNotifier {
           return ProjectDetailSectionVisibility(visibleSectionIds: visible);
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] loadProjectDetailSectionVisibility: JSON parse of visible sections failed (continuing): $e');
+    }
     return ProjectDetailSectionVisibility(visibleSectionIds: defaults);
   }
 
@@ -7275,7 +7277,9 @@ class AppState extends ChangeNotifier {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is List) return decoded.map((item) => '$item').toList();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _decodeStringList: JSON parse of string list failed (continuing): $e');
+    }
     return const [];
   }
 
@@ -7286,7 +7290,9 @@ class AppState extends ChangeNotifier {
         final value = (raw['displayName'] as String).trim();
         if (value.isNotEmpty) return value;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _displayNameFromObservation: JSON parse of observation rawJson failed (continuing): $e');
+    }
     return p.basename(observation.observedPath);
   }
 
@@ -7460,13 +7466,19 @@ class AppState extends ChangeNotifier {
     List<ProjectPerson> people = [];
     try {
       risks = await getProjectRisks(projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load risks (continuing): $e');
+    }
     try {
       decisions = await getProjectDecisions(projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load decisions (continuing): $e');
+    }
     try {
       people = await getProjectPeople(projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load people (continuing): $e');
+    }
 
     final suppliedDocs = await db.getDocumentsForProject(projectId);
     final rankedDocs =
@@ -8080,7 +8092,9 @@ class AppState extends ChangeNotifier {
           final text = await file.readAsString();
           return clean(text);
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Atlas] _readDocumentText: failed to read document from disk at $path (continuing): $e');
+      }
     }
     return null;
   }
@@ -8636,7 +8650,9 @@ class AppState extends ChangeNotifier {
     try {
       final decoded = jsonDecode(text);
       if (decoded is Map) return Map<String, Object?>.from(decoded);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _decodeJsonMap: JSON parse of map failed (continuing): $e');
+    }
     return {'raw': raw};
   }
 
