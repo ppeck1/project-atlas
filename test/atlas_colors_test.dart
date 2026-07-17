@@ -53,6 +53,16 @@ void main() {
       expect(colors.surfaceDeep, const Color(0xFF10141B));
     });
 
+    test('warningFill == Color(0x22FF9800)', () {
+      final colors = theme.extension<AtlasColors>()!;
+      expect(colors.warningFill, const Color(0x22FF9800));
+    });
+
+    test('warningBorder == Color(0x55FF9800)', () {
+      final colors = theme.extension<AtlasColors>()!;
+      expect(colors.warningBorder, const Color(0x55FF9800));
+    });
+
     test('copyWith overrides individual fields', () {
       final colors = theme.extension<AtlasColors>()!;
       final modified = colors.copyWith(bg: const Color(0xFF000000));
@@ -70,6 +80,8 @@ void main() {
         inactive: Color(0xFF000000),
         selectedFill: Color(0xFF000000),
         surfaceDeep: Color(0xFF000000),
+        warningFill: Color(0xFF000000),
+        warningBorder: Color(0xFF000000),
       );
       expect(a.lerp(other, 0.0).bg, a.bg);
       expect(a.lerp(other, 1.0).bg, other.bg);

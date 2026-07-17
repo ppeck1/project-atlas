@@ -14,6 +14,8 @@ class AtlasColors extends ThemeExtension<AtlasColors> {
     required this.inactive,
     required this.selectedFill,
     required this.surfaceDeep,
+    required this.warningFill,
+    required this.warningBorder,
   });
 
   /// App scaffold background. #0F1115
@@ -41,6 +43,12 @@ class AtlasColors extends ThemeExtension<AtlasColors> {
   /// #10141B
   final Color surfaceDeep;
 
+  /// Warning box fill (amber at ~13% opacity). 0x22FF9800
+  final Color warningFill;
+
+  /// Warning box border (amber at ~33% opacity). 0x55FF9800
+  final Color warningBorder;
+
   /// Canonical Atlas palette.
   static const AtlasColors defaults = AtlasColors(
     bg: Color(0xFF0F1115),
@@ -50,6 +58,8 @@ class AtlasColors extends ThemeExtension<AtlasColors> {
     inactive: Color(0xFF879AB5),
     selectedFill: Color(0x26799AFF),
     surfaceDeep: Color(0xFF10141B),
+    warningFill: Color(0x22FF9800),
+    warningBorder: Color(0x55FF9800),
   );
 
   @override
@@ -61,6 +71,8 @@ class AtlasColors extends ThemeExtension<AtlasColors> {
     Color? inactive,
     Color? selectedFill,
     Color? surfaceDeep,
+    Color? warningFill,
+    Color? warningBorder,
   }) {
     return AtlasColors(
       bg: bg ?? this.bg,
@@ -70,6 +82,8 @@ class AtlasColors extends ThemeExtension<AtlasColors> {
       inactive: inactive ?? this.inactive,
       selectedFill: selectedFill ?? this.selectedFill,
       surfaceDeep: surfaceDeep ?? this.surfaceDeep,
+      warningFill: warningFill ?? this.warningFill,
+      warningBorder: warningBorder ?? this.warningBorder,
     );
   }
 
@@ -84,6 +98,8 @@ class AtlasColors extends ThemeExtension<AtlasColors> {
       inactive: Color.lerp(inactive, other.inactive, t)!,
       selectedFill: Color.lerp(selectedFill, other.selectedFill, t)!,
       surfaceDeep: Color.lerp(surfaceDeep, other.surfaceDeep, t)!,
+      warningFill: Color.lerp(warningFill, other.warningFill, t)!,
+      warningBorder: Color.lerp(warningBorder, other.warningBorder, t)!,
     );
   }
 }

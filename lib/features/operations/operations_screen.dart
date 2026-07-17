@@ -10,11 +10,8 @@ import 'package:go_router/go_router.dart';
 import '../../db/app_db.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/theme/atlas_colors.dart';
 
-const _bg = Color(0xFF0F1115);
-const _panel = Color(0xFF151A22);
-const _line = Color(0xFF273044);
-const _primary = Color(0xFF79A7FF);
 const _text87 = Color(0xDEFFFFFF);
 const _text54 = Color(0x8AFFFFFF);
 
@@ -119,16 +116,17 @@ class _OperationsScreenState extends State<OperationsScreen>
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Scaffold(
-      backgroundColor: _bg,
+      backgroundColor: colors.bg,
       appBar: AppBar(
         title: const Text('Operations'),
         bottom: TabBar(
           controller: _tabs,
           isScrollable: true,
           tabAlignment: TabAlignment.start,
-          indicatorColor: _primary,
-          labelColor: _primary,
+          indicatorColor: colors.primary,
+          labelColor: colors.primary,
           unselectedLabelColor: _text54,
           tabs: const [
             Tab(text: 'Scan Runs'),
@@ -549,6 +547,7 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return StreamBuilder<List<ProjectObservation>>(
       stream: _observationsStream,
       builder: (context, observationSnap) {
@@ -615,7 +614,7 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
                   onIgnoreDescendants: () =>
                       _ignoreDescendants(context, observations),
                 ),
-                const Divider(height: 1, color: _line),
+                Divider(height: 1, color: colors.line),
                 Expanded(
                   child: rows.isEmpty
                       ? _EmptyState(
@@ -681,8 +680,9 @@ class _CandidateQueueToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
-      color: _panel,
+      color: colors.panel,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Wrap(
         spacing: 8,
@@ -716,7 +716,7 @@ class _CandidateQueueToolbar extends StatelessWidget {
           if (selectedCount > 0) ...[
             Text(
               '$selectedCount selected',
-              style: const TextStyle(fontSize: 12, color: _primary),
+              style: TextStyle(fontSize: 12, color: colors.primary),
             ),
             OutlinedButton.icon(
               onPressed: onAcceptSelected,
@@ -763,12 +763,13 @@ class _FilterChipButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return ChoiceChip(
       label: Text(label),
       selected: selected,
       onSelected: (_) => onSelected(),
-      selectedColor: const Color(0x3379A7FF),
-      side: const BorderSide(color: _line),
+      selectedColor: colors.primary.withAlpha(0x33),
+      side: BorderSide(color: colors.line),
     );
   }
 }
@@ -1195,6 +1196,7 @@ class _EnrichmentControlPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final applying = mode == _ProjectHealthMode.apply;
     return _Panel(
       child: Column(
@@ -1202,7 +1204,7 @@ class _EnrichmentControlPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.health_and_safety_outlined, color: _primary),
+              Icon(Icons.health_and_safety_outlined, color: colors.primary),
               const SizedBox(width: 10),
               const Expanded(
                 child: Text(
@@ -1692,13 +1694,14 @@ class _EnrichmentStepRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0x101C2434),
-        border: Border.all(color: _line),
+        border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -1794,14 +1797,15 @@ class _ProjectHealthWarningsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final groups = groupProjectHealthWarnings(warnings);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0x22FF9800),
-        border: Border.all(color: const Color(0x55FF9800)),
+        color: colors.warningFill,
+        border: Border.all(color: colors.warningBorder),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -1883,6 +1887,7 @@ class _EnrichmentProposalRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final contextLines = _proposalContextLines(proposal);
     return Container(
       width: double.infinity,
@@ -1890,7 +1895,7 @@ class _EnrichmentProposalRow extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0x101C2434),
-        border: Border.all(color: _line),
+        border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -2516,6 +2521,7 @@ class _EnrichmentFindingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final evidence = finding.evidence;
     final projectTitle = evidence['projectTitle']?.toString();
     final registryDisplayName = evidence['registryDisplayName']?.toString();
@@ -2542,7 +2548,7 @@ class _EnrichmentFindingRow extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0x141C2434),
-        border: Border.all(color: _line),
+        border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -2900,6 +2906,7 @@ class _RegistryTabState extends State<_RegistryTab> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectRegistryEntry>>(
       stream: _registryStream,
@@ -2953,7 +2960,7 @@ class _RegistryTabState extends State<_RegistryTab> {
                   onRefreshLinked: () => _refreshLinkedProjects(context),
                   onFilterChanged: (filter) => setState(() => _filter = filter),
                 ),
-                const Divider(height: 1, color: _line),
+                Divider(height: 1, color: colors.line),
                 Expanded(
                   child: rows.isEmpty
                       ? _EmptyState(
@@ -2999,8 +3006,9 @@ class _RegistryQueueToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
-      color: _panel,
+      color: colors.panel,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Wrap(
         spacing: 8,
@@ -3230,6 +3238,7 @@ class _RegistryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final linkedProjectId = entry.atlasProjectId;
     final canCreateOrUpdate =
         linkedProjectId == null && entry.reviewState == 'accepted';
@@ -3329,7 +3338,7 @@ class _RegistryTile extends StatelessWidget {
                     ),
                   IconButton(
                     tooltip: 'Open Atlas project',
-                    icon: const Icon(Icons.open_in_new, color: _primary),
+                    icon: Icon(Icons.open_in_new, color: colors.primary),
                     onPressed: () => context.go('/projects/$linkedProjectId'),
                   ),
                 ],
@@ -3433,6 +3442,7 @@ class _WarningsTabState extends State<_WarningsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return StreamBuilder<List<ProjectScanRun>>(
       stream: _scanRunsStream,
       builder: (context, runSnap) {
@@ -3483,7 +3493,7 @@ class _WarningsTabState extends State<_WarningsTab> {
                   count: rows.length,
                   onAction: (action) => _handleWarningsAction(context, action),
                 ),
-                const Divider(height: 1, color: _line),
+                Divider(height: 1, color: colors.line),
                 Expanded(
                   child: ListView.separated(
                     padding: const EdgeInsets.all(16),
@@ -3514,8 +3524,9 @@ class _WarningsToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
-      color: _panel,
+      color: colors.panel,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Wrap(
         spacing: 8,
@@ -3594,11 +3605,12 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       decoration: BoxDecoration(
-        color: _panel,
+        color: colors.panel,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _line),
+        border: Border.all(color: colors.line),
       ),
       padding: const EdgeInsets.all(14),
       child: Material(type: MaterialType.transparency, child: child),
@@ -3612,12 +3624,13 @@ class _Pill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0x1F79A7FF),
+        color: colors.primary.withAlpha(0x1F),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0x3379A7FF)),
+        border: Border.all(color: colors.primary.withAlpha(0x33)),
       ),
       child: Text(label, style: const TextStyle(fontSize: 12)),
     );

@@ -13,12 +13,9 @@ import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/models/project_metadata.dart';
 import '../../shared/widgets/create_project_dialog.dart';
+import '../../shared/theme/atlas_colors.dart';
 import 'project_metadata_dialog.dart';
 import '../work/status_priority_helpers.dart';
-
-const _kPanel = Color(0xFF151A22);
-const _kLine = Color(0xFF273044);
-const _kPrimary = Color(0xFF79A7FF);
 const _projectsTabCategorySortKey = 'projects_tab::category_sort';
 const _projectsTabProjectSortKey = 'projects_tab::project_sort';
 const _projectsTabPinnedCategoriesKey = 'projects_tab::pinned_categories';
@@ -250,77 +247,80 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Export project bundle'),
-          content: SizedBox(
-            width: 440,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  project.title,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _Pill(
-                      label: '${preview.atlasRecordCount} Atlas records',
-                      color: _kPrimary,
-                    ),
-                    _Pill(
-                      label: '${preview.copiedFileCount} copied files',
-                      color: Colors.green,
-                    ),
-                    _Pill(
-                      label: '${preview.documents} documents',
-                      color: Colors.cyan,
-                    ),
-                    _Pill(
-                      label: '${preview.workItems} work items',
-                      color: Colors.amber,
-                    ),
-                    _Pill(
-                      label: '${preview.decisions} decisions',
-                      color: Colors.purpleAccent,
-                    ),
-                  ],
-                ),
-                if (preview.warnings.isNotEmpty) ...[
+        builder: (ctx) {
+          final colors = Theme.of(ctx).extension<AtlasColors>()!;
+          return AlertDialog(
+            title: const Text('Export project bundle'),
+            content: SizedBox(
+              width: 440,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    project.title,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                   const SizedBox(height: 12),
-                  ...preview.warnings
-                      .take(4)
-                      .map(
-                        (warning) => Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            warning,
-                            style: const TextStyle(
-                              color: Colors.orangeAccent,
-                              fontSize: 12,
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _Pill(
+                        label: '${preview.atlasRecordCount} Atlas records',
+                        color: colors.primary,
+                      ),
+                      _Pill(
+                        label: '${preview.copiedFileCount} copied files',
+                        color: Colors.green,
+                      ),
+                      _Pill(
+                        label: '${preview.documents} documents',
+                        color: Colors.cyan,
+                      ),
+                      _Pill(
+                        label: '${preview.workItems} work items',
+                        color: Colors.amber,
+                      ),
+                      _Pill(
+                        label: '${preview.decisions} decisions',
+                        color: Colors.purpleAccent,
+                      ),
+                    ],
+                  ),
+                  if (preview.warnings.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    ...preview.warnings
+                        .take(4)
+                        .map(
+                          (warning) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(
+                              warning,
+                              style: const TextStyle(
+                                color: Colors.orangeAccent,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton.icon(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              icon: const Icon(Icons.archive_outlined, size: 16),
-              label: const Text('Choose ZIP path'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                icon: const Icon(Icons.archive_outlined, size: 16),
+                label: const Text('Choose ZIP path'),
+              ),
+            ],
+          );
+        },
       );
       if (confirmed != true || !mounted) return;
       final safeTitle = project.title
@@ -628,6 +628,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       useRootNavigator: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) {
+          final colors = Theme.of(ctx).extension<AtlasColors>()!;
           final newCount = preview.entries
               .where((entry) => entry.status == 'new')
               .length;
@@ -638,10 +639,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               .where((entry) => entry.status == 'unchanged')
               .length;
           return AlertDialog(
-            backgroundColor: _kPanel,
+            backgroundColor: colors.panel,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-              side: const BorderSide(color: _kLine),
+              side: BorderSide(color: colors.line),
             ),
             title: const Text('Preview project update'),
             content: SizedBox(
@@ -677,8 +678,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: const Color(0x22FF9800),
-                        border: Border.all(color: const Color(0x55FF9800)),
+                        color: colors.warningFill,
+                        border: Border.all(color: colors.warningBorder),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -921,6 +922,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final state = AppStateScope.of(context);
     final summaryRefreshBusy =
         state.projectAiSummariesEnabled &&
@@ -1062,7 +1064,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                 totalCount: projects.length,
                                 filteredCount: filtered.length,
                               ),
-                              const Divider(height: 1, color: _kLine),
+                              Divider(height: 1, color: colors.line),
                               Expanded(
                                 child: StreamBuilder<Project?>(
                                   stream: _activeProject,
@@ -1550,6 +1552,7 @@ class _ProjectUploadDialogState extends State<_ProjectUploadDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final registry = widget.registry;
     final linkedProjectId = registry?.atlasProjectId;
     final isLinked = linkedProjectId != null && linkedProjectId.isNotEmpty;
@@ -1582,7 +1585,7 @@ class _ProjectUploadDialogState extends State<_ProjectUploadDialog> {
                 children: [
                   _Pill(
                     label: widget.observation.classificationGuess,
-                    color: _kPrimary,
+                    color: colors.primary,
                   ),
                   _Pill(
                     label: '${widget.observation.confidence}% confidence',
@@ -1632,8 +1635,8 @@ class _ProjectUploadDialogState extends State<_ProjectUploadDialog> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0x22FF9800),
-                    border: Border.all(color: const Color(0x55FF9800)),
+                    color: colors.warningFill,
+                    border: Border.all(color: colors.warningBorder),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -1726,6 +1729,7 @@ class _ProjectUploadProgressOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return AbsorbPointer(
       child: Container(
         color: Colors.black.withAlpha(150),
@@ -1734,8 +1738,8 @@ class _ProjectUploadProgressOverlay extends StatelessWidget {
             width: 360,
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: _kPanel,
-              border: Border.all(color: _kLine),
+              color: colors.panel,
+              border: Border.all(color: colors.line),
               borderRadius: BorderRadius.circular(8),
               boxShadow: const [
                 BoxShadow(
@@ -1818,8 +1822,9 @@ class _FilterBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
-      color: _kPanel,
+      color: colors.panel,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Wrap(
         spacing: 8,
@@ -2052,6 +2057,7 @@ class _ProjectTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final hasPhase = (project.phase ?? '').isNotEmpty;
     final priority = normalizePriorityValue(project.priority);
     return Padding(
@@ -2062,9 +2068,9 @@ class _ProjectTile extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: _kPanel,
+            color: colors.panel,
             border: Border.all(
-              color: isSelected ? const Color(0x4479A7FF) : _kLine,
+              color: isSelected ? colors.primary.withAlpha(0x44) : colors.line,
             ),
             borderRadius: BorderRadius.circular(14),
           ),
@@ -2076,14 +2082,14 @@ class _ProjectTile extends StatelessWidget {
                 height: 36,
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? const Color(0x2679A7FF)
+                      ? colors.primary.withAlpha(0x26)
                       : const Color(0x10FFFFFF),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
                   isSelected ? Icons.folder_open : Icons.folder_outlined,
                   size: 18,
-                  color: isSelected ? _kPrimary : Colors.white38,
+                  color: isSelected ? colors.primary : Colors.white38,
                 ),
               ),
               const SizedBox(width: 12),
@@ -2161,7 +2167,7 @@ class _ProjectTile extends StatelessWidget {
                             .map(
                               (tag) => _Pill(
                                 label: '#${tag.name}',
-                                color: _tagColor(tag),
+                                color: _tagColor(tag, primary: colors.primary),
                               ),
                             ),
                       ],
@@ -2184,7 +2190,7 @@ class _ProjectTile extends StatelessWidget {
                   icon: Icon(
                     isPinned ? Icons.push_pin : Icons.push_pin_outlined,
                     size: 18,
-                    color: isPinned ? _kPrimary : Colors.white54,
+                    color: isPinned ? colors.primary : Colors.white54,
                   ),
                 ),
               IconButton(
@@ -2277,6 +2283,7 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return StreamBuilder<ProjectRuntimeProfile?>(
       stream: _runtimeProfile,
       builder: (context, profileSnap) {
@@ -2298,7 +2305,7 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
                   tooltip: 'Launch project',
                   busy: _launching,
                   icon: Icons.rocket_launch_outlined,
-                  color: _runtimeRunColor(_latestRuntimeRun(runs, 'launch')),
+                  color: _runtimeRunColor(_latestRuntimeRun(runs, 'launch'), primary: colors.primary),
                   onPressed: () => _runRuntimeAction(
                     action: 'launch',
                     body: () => AppStateScope.of(
@@ -2310,7 +2317,7 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
                   tooltip: tests.isEmpty ? 'No test command' : 'Run tests',
                   busy: _testing,
                   icon: Icons.fact_check_outlined,
-                  color: _runtimeRunColor(latestTest),
+                  color: _runtimeRunColor(latestTest, primary: colors.primary),
                   onPressed: tests.isEmpty
                       ? null
                       : () => _runRuntimeAction(
@@ -2327,7 +2334,7 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
                       : 'Capsule disabled',
                   busy: _checkingCapsule,
                   icon: Icons.health_and_safety_outlined,
-                  color: _runtimeRunColor(latestCapsule),
+                  color: _runtimeRunColor(latestCapsule, primary: colors.primary),
                   onPressed: profile.capsuleEnabled
                       ? () => _runRuntimeAction(
                           action: 'capsule',
@@ -2483,11 +2490,11 @@ ProjectRuntimeRun? _latestRuntimeRun(
   return null;
 }
 
-Color _runtimeRunColor(ProjectRuntimeRun? run) {
+Color _runtimeRunColor(ProjectRuntimeRun? run, {required Color primary}) {
   if (run == null) return Colors.white54;
   return switch (run.status) {
     'succeeded' || 'started' => const Color(0xFF4CAF50),
-    'running' => _kPrimary,
+    'running' => primary,
     'failed' => const Color(0xFFFF8A80),
     _ => Colors.white54,
   };
@@ -2566,6 +2573,7 @@ class _ProjectCategorySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -2577,8 +2585,9 @@ class _ProjectCategorySection extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
+                // TODO(paul): 0xFF10151D vs surfaceDeep 0xFF10141B — near-miss (1 step diff); keep literal until resolved.
                 color: const Color(0xFF10151D),
-                border: Border.all(color: _kLine),
+                border: Border.all(color: colors.line),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
@@ -2614,7 +2623,7 @@ class _ProjectCategorySection extends StatelessWidget {
                       icon: Icon(
                         pinned ? Icons.push_pin : Icons.push_pin_outlined,
                         size: 16,
-                        color: pinned ? _kPrimary : Colors.white54,
+                        color: pinned ? colors.primary : Colors.white54,
                       ),
                     ),
                   ],
@@ -2634,20 +2643,21 @@ class _SelectedPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       margin: const EdgeInsets.only(left: 8),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0x2679A7FF),
-        border: Border.all(color: const Color(0x4D79A7FF)),
+        color: colors.primary.withAlpha(0x26),
+        border: Border.all(color: colors.primary.withAlpha(0x4D)),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: const Text(
+      child: Text(
         'SELECTED',
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.w700,
-          color: _kPrimary,
+          color: colors.primary,
         ),
       ),
     );
@@ -2786,18 +2796,21 @@ class _MiniPill extends StatelessWidget {
   const _MiniPill(this.label, this.value);
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    decoration: BoxDecoration(
-      color: Colors.white.withAlpha(8),
-      border: Border.all(color: _kLine),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Text(
-      '$label: $value',
-      style: const TextStyle(fontSize: 11, color: Colors.white70),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(8),
+        border: Border.all(color: colors.line),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        '$label: $value',
+        style: const TextStyle(fontSize: 11, color: Colors.white70),
+      ),
+    );
+  }
 }
 
 class _StatusDot extends StatelessWidget {
@@ -2807,8 +2820,9 @@ class _StatusDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final color = switch (status) {
-      'new' => _kPrimary,
+      'new' => colors.primary,
       'changed' => Colors.amber,
       'unchanged' => Colors.white30,
       _ => Colors.white54,
@@ -2862,11 +2876,11 @@ String _observationDisplayName(ProjectObservation observation) {
   return parts.isEmpty ? observation.observedPath : parts.last;
 }
 
-Color _tagColor(Tag tag) {
+Color _tagColor(Tag tag, {required Color primary}) {
   final raw = tag.color;
   if (raw != null && raw.startsWith('#') && raw.length == 7) {
     final parsed = int.tryParse(raw.substring(1), radix: 16);
     if (parsed != null) return Color(0xFF000000 | parsed);
   }
-  return _kPrimary;
+  return primary;
 }
