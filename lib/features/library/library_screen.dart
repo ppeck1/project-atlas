@@ -8,6 +8,7 @@ import '../../db/app_db.dart';
 import '../../db/document_extractor.dart';
 import '../../services/atlas_agent_service.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/widgets/atlas_shortcuts.dart';
 import '../../shared/widgets/document_preview.dart';
 
 const _bg = Color(0xFF0F1115);
@@ -133,6 +134,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String? _selectedId;
   bool _selectedIsDraft = false;
   final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: 'LibrarySearch');
   String _searchQuery = '';
   String? _filterProjectId;
   String _filterType = 'all';
@@ -145,6 +147,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void initState() {
     super.initState();
+    // Expose the search field to the app-level `/` shortcut.
+    AtlasSearchFocusRegistry.register(_searchFocus);
     if (widget.initialEntryId != null) {
       _selectedId = widget.initialEntryId;
       _selectedIsDraft = widget.initialEntryType == 'draft';
@@ -167,6 +171,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   void dispose() {
+    AtlasSearchFocusRegistry.unregister(_searchFocus);
+    _searchFocus.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -394,6 +400,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             filterProjectId: _filterProjectId,
                             filterType: _filterType,
                             searchCtrl: _searchCtrl,
+                            searchFocus: _searchFocus,
                             onSearch: (q) => setState(() => _searchQuery = q),
                             onProjectFilter: (pid) =>
                                 setState(() => _filterProjectId = pid),
@@ -633,6 +640,7 @@ class _Header extends StatelessWidget {
   final String? filterProjectId;
   final String filterType;
   final TextEditingController searchCtrl;
+  final FocusNode searchFocus;
   final ValueChanged<String> onSearch;
   final ValueChanged<String?> onProjectFilter;
   final ValueChanged<String> onTypeFilter;
@@ -645,6 +653,7 @@ class _Header extends StatelessWidget {
     required this.filterProjectId,
     required this.filterType,
     required this.searchCtrl,
+    required this.searchFocus,
     required this.onSearch,
     required this.onProjectFilter,
     required this.onTypeFilter,
@@ -675,6 +684,7 @@ class _Header extends StatelessWidget {
           Expanded(
             child: TextField(
               controller: searchCtrl,
+              focusNode: searchFocus,
               onChanged: onSearch,
               style: const TextStyle(color: _text87, fontSize: 13),
               decoration: InputDecoration(
