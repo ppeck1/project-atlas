@@ -212,6 +212,9 @@ class Documents extends Table {
   TextColumn get renderedMarkdown => text().nullable()();
   TextColumn get parseError => text().nullable()();
 
+  // v23 addition — soft delete (undo window before purge removes file + row)
+  DateTimeColumn get deletedAt => dateTime().nullable()();
+
   @override
   Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
 }

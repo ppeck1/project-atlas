@@ -4,8 +4,24 @@ import 'package:go_router/go_router.dart';
 
 import '../../db/app_db.dart'; // Project model
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  Stream<List<Project>>? _projectsStream;
+  Stream<Project?>? _activeProjectStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _projectsStream ??= state.watchProjects();
+    _activeProjectStream ??= state.watchActiveProject();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,12 +40,12 @@ class DashboardScreen extends StatelessWidget {
         ],
       ),
       body: StreamBuilder<List<Project>>(
-        stream: state.watchProjects(),
+        stream: _projectsStream,
         builder: (context, projSnap) {
           final projects = projSnap.data ?? const <Project>[];
 
           return StreamBuilder<Project?>(
-            stream: state.watchActiveProject(),
+            stream: _activeProjectStream,
             builder: (context, activeSnap) {
               final active = activeSnap.data;
 

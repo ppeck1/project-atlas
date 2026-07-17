@@ -1,29 +1,32 @@
 ﻿import 'package:flutter/material.dart';
 
+import '../shared/theme/atlas_colors.dart';
+
 ThemeData buildAtlasTheme() {
-  const bg = Color(0xFF0F1115);
-  const panel = Color(0xFF151A22);
-  const line = Color(0xFF273044);
+  const colors = AtlasColors.defaults;
 
   final base = ThemeData.dark(useMaterial3: true);
 
   return base.copyWith(
-    scaffoldBackgroundColor: bg,
+    scaffoldBackgroundColor: colors.bg,
     colorScheme: base.colorScheme.copyWith(
-      surface: panel,
-      outline: line,
-      primary: const Color(0xFF79A7FF),
+      surface: colors.panel,
+      outline: colors.line,
+      primary: colors.primary,
     ),
-    appBarTheme: const AppBarTheme(
-      backgroundColor: panel,
+    appBarTheme: AppBarTheme(
+      backgroundColor: colors.panel,
       surfaceTintColor: Colors.transparent,
     ),
     cardTheme: CardThemeData(
-      color: panel,
+      color: colors.panel,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: line),
+        side: BorderSide(color: colors.line),
       ),
     ),
+    extensions: const <ThemeExtension<dynamic>>[
+      AtlasColors.defaults,
+    ],
   );
 }

@@ -815,6 +815,15 @@ class AppState extends ChangeNotifier {
         debugPrintStack(stackTrace: stackTrace);
       }),
     );
+    unawaited(
+      purgeExpiredDeletedDocuments().catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        debugPrint('[Atlas] purge of expired deleted documents failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }),
+    );
     if (enableBackgroundSummaryRefresh) {
       _localProjectRefreshTimer = Timer.periodic(
         const Duration(hours: 12),
@@ -929,7 +938,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> setActiveById(String id) async {
     await db.setActiveProjectId(id);
-    notifyListeners();
+    // No notifyListeners(): _activeProjectSub (watchActiveProject listener in
+    // the constructor) fires on this meta write and notifies.
   }
 
   String _projectDetailVisibleSectionsKey(String projectId) =>
@@ -958,7 +968,9 @@ class AppState extends ChangeNotifier {
           return ProjectDetailSectionVisibility(visibleSectionIds: visible);
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] loadProjectDetailSectionVisibility: JSON parse of visible sections failed (continuing): $e');
+    }
     return ProjectDetailSectionVisibility(visibleSectionIds: defaults);
   }
 
@@ -1011,28 +1023,23 @@ class AppState extends ChangeNotifier {
     String stageId,
   ) async {
     await db.setActiveStageIdForProject(projectId, stageId);
-    notifyListeners();
   }
 
-  // Stage management
+  // Stage management (stage consumers read via watchStagesForProject streams)
   Future<void> addStage(String projectId, String title) async {
     await db.addStage(projectId, title);
-    notifyListeners();
   }
 
   Future<void> updateStageTitle(String stageId, String title) async {
     await db.updateStageTitle(stageId, title);
-    notifyListeners();
   }
 
   Future<void> deleteStage(String stageId) async {
     await db.deleteStage(stageId);
-    notifyListeners();
   }
 
   Future<void> reorderStage(String stageId, int newPosition) async {
     await db.reorderStage(stageId, newPosition);
-    notifyListeners();
   }
 
   // Daily reviews
@@ -1303,12 +1310,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> setWorkItemStatus(String id, String status) async {
     await db.setWorkItemStatus(id, status);
-    notifyListeners();
   }
 
   Future<void> toggleWorkDone(String workItemId) async {
     await db.toggleWorkDone(workItemId);
-    notifyListeners();
   }
 
   Future<WorkItem?> getWorkItem(String id) => db.getWorkItem(id);
@@ -1559,20 +1564,17 @@ class AppState extends ChangeNotifier {
   Stream<String?> watchWorkOwner(String id) => db.watchWorkOwner(id);
   Future<void> setWorkOwner(String id, String? owner) async {
     await db.setWorkOwner(id, owner);
-    notifyListeners();
   }
 
   Stream<String?> watchBottleneckOwner(String id) =>
       db.watchBottleneckOwner(id);
   Future<void> setBottleneckOwner(String id, String? owner) async {
     await db.setBottleneckOwner(id, owner);
-    notifyListeners();
   }
 
   Stream<bool> watchIsBottleneck(String id) => db.watchIsBottleneck(id);
   Future<void> setIsBottleneck(String id, bool v) async {
     await db.setIsBottleneck(id, v);
-    notifyListeners();
   }
 
   // ---------------------------------------------------------------------------
@@ -1721,7 +1723,6 @@ class AppState extends ChangeNotifier {
       projectId: projectId,
       workItemId: workItemId,
     );
-    notifyListeners();
     return id;
   }
 
@@ -1737,12 +1738,10 @@ class AppState extends ChangeNotifier {
       inputJson: inputJson,
       body: body,
     );
-    notifyListeners();
   }
 
   Future<void> deleteDraft(String id) async {
     await db.deleteDraft(id);
-    notifyListeners();
   }
 
   Future<Draft?> getLatestShopifySeoReviewDraft(String projectId) =>
@@ -1782,7 +1781,6 @@ class AppState extends ChangeNotifier {
         'source': snapshot.source,
       }),
     );
-    notifyListeners();
     return id;
   }
 
@@ -2094,7 +2092,6 @@ class AppState extends ChangeNotifier {
       entityId: projectId,
       outputJson: jsonEncode({'enabled': draft.enabled}),
     );
-    notifyListeners();
     return profile;
   }
 
@@ -2106,7 +2103,6 @@ class AppState extends ChangeNotifier {
       entityType: 'project',
       entityId: projectId,
     );
-    notifyListeners();
   }
 
   Future<ProjectRuntimeProfile?> importRuntimeProfileFromManifest(
@@ -2142,7 +2138,6 @@ class AppState extends ChangeNotifier {
   Future<ProjectRuntimeRun> launchProjectRuntime(String projectId) async {
     final profile = await _runtimeProfileForAction(projectId);
     final run = await ProjectRuntimeService(db: db).runLaunch(profile);
-    notifyListeners();
     return run;
   }
 
@@ -2154,14 +2149,12 @@ class AppState extends ChangeNotifier {
     final run = await ProjectRuntimeService(
       db: db,
     ).runTest(profile, command: command);
-    notifyListeners();
     return run;
   }
 
   Future<ProjectRuntimeRun> runProjectRuntimeCapsule(String projectId) async {
     final profile = await _runtimeProfileForAction(projectId);
     final run = await ProjectRuntimeService(db: db).runCapsule(profile);
-    notifyListeners();
     return run;
   }
 
@@ -2465,7 +2458,6 @@ class AppState extends ChangeNotifier {
       entityId: contactId,
       inputJson: name,
     );
-    notifyListeners();
     return contactId;
   }
 
@@ -2477,7 +2469,6 @@ class AppState extends ChangeNotifier {
       entityType: 'contact',
       entityId: id,
     );
-    notifyListeners();
   }
 
   Future<ContactResponsibilities> getContactResponsibilities(
@@ -2595,7 +2586,6 @@ class AppState extends ChangeNotifier {
       action: 'contacts_imported',
       outputJson: jsonEncode({'path': path, 'count': count}),
     );
-    notifyListeners();
     return count;
   }
 
@@ -2793,7 +2783,6 @@ class AppState extends ChangeNotifier {
       source: source,
       metadataJson: metadataJson,
     );
-    notifyListeners();
     return mediaId;
   }
 
@@ -2827,7 +2816,6 @@ class AppState extends ChangeNotifier {
       source: sourcePayload,
       metadataJson: metadataPayload,
     );
-    notifyListeners();
     return mediaId;
   }
 
@@ -2847,12 +2835,10 @@ class AppState extends ChangeNotifier {
       source: source,
       metadataJson: metadataJson,
     );
-    notifyListeners();
   }
 
   Future<void> setProjectCoverMedia(String projectId, String mediaId) async {
     await db.setProjectCoverMedia(projectId, mediaId);
-    notifyListeners();
   }
 
   Future<void> deleteProjectMedia(String id) async {
@@ -2861,7 +2847,6 @@ class AppState extends ChangeNotifier {
     if (media != null) {
       await _deleteAppOwnedMediaFileBestEffort(media);
     }
-    notifyListeners();
   }
 
   Stream<List<ProjectMediaItem>> watchMediaForWorkItem(String workItemId) =>
@@ -2895,7 +2880,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item',
       entityId: workItemId,
     );
-    notifyListeners();
   }
 
   Future<String> importWorkItemMediaFromPath(
@@ -2927,7 +2911,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item',
       entityId: workItemId,
     );
-    notifyListeners();
   }
 
   Future<void> attachProjectMediaToLlmTask(
@@ -2946,7 +2929,6 @@ class AppState extends ChangeNotifier {
       entityType: 'llm_task',
       entityId: taskId,
     );
-    notifyListeners();
   }
 
   Future<String> importLlmTaskMediaFromPath(
@@ -2978,12 +2960,77 @@ class AppState extends ChangeNotifier {
       entityType: 'llm_task',
       entityId: taskId,
     );
+  }
+
+  /// Immediate, permanent delete (row + links + stored file). Kept for the
+  /// purge path and internal replace flows; UI deletion goes through
+  /// [softDeleteDocument] so it can be undone.
+  Future<void> deleteDocument(String id) async {
+    await db.deleteDocument(id);
+  }
+
+  /// Soft-deletes a document: hides it from every read query but leaves the
+  /// DB row and the file on disk untouched so the action can be undone.
+  Future<void> softDeleteDocument(String id) async {
+    await db.softDeleteDocument(id);
+    await db.logEvent(
+      area: 'documents',
+      action: 'document_soft_deleted',
+      entityType: 'document',
+      entityId: id,
+    );
     notifyListeners();
   }
 
-  Future<void> deleteDocument(String id) async {
-    await db.deleteDocument(id);
+  /// Undoes a soft delete.
+  Future<void> restoreDocument(String id) async {
+    await db.restoreDocument(id);
+    await db.logEvent(
+      area: 'documents',
+      action: 'document_restored',
+      entityType: 'document',
+      entityId: id,
+    );
     notifyListeners();
+  }
+
+  /// Permanently removes documents that were soft-deleted at least
+  /// [olderThan] ago. The stored file is deleted from disk only when it lives
+  /// inside the app-owned `atlas_documents` directory (imports always copy
+  /// there; foreign paths are never touched); the row and its links are then
+  /// hard-deleted.
+  Future<void> purgeExpiredDeletedDocuments({
+    Duration olderThan = const Duration(days: 7),
+  }) async {
+    final expired = await db.getSoftDeletedDocumentsOlderThan(olderThan);
+    if (expired.isEmpty) return;
+    final appDocDir = await getApplicationDocumentsDirectory();
+    final atlasDir = p.normalize(p.join(appDocDir.path, 'atlas_documents'));
+    var purged = 0;
+    for (final doc in expired) {
+      final storedPath = doc.storedPath?.trim() ?? '';
+      if (storedPath.isNotEmpty) {
+        final normalized = p.normalize(storedPath);
+        if (p.isWithin(atlasDir, normalized)) {
+          try {
+            final file = File(normalized);
+            if (await file.exists()) await file.delete();
+          } on FileSystemException catch (error) {
+            debugPrint(
+              '[Atlas] purgeExpiredDeletedDocuments: failed to delete '
+              '$normalized: $error',
+            );
+          }
+        }
+      }
+      await db.deleteDocumentRowOnly(doc.id);
+      purged++;
+    }
+    await db.logEvent(
+      area: 'documents',
+      action: 'documents_purged',
+      outputJson: jsonEncode({'purged': purged}),
+    );
   }
 
   Future<Directory> _projectMediaDirectory(String projectId) async {
@@ -5391,7 +5438,6 @@ class AppState extends ChangeNotifier {
         'precedence': updated.precedence,
       }),
     );
-    notifyListeners();
     return updated;
   }
 
@@ -5437,7 +5483,6 @@ class AppState extends ChangeNotifier {
         'authorityLevel': updated.authorityLevel,
       }),
     );
-    notifyListeners();
     return updated;
   }
 
@@ -5940,7 +5985,6 @@ class AppState extends ChangeNotifier {
       source: 'associated_file:$filePath',
       metadataJson: metadataJson,
     );
-    notifyListeners();
     return id;
   }
 
@@ -7081,7 +7125,6 @@ class AppState extends ChangeNotifier {
           'totalSeen': result.totalSeen,
         }),
       );
-      notifyListeners();
       return runId;
     } catch (error, stackTrace) {
       await db.finishProjectScanRun(
@@ -7101,7 +7144,6 @@ class AppState extends ChangeNotifier {
         entityType: 'project_scan_run',
         entityId: runId,
       );
-      notifyListeners();
       rethrow;
     }
   }
@@ -7111,7 +7153,6 @@ class AppState extends ChangeNotifier {
       observationId: observationId,
       reviewState: 'accepted',
     );
-    notifyListeners();
   }
 
   Future<void> acceptProjectObservations(
@@ -7129,7 +7170,6 @@ class AppState extends ChangeNotifier {
       reviewState: 'linked',
       atlasProjectId: atlasProjectId,
     );
-    notifyListeners();
   }
 
   Future<void> ignoreProjectObservation(String observationId) async {
@@ -7137,7 +7177,6 @@ class AppState extends ChangeNotifier {
       observationId: observationId,
       reviewState: 'ignored',
     );
-    notifyListeners();
   }
 
   Future<void> ignoreProjectObservations(
@@ -7151,7 +7190,6 @@ class AppState extends ChangeNotifier {
       observationId: observationId,
       reviewState: 'needs_review',
     );
-    notifyListeners();
   }
 
   Future<void> markProjectObservationsNeedsReview(
@@ -7172,7 +7210,6 @@ class AppState extends ChangeNotifier {
         reviewState: reviewState,
       );
     }
-    notifyListeners();
   }
 
   Future<String> buildProjectScanRunExportJson(String scanRunId) async {
@@ -7316,7 +7353,9 @@ class AppState extends ChangeNotifier {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is List) return decoded.map((item) => '$item').toList();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _decodeStringList: JSON parse of string list failed (continuing): $e');
+    }
     return const [];
   }
 
@@ -7327,7 +7366,9 @@ class AppState extends ChangeNotifier {
         final value = (raw['displayName'] as String).trim();
         if (value.isNotEmpty) return value;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _displayNameFromObservation: JSON parse of observation rawJson failed (continuing): $e');
+    }
     return p.basename(observation.observedPath);
   }
 
@@ -7501,13 +7542,19 @@ class AppState extends ChangeNotifier {
     List<ProjectPerson> people = [];
     try {
       risks = await getProjectRisks(projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load risks (continuing): $e');
+    }
     try {
       decisions = await getProjectDecisions(projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load decisions (continuing): $e');
+    }
     try {
       people = await getProjectPeople(projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load people (continuing): $e');
+    }
 
     final suppliedDocs = await db.getDocumentsForProject(projectId);
     final rankedDocs =
@@ -8121,7 +8168,9 @@ class AppState extends ChangeNotifier {
           final text = await file.readAsString();
           return clean(text);
         }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Atlas] _readDocumentText: failed to read document from disk at $path (continuing): $e');
+      }
     }
     return null;
   }
@@ -8143,7 +8192,6 @@ class AppState extends ChangeNotifier {
         path,
         projectId: projectId ?? activeProject?.id,
       );
-      notifyListeners();
     } catch (e, st) {
       await db.logError(
         area: 'documents',
@@ -8171,7 +8219,6 @@ class AppState extends ChangeNotifier {
       entityId: workItemId,
       inputJson: jsonEncode({'documentId': documentId}),
     );
-    notifyListeners();
   }
 
   Future<void> unlinkDocumentFromWorkItem(
@@ -8186,7 +8233,6 @@ class AppState extends ChangeNotifier {
       entityId: workItemId,
       inputJson: jsonEncode({'documentId': documentId}),
     );
-    notifyListeners();
   }
 
   Stream<List<WorkItemNote>> watchNotesForWorkItem(String workItemId) =>
@@ -8202,7 +8248,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item',
       entityId: workItemId,
     );
-    notifyListeners();
   }
 
   Future<void> updateWorkItemNote(String noteId, String body) async {
@@ -8215,7 +8260,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item_note',
       entityId: noteId,
     );
-    notifyListeners();
   }
 
   Future<void> deleteWorkItemNote(String noteId) async {
@@ -8226,7 +8270,6 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item_note',
       entityId: noteId,
     );
-    notifyListeners();
   }
 
   Stream<List<WorkItemAnalysis>> watchAnalysesForWorkItem(String workItemId) =>
@@ -8299,7 +8342,6 @@ class AppState extends ChangeNotifier {
           entityId: workItemId,
           outputJson: jsonEncode({'model': modelName}),
         );
-        notifyListeners();
       } else {
         await db.logEvent(
           level: 'error',
@@ -8684,7 +8726,9 @@ class AppState extends ChangeNotifier {
     try {
       final decoded = jsonDecode(text);
       if (decoded is Map) return Map<String, Object?>.from(decoded);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _decodeJsonMap: JSON parse of map failed (continuing): $e');
+    }
     return {'raw': raw};
   }
 

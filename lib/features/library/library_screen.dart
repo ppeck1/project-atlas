@@ -8,6 +8,7 @@ import '../../db/app_db.dart';
 import '../../db/document_extractor.dart';
 import '../../services/atlas_agent_service.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/widgets/atlas_shortcuts.dart';
 import '../../shared/widgets/document_preview.dart';
 
 const _bg = Color(0xFF0F1115);
@@ -133,13 +134,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String? _selectedId;
   bool _selectedIsDraft = false;
   final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: 'LibrarySearch');
   String _searchQuery = '';
   String? _filterProjectId;
   String _filterType = 'all';
 
+  Stream<List<Project>>? _projects;
+  Stream<List<Document>>? _documents;
+  Stream<List<Draft>>? _drafts;
+  Stream<List<ProjectMediaItem>>? _media;
+
   @override
   void initState() {
     super.initState();
+    // Expose the search field to the app-level `/` shortcut.
+    AtlasSearchFocusRegistry.register(_searchFocus);
     if (widget.initialEntryId != null) {
       _selectedId = widget.initialEntryId;
       _selectedIsDraft = widget.initialEntryType == 'draft';
@@ -151,7 +160,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _projects ??= state.watchProjects();
+    _documents ??= state.watchDocuments();
+    _drafts ??= state.watchDrafts();
+    _media ??= state.watchAllProjectMedia();
+  }
+
+  @override
   void dispose() {
+    AtlasSearchFocusRegistry.unregister(_searchFocus);
+    _searchFocus.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -322,8 +343,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final state = AppStateScope.of(context);
 
     return StreamBuilder<List<Project>>(
-      stream: state.watchProjects(),
+      stream: _projects,
       builder: (context, projectSnap) {
+        if (projectSnap.connectionState == ConnectionState.waiting &&
+            projectSnap.data == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final loadError = projectSnap.error;
         if (projectSnap.hasError) {
           return _LibraryLoadError(error: loadError);
@@ -331,13 +356,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
         final projects = projectSnap.data ?? const <Project>[];
 
         return StreamBuilder<List<Document>>(
-          stream: state.watchDocuments(),
+          stream: _documents,
           builder: (context, docSnap) {
             return StreamBuilder<List<Draft>>(
-              stream: state.watchDrafts(),
+              stream: _drafts,
               builder: (context, draftSnap) {
                 return StreamBuilder<List<ProjectMediaItem>>(
-                  stream: state.watchAllProjectMedia(),
+                  stream: _media,
                   builder: (context, mediaSnap) {
                     final loadError =
                         docSnap.error ?? draftSnap.error ?? mediaSnap.error;
@@ -375,6 +400,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             filterProjectId: _filterProjectId,
                             filterType: _filterType,
                             searchCtrl: _searchCtrl,
+                            searchFocus: _searchFocus,
                             onSearch: (q) => setState(() => _searchQuery = q),
                             onProjectFilter: (pid) =>
                                 setState(() => _filterProjectId = pid),
@@ -515,53 +541,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                               selected.document != null &&
                                                   !selected.isDraft
                                               ? () async {
-                                                  final ok = await showDialog<bool>(
-                                                    context: context,
-                                                    builder: (ctx) => AlertDialog(
-                                                      backgroundColor: _panel,
-                                                      title: Text(
-                                                        'Delete ${selected.title}?',
-                                                      ),
+                                                  final docId =
+                                                      selected.document!.id;
+                                                  final messenger =
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      );
+                                                  await state
+                                                      .softDeleteDocument(
+                                                        docId,
+                                                      );
+                                                  if (!mounted) return;
+                                                  setState(
+                                                    () => _selectedId = null,
+                                                  );
+                                                  messenger.showSnackBar(
+                                                    SnackBar(
                                                       content: const Text(
-                                                        'This permanently removes the file from disk.',
+                                                        'Document deleted',
                                                       ),
-                                                      actions: [
-                                                        TextButton(
-                                                          onPressed: () =>
-                                                              Navigator.pop(
-                                                                ctx,
-                                                                false,
-                                                              ),
-                                                          child: const Text(
-                                                            'Cancel',
-                                                          ),
-                                                        ),
-                                                        FilledButton(
-                                                          style:
-                                                              FilledButton.styleFrom(
-                                                                backgroundColor:
-                                                                    Colors.red,
-                                                              ),
-                                                          onPressed: () =>
-                                                              Navigator.pop(
-                                                                ctx,
-                                                                true,
-                                                              ),
-                                                          child: const Text(
-                                                            'Delete',
-                                                          ),
-                                                        ),
-                                                      ],
+                                                      duration: const Duration(
+                                                        seconds: 6,
+                                                      ),
+                                                      action: SnackBarAction(
+                                                        label: 'Undo',
+                                                        onPressed: () => state
+                                                            .restoreDocument(
+                                                              docId,
+                                                            ),
+                                                      ),
                                                     ),
                                                   );
-                                                  if (ok == true && mounted) {
-                                                    await state.deleteDocument(
-                                                      selected.document!.id,
-                                                    );
-                                                    setState(
-                                                      () => _selectedId = null,
-                                                    );
-                                                  }
                                                 }
                                               : null,
                                         ),
@@ -630,6 +640,7 @@ class _Header extends StatelessWidget {
   final String? filterProjectId;
   final String filterType;
   final TextEditingController searchCtrl;
+  final FocusNode searchFocus;
   final ValueChanged<String> onSearch;
   final ValueChanged<String?> onProjectFilter;
   final ValueChanged<String> onTypeFilter;
@@ -642,6 +653,7 @@ class _Header extends StatelessWidget {
     required this.filterProjectId,
     required this.filterType,
     required this.searchCtrl,
+    required this.searchFocus,
     required this.onSearch,
     required this.onProjectFilter,
     required this.onTypeFilter,
@@ -672,6 +684,7 @@ class _Header extends StatelessWidget {
           Expanded(
             child: TextField(
               controller: searchCtrl,
+              focusNode: searchFocus,
               onChanged: onSearch,
               style: const TextStyle(color: _text87, fontSize: 13),
               decoration: InputDecoration(

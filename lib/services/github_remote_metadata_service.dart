@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 typedef GhApiRunner = Future<ProcessResult> Function(List<String> args);
 
 class GithubRemoteIdentity {
@@ -107,7 +109,9 @@ class GithubRemoteMetadataService {
           uri.userInfo.isNotEmpty) {
         return uri.replace(userInfo: '').toString();
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] GithubRemoteMetadataService._sanitizeRemoteUrl: URI parse failed for "$remoteUrl": $e');
+    }
     return remoteUrl;
   }
 

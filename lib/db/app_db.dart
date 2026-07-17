@@ -642,6 +642,18 @@ class LlmTaskQueueItem {
   };
 }
 
+/// Logs a tolerated schema-setup failure, staying quiet for the expected
+/// idempotency case (table/column/index already exists) so routine DB opens
+/// don't flood the log with known-benign errors.
+void _logToleratedSchemaError(String context, Object e) {
+  final message = e.toString();
+  if (message.contains('duplicate column name') ||
+      message.contains('already exists')) {
+    return;
+  }
+  debugPrint('[Atlas] $context failed (continuing): $e');
+}
+
 List<String> _decodeStringList(String? rawJson) {
   if (rawJson == null || rawJson.trim().isEmpty) return const <String>[];
   try {
@@ -649,7 +661,9 @@ List<String> _decodeStringList(String? rawJson) {
     if (decoded is List) {
       return decoded.map((item) => item.toString()).toList(growable: false);
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _decodeStringList: JSON decode failed: $e');
+  }
   return const <String>[];
 }
 
@@ -661,7 +675,9 @@ Map<String, Object?> _decodeObjectMap(String? rawJson) {
     if (decoded is Map) {
       return decoded.map((key, value) => MapEntry(key.toString(), value));
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _decodeObjectMap: JSON decode failed: $e');
+  }
   return const <String, Object?>{};
 }
 
@@ -799,7 +815,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 22;
+  int get schemaVersion => 23;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -852,7 +868,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v5 createTable', e);
+          }
         }
         for (final col in [
           projects.description,
@@ -864,12 +882,16 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await m.addColumn(projects, col);
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v5 addColumn projects.${col.name}', e);
+          }
         }
         for (final col in [stages.bottleneckOwner, stages.isBottleneck]) {
           try {
             await m.addColumn(stages, col);
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v5 addColumn stages.${col.name}', e);
+          }
         }
       }
       if (from < 6) {
@@ -883,7 +905,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await m.addColumn(projects, col);
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v6 addColumn projects.${col.name}', e);
+          }
         }
       }
       if (from < 7) {
@@ -893,13 +917,17 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v7 createTable', e);
+          }
         }
       }
       if (from < 8) {
         try {
           await m.createTable(contacts);
-        } catch (_) {}
+        } catch (e) {
+          _logToleratedSchemaError('migration v8 createTable contacts', e);
+        }
       }
       if (from < 9) {
         for (final fn in <Future<void> Function()>[
@@ -909,7 +937,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v9 createTable', e);
+          }
         }
       }
       if (from < 10) {
@@ -926,21 +956,34 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v11 createTable', e);
+          }
         }
       }
       if (from < 12) {
         try {
           await m.createTable(localProjectRefreshItems);
-        } catch (_) {}
+        } catch (e) {
+          _logToleratedSchemaError('migration v12 createTable localProjectRefreshItems', e);
+        }
       }
+      // Intentional gap: there are no `from < 13` … `from < 17` steps.
+      // schemaVersion jumped 12 -> 18 in a single commit ("Add operations
+      // registry and agent bridge"); versions 13-17 were never shipped in
+      // any committed build, so no database can exist at those versions.
+      // Everything added during that span is migrated by this v18 block.
       if (from < 18) {
         try {
           await m.addColumn(projects, projects.category);
-        } catch (_) {}
+        } catch (e) {
+          _logToleratedSchemaError('migration v18 addColumn projects.category', e);
+        }
         try {
           await m.createTable(mediaLinks);
-        } catch (_) {}
+        } catch (e) {
+          _logToleratedSchemaError('migration v18 createTable mediaLinks', e);
+        }
       }
       if (from < 19) {
         for (final fn in <Future<void> Function()>[
@@ -949,7 +992,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await fn();
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v19 createTable', e);
+          }
         }
       }
       if (from < 20) {
@@ -965,7 +1010,9 @@ class AppDb extends _$AppDb {
         ]) {
           try {
             await m.addColumn(workItems, col);
-          } catch (_) {}
+          } catch (e) {
+            _logToleratedSchemaError('migration v20 addColumn work_items.${col.name}', e);
+          }
         }
       }
       if (from < 21) {
@@ -973,6 +1020,16 @@ class AppDb extends _$AppDb {
       }
       if (from < 22) {
         await _ensureProjectRegistrySourceColumns();
+      }
+      if (from < 23) {
+        try {
+          await m.addColumn(documents, documents.deletedAt);
+        } catch (e) {
+          _logToleratedSchemaError(
+            'migration v23 addColumn documents.deleted_at',
+            e,
+          );
+        }
       }
     },
     beforeOpen: (_) async {
@@ -1075,7 +1132,9 @@ class AppDb extends _$AppDb {
     for (final stmt in addColumns) {
       try {
         await customStatement(stmt);
-      } catch (_) {}
+      } catch (e) {
+        _logToleratedSchemaError('_ensureProjectRegistrySourceColumns: addColumn', e);
+      }
     }
 
     await customStatement('''
@@ -1178,8 +1237,9 @@ class AppDb extends _$AppDb {
     for (final stmt in addColumns) {
       try {
         await customStatement(stmt);
-      } catch (_) {
+      } catch (e) {
         // Expected when column already exists — ignore.
+        _logToleratedSchemaError('_ensureProjectCompatibilityColumns: addColumn', e);
       }
     }
 
@@ -1256,14 +1316,18 @@ class AppDb extends _$AppDb {
     for (final stmt in createTables) {
       try {
         await customStatement(stmt);
-      } catch (_) {}
+      } catch (e) {
+        _logToleratedSchemaError('_ensureProjectCompatibilityColumns: createTable', e);
+      }
     }
 
     try {
       await customStatement(
         'ALTER TABLE project_media ADD COLUMN is_cover INTEGER NOT NULL DEFAULT 0',
       );
-    } catch (_) {}
+    } catch (e) {
+      _logToleratedSchemaError('_ensureProjectCompatibilityColumns: addColumn project_media.is_cover', e);
+    }
 
     // If project_people came from an alternate schema branch (role_type / authority_level),
     // rebuild it into the current expected shape so inserts don't fail on NOT NULL legacy cols.
@@ -1316,8 +1380,9 @@ class AppDb extends _$AppDb {
           );
         });
       }
-    } catch (_) {
+    } catch (e) {
       // If table doesn't exist yet or pragma fails, regular migrations handle creation.
+      debugPrint('[Atlas] _ensureProjectCompatibilityColumns: project_people schema rebuild failed (continuing): $e');
     }
     // Backfill any rows where non-nullable columns ended up NULL due to
     // partial migrations or SQLite schema-default edge cases.
@@ -1337,7 +1402,9 @@ class AppDb extends _$AppDb {
     for (final stmt in backfills) {
       try {
         await customStatement(stmt);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Atlas] _ensureProjectCompatibilityColumns: backfill UPDATE failed (continuing): $e');
+      }
     }
   }
 
@@ -1388,7 +1455,9 @@ class AppDb extends _$AppDb {
     for (final statement in statements) {
       try {
         await customStatement(statement);
-      } catch (_) {}
+      } catch (e) {
+        _logToleratedSchemaError('_ensureProjectRuntimeTables: statement', e);
+      }
     }
   }
 
@@ -2088,9 +2157,9 @@ class AppDb extends _$AppDb {
   Future<Map<String, String?>> getDocumentPathsForProject(
     String projectId,
   ) async {
-    final docs = await (select(
-      documents,
-    )..where((t) => t.projectId.equals(projectId))).get();
+    final docs = await (select(documents)..where(
+          (t) => t.projectId.equals(projectId) & t.deletedAt.isNull(),
+        )).get();
     return {for (final d in docs) d.id: d.storedPath};
   }
 
@@ -2753,13 +2822,15 @@ class AppDb extends _$AppDb {
 
   // ── Documents ─────────────────────────────────────────────────────────────
 
-  Stream<List<Document>> watchDocuments() => (select(
-    documents,
-  )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
+  Stream<List<Document>> watchDocuments() =>
+      (select(documents)
+            ..where((t) => t.deletedAt.isNull())
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
 
   Stream<List<Document>> watchDocumentsForProject(String projectId) =>
       (select(documents)
-            ..where((t) => t.projectId.equals(projectId))
+            ..where((t) => t.projectId.equals(projectId) & t.deletedAt.isNull())
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .watch();
 
@@ -2827,8 +2898,9 @@ class AppDb extends _$AppDb {
           }
         }
       }
-    } catch (_) {
+    } catch (e) {
       // Extraction failure must not prevent the DB record from being created.
+      debugPrint('[Atlas] importDocument: text extraction failed (continuing without extracted text): $e');
       extractedTextValue = null;
       renderedMarkdownValue = null;
     }
@@ -2863,7 +2935,9 @@ class AppDb extends _$AppDb {
       try {
         final copied = File(destPath);
         if (await copied.exists()) await copied.delete();
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Atlas] importDocument: cleanup of copied file after insert failure failed: $e');
+      }
       rethrow;
     }
     return id;
@@ -2871,7 +2945,7 @@ class AppDb extends _$AppDb {
 
   Future<List<Document>> getDocumentsForProject(String projectId) =>
       (select(documents)
-            ..where((t) => t.projectId.equals(projectId))
+            ..where((t) => t.projectId.equals(projectId) & t.deletedAt.isNull())
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .get();
 
@@ -2881,7 +2955,10 @@ class AppDb extends _$AppDb {
   ) =>
       (select(documents)
             ..where(
-              (t) => t.projectId.equals(projectId) & t.source.equals(source),
+              (t) =>
+                  t.projectId.equals(projectId) &
+                  t.source.equals(source) &
+                  t.deletedAt.isNull(),
             )
             ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
             ..limit(1))
@@ -2895,16 +2972,17 @@ class AppDb extends _$AppDb {
             ..where(
               (t) =>
                   t.projectId.equals(projectId) &
-                  t.originalFilename.equals(originalFilename),
+                  t.originalFilename.equals(originalFilename) &
+                  t.deletedAt.isNull(),
             )
             ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
             ..limit(1))
           .getSingleOrNull();
 
   Future<bool> documentExists(String id) async =>
-      (await (select(
-        documents,
-      )..where((t) => t.id.equals(id))).getSingleOrNull()) !=
+      (await (select(documents)..where(
+            (t) => t.id.equals(id) & t.deletedAt.isNull(),
+          )).getSingleOrNull()) !=
       null;
 
   Future<String> importGeneratedDocument({
@@ -2959,12 +3037,47 @@ class AppDb extends _$AppDb {
       documents,
     )..where((d) => d.id.equals(id))).getSingleOrNull();
     if (doc == null) return;
-    await (delete(documentLinks)..where((l) => l.documentId.equals(id))).go();
-    await (delete(documents)..where((d) => d.id.equals(id))).go();
+    await deleteDocumentRowOnly(id);
     if (doc.storedPath != null) {
       final file = File(doc.storedPath!);
       if (await file.exists()) await file.delete();
     }
+  }
+
+  /// Hard-deletes the document row and its links without touching any file
+  /// on disk. Used by the purge path, which applies its own app-ownership
+  /// check before removing the stored copy.
+  Future<void> deleteDocumentRowOnly(String id) async {
+    await (delete(documentLinks)..where((l) => l.documentId.equals(id))).go();
+    await (delete(documents)..where((d) => d.id.equals(id))).go();
+  }
+
+  /// Marks a document deleted without touching the row's file on disk.
+  /// Soft-deleted documents disappear from every read query until restored
+  /// or purged.
+  Future<void> softDeleteDocument(String id) async {
+    await (update(documents)..where((d) => d.id.equals(id))).write(
+      DocumentsCompanion(deletedAt: Value(DateTime.now())),
+    );
+  }
+
+  /// Clears a document's soft-delete marker (undo).
+  Future<void> restoreDocument(String id) async {
+    await (update(documents)..where((d) => d.id.equals(id))).write(
+      const DocumentsCompanion(deletedAt: Value(null)),
+    );
+  }
+
+  /// Soft-deleted documents whose deletion is at least [olderThan] in the
+  /// past — i.e. those eligible for permanent purge.
+  Future<List<Document>> getSoftDeletedDocumentsOlderThan(Duration olderThan) {
+    final cutoff = DateTime.now().subtract(olderThan);
+    return (select(documents)..where(
+          (t) =>
+              t.deletedAt.isNotNull() &
+              t.deletedAt.isSmallerOrEqualValue(cutoff),
+        ))
+        .get();
   }
 
   // ── Event log ─────────────────────────────────────────────────────────────
@@ -2979,7 +3092,8 @@ class AppDb extends _$AppDb {
           ])
           ..where(
             documentLinks.entityType.equals('work_item') &
-                documentLinks.entityId.equals(workItemId),
+                documentLinks.entityId.equals(workItemId) &
+                documents.deletedAt.isNull(),
           )
           ..orderBy([OrderingTerm.desc(documents.createdAt)]);
     return query.watch().map(
@@ -2998,7 +3112,8 @@ class AppDb extends _$AppDb {
           ])
           ..where(
             documentLinks.entityType.equals('work_item') &
-                documentLinks.entityId.equals(workItemId),
+                documentLinks.entityId.equals(workItemId) &
+                documents.deletedAt.isNull(),
           )
           ..orderBy([OrderingTerm.desc(documents.createdAt)]);
     return query.get().then(
@@ -3508,7 +3623,9 @@ class AppDb extends _$AppDb {
     ]) {
       try {
         await customStatement(stmt);
-      } catch (_) {}
+      } catch (e) {
+        _logToleratedSchemaError('_ensureLlmTaskQueueTable: addColumn', e);
+      }
     }
     await customStatement(
       'CREATE INDEX IF NOT EXISTS idx_llm_task_queue_project_status '
@@ -3822,7 +3939,7 @@ class AppDb extends _$AppDb {
                 NULL AS output_json
          FROM documents doc
          LEFT JOIN projects p ON p.id = doc.project_id
-         WHERE doc.project_id IS NOT NULL
+         WHERE doc.project_id IS NOT NULL AND doc.deleted_at IS NULL
          UNION ALL
          SELECT pm.project_id AS project_id,
                 pm.updated_at AS updated_at,

@@ -849,6 +849,13 @@ class _ActivityLogTabState extends State<_ActivityLogTab>
 
   String _level = 'all';
   String _area = 'all';
+  Stream<List<EventLogData>>? _eventsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _eventsStream ??= AppStateScope.of(context).watchRecentEvents();
+  }
 
   List<EventLogData> _filter(List<EventLogData> rows) => rows.where((e) {
     final levelOk = _level == 'all' || e.level == _level;
@@ -889,7 +896,7 @@ class _ActivityLogTabState extends State<_ActivityLogTab>
     super.build(context);
     final state = AppStateScope.of(context);
     return StreamBuilder<List<EventLogData>>(
-      stream: state.watchRecentEvents(),
+      stream: _eventsStream,
       builder: (context, snap) {
         final all = snap.data ?? const <EventLogData>[];
         final areas = [
@@ -2080,6 +2087,13 @@ class _WorkforceTab extends StatefulWidget {
 class _WorkforceTabState extends State<_WorkforceTab> {
   Contact? _selected;
   String? _status;
+  Stream<List<Contact>>? _contactsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _contactsStream ??= AppStateScope.of(context).watchContacts();
+  }
 
   Future<String?> _askPath(String title, String hint) async {
     final ctrl = TextEditingController();
@@ -2188,7 +2202,7 @@ class _WorkforceTabState extends State<_WorkforceTab> {
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     return StreamBuilder<List<Contact>>(
-      stream: state.watchContacts(),
+      stream: _contactsStream,
       builder: (context, snap) {
         final contacts = snap.data ?? const <Contact>[];
         final selected =

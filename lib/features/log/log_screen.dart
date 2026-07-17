@@ -16,6 +16,13 @@ class LogScreen extends StatefulWidget {
 class _LogScreenState extends State<LogScreen> {
   String _level = 'all';
   String _area = 'all';
+  Stream<List<EventLogData>>? _eventsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _eventsStream ??= AppStateScope.of(context).watchRecentEvents();
+  }
 
   List<EventLogData> _filter(List<EventLogData> rows) => rows.where((e) {
     final levelOk = _level == 'all' || e.level == _level;
@@ -77,7 +84,7 @@ class _LogScreenState extends State<LogScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Backend Log')),
       body: StreamBuilder<List<EventLogData>>(
-        stream: state.watchRecentEvents(),
+        stream: _eventsStream,
         builder: (context, snap) {
           final all = snap.data ?? const <EventLogData>[];
           final areas = [

@@ -10,11 +10,8 @@ import 'package:go_router/go_router.dart';
 import '../../db/app_db.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../shared/models/app_state_scope.dart';
+import '../../shared/theme/atlas_colors.dart';
 
-const _bg = Color(0xFF0F1115);
-const _panel = Color(0xFF151A22);
-const _line = Color(0xFF273044);
-const _primary = Color(0xFF79A7FF);
 const _text87 = Color(0xDEFFFFFF);
 const _text54 = Color(0x8AFFFFFF);
 
@@ -79,7 +76,9 @@ class _OperationsScreenState extends State<OperationsScreen>
   Future<void> _ensureScanFolder() async {
     try {
       await AppStateScope.of(context).ensureOperationsScansFolder();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _ensureScanFolder: ensureOperationsScansFolder failed: $e');
+    }
   }
 
   Future<void> _openScanFolder() async {
@@ -117,16 +116,17 @@ class _OperationsScreenState extends State<OperationsScreen>
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Scaffold(
-      backgroundColor: _bg,
+      backgroundColor: colors.bg,
       appBar: AppBar(
         title: const Text('Operations'),
         bottom: TabBar(
           controller: _tabs,
           isScrollable: true,
           tabAlignment: TabAlignment.start,
-          indicatorColor: _primary,
-          labelColor: _primary,
+          indicatorColor: colors.primary,
+          labelColor: colors.primary,
           unselectedLabelColor: _text54,
           tabs: const [
             Tab(text: 'Scan Runs'),
@@ -159,7 +159,7 @@ class _OperationsScreenState extends State<OperationsScreen>
   }
 }
 
-class _ScanRunsTab extends StatelessWidget {
+class _ScanRunsTab extends StatefulWidget {
   final List<String> roots;
   final bool scanning;
   final VoidCallback onAddFolder;
@@ -179,10 +179,22 @@ class _ScanRunsTab extends StatelessWidget {
   });
 
   @override
+  State<_ScanRunsTab> createState() => _ScanRunsTabState();
+}
+
+class _ScanRunsTabState extends State<_ScanRunsTab> {
+  Stream<List<ProjectScanRun>>? _scanRunsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scanRunsStream ??= AppStateScope.of(context).watchProjectScanRuns();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectScanRun>>(
-      stream: state.watchProjectScanRuns(),
+      stream: _scanRunsStream,
       builder: (context, snap) {
         if (snap.hasError) {
           return _EmptyState(
@@ -199,16 +211,17 @@ class _ScanRunsTab extends StatelessWidget {
           itemBuilder: (context, index) {
             if (index == 0) {
               return _ScanRootsPanel(
-                roots: roots,
-                scanning: scanning,
-                onAddFolder: onAddFolder,
-                onRemoveRoot: onRemoveRoot,
-                onResetRoots: onResetRoots,
-                onOpenFolder: onOpenFolder,
-                onRunScan: onRunScan,
+                roots: widget.roots,
+                scanning: widget.scanning,
+                onAddFolder: widget.onAddFolder,
+                onRemoveRoot: widget.onRemoveRoot,
+                onResetRoots: widget.onResetRoots,
+                onOpenFolder: widget.onOpenFolder,
+                onRunScan: widget.onRunScan,
               );
             }
-            if (snap.connectionState == ConnectionState.waiting) {
+            if (snap.connectionState == ConnectionState.waiting &&
+                snap.data == null) {
               return const Center(child: CircularProgressIndicator());
             }
             if (runs.isEmpty) {
@@ -472,6 +485,16 @@ class _ReviewCandidatesTab extends StatefulWidget {
 class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
   _CandidateFilter _filter = _CandidateFilter.needsAction;
   final Set<String> _selectedIds = {};
+  Stream<List<ProjectObservation>>? _observationsStream;
+  Stream<List<ProjectRegistryEntry>>? _registryStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _observationsStream ??= state.watchRecentProjectObservations();
+    _registryStream ??= state.watchProjectRegistry();
+  }
 
   Future<void> _bulkReview(
     BuildContext context,
@@ -524,9 +547,9 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return StreamBuilder<List<ProjectObservation>>(
-      stream: state.watchRecentProjectObservations(),
+      stream: _observationsStream,
       builder: (context, observationSnap) {
         if (observationSnap.hasError) {
           return _EmptyState(
@@ -539,7 +562,7 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
           observationSnap.data ?? const <ProjectObservation>[],
         );
         return StreamBuilder<List<ProjectRegistryEntry>>(
-          stream: state.watchProjectRegistry(),
+          stream: _registryStream,
           builder: (context, registrySnap) {
             if (registrySnap.hasError) {
               return _EmptyState(
@@ -562,7 +585,8 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
                   .toList(growable: false),
               registryByPath,
             );
-            if (observationSnap.connectionState == ConnectionState.waiting) {
+            if (observationSnap.connectionState == ConnectionState.waiting &&
+                observationSnap.data == null) {
               return const Center(child: CircularProgressIndicator());
             }
             if (observations.isEmpty) {
@@ -590,7 +614,7 @@ class _ReviewCandidatesTabState extends State<_ReviewCandidatesTab> {
                   onIgnoreDescendants: () =>
                       _ignoreDescendants(context, observations),
                 ),
-                const Divider(height: 1, color: _line),
+                Divider(height: 1, color: colors.line),
                 Expanded(
                   child: rows.isEmpty
                       ? _EmptyState(
@@ -656,8 +680,9 @@ class _CandidateQueueToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
-      color: _panel,
+      color: colors.panel,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Wrap(
         spacing: 8,
@@ -691,7 +716,7 @@ class _CandidateQueueToolbar extends StatelessWidget {
           if (selectedCount > 0) ...[
             Text(
               '$selectedCount selected',
-              style: const TextStyle(fontSize: 12, color: _primary),
+              style: TextStyle(fontSize: 12, color: colors.primary),
             ),
             OutlinedButton.icon(
               onPressed: onAcceptSelected,
@@ -738,12 +763,13 @@ class _FilterChipButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return ChoiceChip(
       label: Text(label),
       selected: selected,
       onSelected: (_) => onSelected(),
-      selectedColor: const Color(0x3379A7FF),
-      side: const BorderSide(color: _line),
+      selectedColor: colors.primary.withAlpha(0x33),
+      side: BorderSide(color: colors.line),
     );
   }
 }
@@ -1044,7 +1070,8 @@ class _EnrichmentRunsTabState extends State<_EnrichmentRunsTab> {
           );
         }
         final runs = snap.data ?? const <ProjectEnrichmentRun>[];
-        if (snap.connectionState == ConnectionState.waiting) {
+        if (snap.connectionState == ConnectionState.waiting &&
+            snap.data == null) {
           return const Center(child: CircularProgressIndicator());
         }
         return ListView.separated(
@@ -1169,6 +1196,7 @@ class _EnrichmentControlPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final applying = mode == _ProjectHealthMode.apply;
     return _Panel(
       child: Column(
@@ -1176,7 +1204,7 @@ class _EnrichmentControlPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.health_and_safety_outlined, color: _primary),
+              Icon(Icons.health_and_safety_outlined, color: colors.primary),
               const SizedBox(width: 10),
               const Expanded(
                 child: Text(
@@ -1442,7 +1470,9 @@ class _EnrichmentRunTileState extends State<_EnrichmentRunTile> {
               _cachedFindings = findings;
             }
           })
-          .catchError((_) {}),
+          .catchError((Object e) {
+            debugPrint('[Atlas] _loadFindings: getProjectEnrichmentFindingsForRun cache update failed: $e');
+          }),
     );
     return future;
   }
@@ -1664,13 +1694,14 @@ class _EnrichmentStepRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0x101C2434),
-        border: Border.all(color: _line),
+        border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -1766,14 +1797,15 @@ class _ProjectHealthWarningsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final groups = groupProjectHealthWarnings(warnings);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0x22FF9800),
-        border: Border.all(color: const Color(0x55FF9800)),
+        color: colors.warningFill,
+        border: Border.all(color: colors.warningBorder),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -1855,6 +1887,7 @@ class _EnrichmentProposalRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final contextLines = _proposalContextLines(proposal);
     return Container(
       width: double.infinity,
@@ -1862,7 +1895,7 @@ class _EnrichmentProposalRow extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0x101C2434),
-        border: Border.all(color: _line),
+        border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -2488,6 +2521,7 @@ class _EnrichmentFindingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final evidence = finding.evidence;
     final projectTitle = evidence['projectTitle']?.toString();
     final registryDisplayName = evidence['registryDisplayName']?.toString();
@@ -2514,7 +2548,7 @@ class _EnrichmentFindingRow extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: const Color(0x141C2434),
-        border: Border.all(color: _line),
+        border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -2813,6 +2847,16 @@ class _RegistryTab extends StatefulWidget {
 class _RegistryTabState extends State<_RegistryTab> {
   _RegistryFilter _filter = _RegistryFilter.needsAction;
   bool _refreshingLinked = false;
+  Stream<List<ProjectRegistryEntry>>? _registryStream;
+  Stream<List<ProjectObservation>>? _observationsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _registryStream ??= state.watchProjectRegistry();
+    _observationsStream ??= state.watchRecentProjectObservations(limit: 1000);
+  }
 
   Future<void> _refreshLinkedProjects(BuildContext context) async {
     if (_refreshingLinked) return;
@@ -2862,9 +2906,10 @@ class _RegistryTabState extends State<_RegistryTab> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectRegistryEntry>>(
-      stream: state.watchProjectRegistry(),
+      stream: _registryStream,
       builder: (context, snap) {
         if (snap.hasError) {
           return _EmptyState(
@@ -2874,7 +2919,8 @@ class _RegistryTabState extends State<_RegistryTab> {
           );
         }
         final entries = snap.data ?? const <ProjectRegistryEntry>[];
-        if (snap.connectionState == ConnectionState.waiting) {
+        if (snap.connectionState == ConnectionState.waiting &&
+            snap.data == null) {
           return const Center(child: CircularProgressIndicator());
         }
         if (entries.isEmpty) {
@@ -2884,7 +2930,7 @@ class _RegistryTabState extends State<_RegistryTab> {
           );
         }
         return StreamBuilder<List<ProjectObservation>>(
-          stream: state.watchRecentProjectObservations(limit: 1000),
+          stream: _observationsStream,
           builder: (context, observationSnap) {
             if (observationSnap.hasError) {
               return _EmptyState(
@@ -2914,7 +2960,7 @@ class _RegistryTabState extends State<_RegistryTab> {
                   onRefreshLinked: () => _refreshLinkedProjects(context),
                   onFilterChanged: (filter) => setState(() => _filter = filter),
                 ),
-                const Divider(height: 1, color: _line),
+                Divider(height: 1, color: colors.line),
                 Expanded(
                   child: rows.isEmpty
                       ? _EmptyState(
@@ -2960,8 +3006,9 @@ class _RegistryQueueToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
-      color: _panel,
+      color: colors.panel,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Wrap(
         spacing: 8,
@@ -3191,6 +3238,7 @@ class _RegistryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     final linkedProjectId = entry.atlasProjectId;
     final canCreateOrUpdate =
         linkedProjectId == null && entry.reviewState == 'accepted';
@@ -3290,7 +3338,7 @@ class _RegistryTile extends StatelessWidget {
                     ),
                   IconButton(
                     tooltip: 'Open Atlas project',
-                    icon: const Icon(Icons.open_in_new, color: _primary),
+                    icon: Icon(Icons.open_in_new, color: colors.primary),
                     onPressed: () => context.go('/projects/$linkedProjectId'),
                   ),
                 ],
@@ -3300,8 +3348,24 @@ class _RegistryTile extends StatelessWidget {
   }
 }
 
-class _WarningsTab extends StatelessWidget {
+class _WarningsTab extends StatefulWidget {
   const _WarningsTab();
+
+  @override
+  State<_WarningsTab> createState() => _WarningsTabState();
+}
+
+class _WarningsTabState extends State<_WarningsTab> {
+  Stream<List<ProjectScanRun>>? _scanRunsStream;
+  Stream<List<ProjectObservation>>? _observationsStream;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _scanRunsStream ??= state.watchProjectScanRuns();
+    _observationsStream ??= state.watchRecentProjectObservations();
+  }
 
   Future<void> _copyWarningsJson(BuildContext context) async {
     final json = await AppStateScope.of(
@@ -3378,9 +3442,9 @@ class _WarningsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return StreamBuilder<List<ProjectScanRun>>(
-      stream: state.watchProjectScanRuns(),
+      stream: _scanRunsStream,
       builder: (context, runSnap) {
         if (runSnap.hasError) {
           return _EmptyState(
@@ -3390,7 +3454,7 @@ class _WarningsTab extends StatelessWidget {
           );
         }
         return StreamBuilder<List<ProjectObservation>>(
-          stream: state.watchRecentProjectObservations(),
+          stream: _observationsStream,
           builder: (context, observationSnap) {
             if (observationSnap.hasError) {
               return _EmptyState(
@@ -3411,8 +3475,10 @@ class _WarningsTab extends StatelessWidget {
                 rows.add('${_displayName(observation)}: $warning');
               }
             }
-            if (runSnap.connectionState == ConnectionState.waiting ||
-                observationSnap.connectionState == ConnectionState.waiting) {
+            if ((runSnap.connectionState == ConnectionState.waiting &&
+                    runSnap.data == null) ||
+                (observationSnap.connectionState == ConnectionState.waiting &&
+                    observationSnap.data == null)) {
               return const Center(child: CircularProgressIndicator());
             }
             if (rows.isEmpty) {
@@ -3427,7 +3493,7 @@ class _WarningsTab extends StatelessWidget {
                   count: rows.length,
                   onAction: (action) => _handleWarningsAction(context, action),
                 ),
-                const Divider(height: 1, color: _line),
+                Divider(height: 1, color: colors.line),
                 Expanded(
                   child: ListView.separated(
                     padding: const EdgeInsets.all(16),
@@ -3458,8 +3524,9 @@ class _WarningsToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
-      color: _panel,
+      color: colors.panel,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Wrap(
         spacing: 8,
@@ -3538,11 +3605,12 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       decoration: BoxDecoration(
-        color: _panel,
+        color: colors.panel,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _line),
+        border: Border.all(color: colors.line),
       ),
       padding: const EdgeInsets.all(14),
       child: Material(type: MaterialType.transparency, child: child),
@@ -3556,12 +3624,13 @@ class _Pill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0x1F79A7FF),
+        color: colors.primary.withAlpha(0x1F),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0x3379A7FF)),
+        border: Border.all(color: colors.primary.withAlpha(0x33)),
       ),
       child: Text(label, style: const TextStyle(fontSize: 12)),
     );
@@ -3869,7 +3938,9 @@ List<String> _decodeList(String raw) {
   try {
     final decoded = jsonDecode(raw);
     if (decoded is List) return decoded.map((item) => '$item').toList();
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _decodeList (operations_screen): JSON decode failed: $e');
+  }
   return const [];
 }
 
@@ -3882,7 +3953,9 @@ String _displayName(ProjectObservation observation) {
       final value = (decoded['displayName'] as String).trim();
       if (value.isNotEmpty) return value;
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _displayName (operations_screen): JSON decode of observation.rawJson failed: $e');
+  }
   final parts = observation.observedPath.split(RegExp(r'[\\/]'));
   return parts.isEmpty ? observation.observedPath : parts.last;
 }

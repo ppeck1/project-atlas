@@ -5,16 +5,31 @@ import '../../shared/models/app_state_scope.dart';
 import '../../shared/widgets/contact_picker.dart';
 import '../today/work_item_detail_sheet.dart';
 
-class GovernanceScreen extends StatelessWidget {
+class GovernanceScreen extends StatefulWidget {
   const GovernanceScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
+  State<GovernanceScreen> createState() => _GovernanceScreenState();
+}
 
+class _GovernanceScreenState extends State<GovernanceScreen> {
+  Stream<List<Project>>? _projects;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _projects ??= AppStateScope.of(context).watchProjects();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return StreamBuilder<List<Project>>(
-      stream: state.watchProjects(),
+      stream: _projects,
       builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting &&
+            snap.data == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final projects = snap.data ?? const <Project>[];
 
         if (projects.isEmpty) {
@@ -41,23 +56,59 @@ class GovernanceScreen extends StatelessWidget {
   }
 }
 
-class _ProjectGovernancePanel extends StatelessWidget {
+class _ProjectGovernancePanel extends StatefulWidget {
   final Project project;
   const _ProjectGovernancePanel({required this.project});
 
   @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
+  State<_ProjectGovernancePanel> createState() =>
+      _ProjectGovernancePanelState();
+}
 
+class _ProjectGovernancePanelState extends State<_ProjectGovernancePanel> {
+  Stream<List<Stage>>? _stages;
+  String? _stagesProjectId;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_stagesProjectId != widget.project.id) {
+      _stagesProjectId = widget.project.id;
+      _stages = AppStateScope.of(context).watchStagesForProject(
+        widget.project.id,
+      );
+    }
+  }
+
+  @override
+  void didUpdateWidget(_ProjectGovernancePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.project.id != widget.project.id) {
+      _stagesProjectId = widget.project.id;
+      _stages = AppStateScope.of(context).watchStagesForProject(
+        widget.project.id,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(project.title, style: Theme.of(context).textTheme.titleLarge),
+        Text(
+          widget.project.title,
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
         const SizedBox(height: 8),
 
         StreamBuilder<List<Stage>>(
-          stream: state.watchStagesForProject(project.id),
+          stream: _stages,
           builder: (context, stageSnap) {
+            if (stageSnap.connectionState == ConnectionState.waiting &&
+                stageSnap.data == null) {
+              return const SizedBox.shrink();
+            }
             final stages = stageSnap.data ?? const <Stage>[];
             if (stages.isEmpty) {
               return const Padding(
@@ -69,7 +120,7 @@ class _ProjectGovernancePanel extends StatelessWidget {
             return Column(
               children: [
                 for (final s in stages)
-                  _StageWorkSection(project: project, stage: s),
+                  _StageWorkSection(project: widget.project, stage: s),
               ],
             );
           },
@@ -79,26 +130,58 @@ class _ProjectGovernancePanel extends StatelessWidget {
   }
 }
 
-class _StageWorkSection extends StatelessWidget {
+class _StageWorkSection extends StatefulWidget {
   final Project project;
   final Stage stage;
 
   const _StageWorkSection({required this.project, required this.stage});
 
   @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
+  State<_StageWorkSection> createState() => _StageWorkSectionState();
+}
 
+class _StageWorkSectionState extends State<_StageWorkSection> {
+  Stream<List<WorkItem>>? _workItems;
+  String? _workItemsStageId;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_workItemsStageId != widget.stage.id) {
+      _workItemsStageId = widget.stage.id;
+      _workItems = AppStateScope.of(context).watchWorkItemsForStage(
+        widget.stage.id,
+      );
+    }
+  }
+
+  @override
+  void didUpdateWidget(_StageWorkSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.stage.id != widget.stage.id) {
+      _workItemsStageId = widget.stage.id;
+      _workItems = AppStateScope.of(context).watchWorkItemsForStage(
+        widget.stage.id,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: ExpansionTile(
         initiallyExpanded: false,
-        title: Text('${stage.position + 1}. ${stage.title}'),
+        title: Text('${widget.stage.position + 1}. ${widget.stage.title}'),
         childrenPadding: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
         children: [
           StreamBuilder<List<WorkItem>>(
-            stream: state.watchWorkItemsForStage(stage.id),
+            stream: _workItems,
             builder: (context, workSnap) {
+              if (workSnap.connectionState == ConnectionState.waiting &&
+                  workSnap.data == null) {
+                return const SizedBox.shrink();
+              }
               final items = workSnap.data ?? const <WorkItem>[];
               if (items.isEmpty) {
                 return const Align(
@@ -113,7 +196,11 @@ class _StageWorkSection extends StatelessWidget {
               return Column(
                 children: [
                   for (final item in items)
-                    _WorkRow(project: project, stage: stage, item: item),
+                    _WorkRow(
+                      project: widget.project,
+                      stage: widget.stage,
+                      item: item,
+                    ),
                 ],
               );
             },
@@ -124,7 +211,7 @@ class _StageWorkSection extends StatelessWidget {
   }
 }
 
-class _WorkRow extends StatelessWidget {
+class _WorkRow extends StatefulWidget {
   final Project project;
   final Stage stage;
   final WorkItem item;
@@ -136,25 +223,51 @@ class _WorkRow extends StatelessWidget {
   });
 
   @override
+  State<_WorkRow> createState() => _WorkRowState();
+}
+
+class _WorkRowState extends State<_WorkRow> {
+  Stream<String?>? _workOwner;
+  String? _workOwnerItemId;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_workOwnerItemId != widget.item.id) {
+      _workOwnerItemId = widget.item.id;
+      _workOwner = AppStateScope.of(context).watchWorkOwner(widget.item.id);
+    }
+  }
+
+  @override
+  void didUpdateWidget(_WorkRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.id != widget.item.id) {
+      _workOwnerItemId = widget.item.id;
+      _workOwner = AppStateScope.of(context).watchWorkOwner(widget.item.id);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
 
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      onTap: () => showWorkItemDetailSheet(context, item.id),
+      onTap: () => showWorkItemDetailSheet(context, widget.item.id),
       leading: Checkbox(
-        value: item.completed,
-        onChanged: (_) => state.toggleWorkDone(item.id),
+        value: widget.item.completed,
+        onChanged: (_) => state.toggleWorkDone(widget.item.id),
       ),
       title: Text(
-        item.title,
-        style: item.completed
+        widget.item.title,
+        style: widget.item.completed
             ? const TextStyle(decoration: TextDecoration.lineThrough)
             : null,
       ),
       subtitle: StreamBuilder<String?>(
-        stream: state.watchWorkOwner(item.id),
+        stream: _workOwner,
         builder: (context, snap) {
           final owner = (snap.data ?? '').trim();
           return Text(owner.isEmpty ? 'Owner: —' : 'Owner: $owner');
@@ -164,11 +277,11 @@ class _WorkRow extends StatelessWidget {
         tooltip: 'Set owner',
         icon: const Icon(Icons.person_outline),
         onPressed: () async {
-          final current = await state.db.getWorkOwner(item.id);
+          final current = await state.db.getWorkOwner(widget.item.id);
           if (!context.mounted) return;
           final next = await _promptOwner(context, current);
           if (next == null) return; // cancelled
-          await state.setWorkOwner(item.id, next);
+          await state.setWorkOwner(widget.item.id, next);
         },
       ),
     );

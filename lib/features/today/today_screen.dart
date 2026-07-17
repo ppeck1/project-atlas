@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../db/app_db.dart';
+import '../../shared/theme/atlas_colors.dart';
 import '../../services/workload_planning_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/widgets/contact_picker.dart';
+import 'today_bucketing.dart';
 import 'work_item_detail_sheet.dart';
 import '../work/status_priority_helpers.dart';
 
@@ -21,10 +25,39 @@ class _TodayScreenState extends State<TodayScreen> {
   String? _statusFilter;
   int _taskListRevision = 0;
 
+  Timer? _midnightTimer;
+  Stream<List<WorkItem>>? _items;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleMidnightRefresh();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _items ??= AppStateScope.of(context).watchAllActiveWorkItems();
+  }
+
+  void _scheduleMidnightRefresh() {
+    _midnightTimer?.cancel();
+    final now = DateTime.now();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _midnightTimer = Timer(nextMidnight.difference(now) + const Duration(seconds: 1), () {
+      if (mounted) setState(() {});
+      _scheduleMidnightRefresh();
+    });
+  }
+
+  @override
+  void dispose() {
+    _midnightTimer?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Today'),
@@ -47,9 +80,10 @@ class _TodayScreenState extends State<TodayScreen> {
         ],
       ),
       body: StreamBuilder<List<WorkItem>>(
-        stream: state.watchAllActiveWorkItems(),
+        stream: _items,
         builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
+          if (snap.connectionState == ConnectionState.waiting &&
+              snap.data == null) {
             return const Center(child: CircularProgressIndicator());
           }
           if (snap.hasError) {
@@ -89,47 +123,12 @@ class _TodayScreenState extends State<TodayScreen> {
             );
           }
 
-          final now = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
-          final tomorrow = today.add(const Duration(days: 1));
-
-          final doing = items.where((i) => i.status == 'doing').toList();
-          final overdue = items
-              .where(
-                (i) =>
-                    i.dueAt != null &&
-                    i.dueAt!.isBefore(today) &&
-                    i.status != 'doing',
-              )
-              .toList();
-          final dueToday = items
-              .where(
-                (i) =>
-                    i.dueAt != null &&
-                    !i.dueAt!.isBefore(today) &&
-                    i.dueAt!.isBefore(tomorrow) &&
-                    i.status != 'doing',
-              )
-              .toList();
-          final phoneQueue = items
-              .where(
-                (i) =>
-                    i.phoneQueue &&
-                    i.status != 'doing' &&
-                    !overdue.contains(i) &&
-                    !dueToday.contains(i),
-              )
-              .toList();
-          final highPrio = items
-              .where(
-                (i) =>
-                    ['high', 'urgent'].contains(i.priority) &&
-                    i.status != 'doing' &&
-                    !overdue.contains(i) &&
-                    !dueToday.contains(i) &&
-                    !phoneQueue.contains(i),
-              )
-              .toList();
+          final buckets = bucketTodayItems(items, now: DateTime.now());
+          final doing = buckets.doing;
+          final overdue = buckets.overdue;
+          final dueToday = buckets.dueToday;
+          final phoneQueue = buckets.phoneQueue;
+          final highPrio = buckets.highPrio;
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -396,10 +395,11 @@ class _TodayTaskList extends StatelessWidget {
             ? const <_TodayTaskGroup>[]
             : _groupTodayTasks(filtered, contextData.projectByItem);
 
+        final colors = Theme.of(context).extension<AtlasColors>()!;
         return Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF151A22),
-            border: Border.all(color: const Color(0xFF273044)),
+            color: colors.panel,
+            border: Border.all(color: colors.line),
             borderRadius: BorderRadius.circular(8),
           ),
           padding: const EdgeInsets.all(12),
@@ -517,16 +517,17 @@ class _TodayTaskGroupPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: group.isGeneral
-            ? const Color(0x1A79A7FF)
-            : const Color(0xFF10141B),
+            ? colors.primary.withAlpha(0x1A)
+            : colors.surfaceDeep,
         border: Border.all(
           color: group.isGeneral
-              ? const Color(0x5579A7FF)
-              : const Color(0xFF273044),
+              ? colors.primary.withAlpha(0x55)
+              : colors.line,
         ),
         borderRadius: BorderRadius.circular(8),
       ),
@@ -539,7 +540,7 @@ class _TodayTaskGroupPanel extends StatelessWidget {
           leading: Icon(
             group.isGeneral ? Icons.push_pin_outlined : Icons.folder_outlined,
             size: 18,
-            color: group.isGeneral ? const Color(0xFF79A7FF) : Colors.white70,
+            color: group.isGeneral ? colors.primary : Colors.white70,
           ),
           title: Text(
             group.title,
@@ -703,11 +704,12 @@ class _TaskListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF10141B),
-        border: Border.all(color: const Color(0xFF273044)),
+        color: colors.surfaceDeep,
+        border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: InkWell(
@@ -750,14 +752,14 @@ class _TaskListTile extends StatelessWidget {
                           _SmallChip(
                             icon: Icons.folder_outlined,
                             label: project!.title,
-                            color: const Color(0xFF79A7FF),
+                            color: colors.primary,
                           ),
                         statusChip(normalizeStatusValue(item.status)),
                         for (final tag in tags)
                           _SmallChip(
                             icon: Icons.label_outline,
                             label: tag.name,
-                            color: _tagColor(tag),
+                            color: _tagColor(tag, fallback: colors.primary),
                           ),
                       ],
                     ),
@@ -1384,13 +1386,14 @@ List<String> _splitTagNames(String value) {
   return names;
 }
 
-Color _tagColor(Tag tag) {
+Color _tagColor(Tag tag, {Color? fallback}) {
   final raw = tag.color;
   if (raw != null && raw.startsWith('#') && raw.length == 7) {
     final parsed = int.tryParse(raw.substring(1), radix: 16);
     if (parsed != null) return Color(0xFF000000 | parsed);
   }
-  return const Color(0xFF79A7FF);
+  // Fallback to AtlasColors.primary; caller should supply it from the theme.
+  return fallback ?? AtlasColors.defaults.primary;
 }
 
 class _TodayLoadError extends StatelessWidget {
@@ -1552,6 +1555,7 @@ class _MetricBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -1559,8 +1563,8 @@ class _MetricBox extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           decoration: BoxDecoration(
-            color: const Color(0xFF151A22),
-            border: Border.all(color: const Color(0xFF273044)),
+            color: colors.panel,
+            border: Border.all(color: colors.line),
             borderRadius: BorderRadius.circular(14),
           ),
           child: Column(

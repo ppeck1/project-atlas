@@ -16,7 +16,8 @@ Last updated: 2026-07-15.
 - Public authorship: Paul Peck / `ppeck1`
 - README images: captures of the real Windows application using an isolated
   public-safe demo database
-- Current source-topology line: schema `22` with Project Sources,
+- Current source-topology line: schema `23` (adds `documents.deleted_at`
+  soft delete with undo and deferred purge) with Project Sources,
   reconciliation preview, local/remote source roles, and Atlas-only source
   bookkeeping updates
 
@@ -90,6 +91,9 @@ For public changes, also verify:
 ## Maintainer map
 
 - Product surfaces: `lib/features/`
+- Design tokens: `lib/shared/theme/atlas_colors.dart`
+  (`ThemeExtension<AtlasColors>`, registered in `lib/app/theme.dart`)
+- App-level keyboard shortcuts: `lib/shared/widgets/atlas_shortcuts.dart`
 - State and orchestration: `lib/shared/models/app_state.dart`
 - Persistence: `lib/db/`
 - Runtime and integrations: `lib/services/`
@@ -106,3 +110,11 @@ For public changes, also verify:
   profile switch.
 - Historical Git objects are not rewritten by normal public-tree cleanup.
 - Compatibility reads do not rename or modify linked project files.
+- The Today screen's midnight rollover uses a wall-clock `Timer`; wall-clock
+  timers do not reliably survive OS sleep/resume, so the date header may lag
+  until the next rebuild after a resume.
+- Some `AppState.notifyListeners()` calls remain load-bearing for data with
+  no Drift watcher (Today-screen tag/project context, project
+  people/risks/decisions, the LLM task queue) and for `projects`-table writes
+  (`watchActiveProject` watches only `app_meta`). Do not remove those
+  notifies until stream coverage exists for the consumers.

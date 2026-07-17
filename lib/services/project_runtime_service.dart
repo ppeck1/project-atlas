@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
@@ -562,7 +563,8 @@ Write-Output \$process.Id
       );
       await response.drain<void>();
       return response.statusCode >= 200 && response.statusCode < 500;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[Atlas] ProjectRuntimeService._probeUrl: health check for URL failed (not yet ready): $e');
       return false;
     } finally {
       client.close(force: true);
@@ -578,7 +580,8 @@ Write-Output \$process.Id
       );
       await socket.close();
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[Atlas] ProjectRuntimeService._probeTcpPort: port $port not yet open: $e');
       return false;
     }
   }
@@ -712,7 +715,9 @@ Write-Output \$process.Id
       if (decoded is Map && decoded['doctor_result'] is String) {
         return decoded['doctor_result'] as String;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] ProjectRuntimeService._doctorStatus: JSON decode of capsule doctor output failed: $e');
+    }
     return exitCode == 0 ? 'healthy' : 'not_ready';
   }
 }
@@ -792,7 +797,8 @@ List<String> decodeStringList(String? rawJson) {
       for (final item in decoded)
         if (_blankToNull(item?.toString()) != null) item.toString().trim(),
     ];
-  } catch (_) {
+  } catch (e) {
+    debugPrint('[Atlas] decodeStringList (project_runtime_service): JSON decode failed: $e');
     return const [];
   }
 }
@@ -813,7 +819,8 @@ List<RuntimeUrl> decodeRuntimeUrls(String? rawJson) {
       for (final item in decoded)
         if (RuntimeUrl.fromJson(item) != null) RuntimeUrl.fromJson(item)!,
     ];
-  } catch (_) {
+  } catch (e) {
+    debugPrint('[Atlas] decodeRuntimeUrls (project_runtime_service): JSON decode failed: $e');
     return const [];
   }
 }

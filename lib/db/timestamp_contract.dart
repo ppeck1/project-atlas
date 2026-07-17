@@ -39,6 +39,7 @@ const driftTimestampFields = <DriftTimestampField>[
   DriftTimestampField('event_log', 'timestamp'),
   DriftTimestampField('documents', 'created_at'),
   DriftTimestampField('documents', 'updated_at'),
+  DriftTimestampField('documents', 'deleted_at'),
   DriftTimestampField('document_links', 'created_at'),
   DriftTimestampField('contacts', 'created_at'),
   DriftTimestampField('contacts', 'updated_at'),

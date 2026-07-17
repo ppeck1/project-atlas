@@ -72,7 +72,9 @@ Map<String, Object?> _tryParseJsonObject(String? raw) {
     if (decoded is Map) {
       return decoded.map((key, value) => MapEntry('$key', value));
     }
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('[Atlas] _tryParseJsonObject (project_detail_screen): JSON decode failed: $e');
+  }
   return const <String, Object?>{};
 }
 
@@ -206,9 +208,12 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   List<ProjectDecision> _decisions = const [];
   bool _didLoad = false;
 
+  Stream<Project?>? _watchProject;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _watchProject ??= AppStateScope.of(context).watchProject(widget.projectId);
     if (!_didLoad) {
       _didLoad = true;
       _loadAll();
@@ -224,16 +229,22 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     List<LlmTaskQueueItem> llmTasks = _llmQueueItems;
     try {
       llmTasks = await state.getLlmTasksForProject(widget.projectId, limit: 50);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _loadProjectDetail: getLlmTasksForProject failed (continuing with cached): $e');
+    }
     final people = await state.getProjectPeople(widget.projectId);
     List<ProjectRisk> risks = _risks;
     try {
       risks = await state.getProjectRisks(widget.projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _loadProjectDetail: getProjectRisks failed (continuing with cached): $e');
+    }
     List<ProjectDecision> decisions = _decisions;
     try {
       decisions = await state.getProjectDecisions(widget.projectId);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] _loadProjectDetail: getProjectDecisions failed (continuing with cached): $e');
+    }
     final summarySettings = await state.loadProjectAiSummarySettings();
     final sectionVisibility = await state.loadProjectDetailSectionVisibility(
       widget.projectId,
@@ -246,7 +257,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         cachedDraft = await state.getLatestProjectSummaryDraft(
           widget.projectId,
         );
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Atlas] _loadProjectDetail: getLatestProjectSummaryDraft failed (continuing without cached draft): $e');
+      }
     }
 
     if (!mounted) return;
@@ -310,7 +323,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         _summaryEvidencePacket = packet;
         _summaryEvidenceLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[Atlas] _loadSummaryEvidence: buildProjectSummaryEvidencePacket failed: $e');
       if (!mounted) return;
       setState(() => _summaryEvidenceLoading = false);
     }
@@ -1041,7 +1055,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     return StreamBuilder<Project?>(
-      stream: state.watchProject(widget.projectId),
+      stream: _watchProject,
       builder: (context, snap) {
         if (snap.data == null &&
             snap.connectionState == ConnectionState.waiting) {
@@ -5141,10 +5155,17 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
   }
 }
 
-class _SummaryRunProvenance extends StatelessWidget {
+class _SummaryRunProvenance extends StatefulWidget {
   final String projectId;
 
   const _SummaryRunProvenance({required this.projectId});
+
+  @override
+  State<_SummaryRunProvenance> createState() => _SummaryRunProvenanceState();
+}
+
+class _SummaryRunProvenanceState extends State<_SummaryRunProvenance> {
+  Stream<List<EventLogData>>? _watchRecentEvents;
 
   Object? _field(Map<String, Object?> map, String key) => map[key];
 
@@ -5155,17 +5176,22 @@ class _SummaryRunProvenance extends StatelessWidget {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _watchRecentEvents ??= AppStateScope.of(context).watchRecentEvents();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<List<EventLogData>>(
-      stream: state.watchRecentEvents(),
+      stream: _watchRecentEvents,
       builder: (context, snap) {
         final rows = (snap.data ?? const <EventLogData>[])
             .where(
               (event) =>
                   event.area == 'ai' &&
                   event.entityType == 'project_summary' &&
-                  event.entityId == projectId &&
+                  event.entityId == widget.projectId &&
                   const {
                     'project_summary_draft_saved',
                     'project_summary_failed',
@@ -6036,6 +6062,18 @@ class _ProjectCommandToolbarState extends State<_ProjectCommandToolbar> {
   bool _testing = false;
   bool _checkingCapsule = false;
 
+  Stream<ProjectRuntimeProfile?>? _watchRuntimeProfile;
+  Stream<List<ProjectRuntimeRun>>? _watchRuntimeRuns;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _watchRuntimeProfile ??=
+        AppStateScope.of(context).watchProjectRuntimeProfile(widget.projectId);
+    _watchRuntimeRuns ??=
+        AppStateScope.of(context).watchProjectRuntimeRuns(widget.projectId, limit: 5);
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
@@ -6048,7 +6086,7 @@ class _ProjectCommandToolbarState extends State<_ProjectCommandToolbar> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: StreamBuilder<ProjectRuntimeProfile?>(
-        stream: state.watchProjectRuntimeProfile(widget.projectId),
+        stream: _watchRuntimeProfile,
         builder: (context, profileSnap) {
           final profile = profileSnap.data;
           final runtimeReady = profile != null && profile.enabled;
@@ -6057,7 +6095,7 @@ class _ProjectCommandToolbarState extends State<_ProjectCommandToolbar> {
               : runtime.decodeStringList(profile.testCommandsJson);
           final capsuleEnabled = profile?.capsuleEnabled ?? false;
           return StreamBuilder<List<ProjectRuntimeRun>>(
-            stream: state.watchProjectRuntimeRuns(widget.projectId, limit: 5),
+            stream: _watchRuntimeRuns,
             builder: (context, runSnap) {
               final runs = runSnap.data ?? const <ProjectRuntimeRun>[];
               return Wrap(
@@ -6266,14 +6304,24 @@ class _ProjectRuntimeSectionState extends State<_ProjectRuntimeSection> {
   String? _testingCommand;
   bool _checkingCapsule = false;
 
+  Stream<ProjectRuntimeProfile?>? _watchRuntimeProfile;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _watchRuntimeProfile ??=
+        AppStateScope.of(context).watchProjectRuntimeProfile(widget.projectId);
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     return StreamBuilder<ProjectRuntimeProfile?>(
-      stream: state.watchProjectRuntimeProfile(widget.projectId),
+      stream: _watchRuntimeProfile,
       builder: (context, profileSnap) {
         final profile = profileSnap.data;
-        if (profileSnap.connectionState == ConnectionState.waiting) {
+        if (profileSnap.connectionState == ConnectionState.waiting &&
+            profileSnap.data == null) {
           return const LinearProgressIndicator(minHeight: 2);
         }
         if (profile == null || !profile.enabled) {
@@ -6505,16 +6553,29 @@ class _ProjectRuntimeSectionState extends State<_ProjectRuntimeSection> {
   }
 }
 
-class _RuntimeRunHistory extends StatelessWidget {
+class _RuntimeRunHistory extends StatefulWidget {
   final String projectId;
 
   const _RuntimeRunHistory({required this.projectId});
 
   @override
+  State<_RuntimeRunHistory> createState() => _RuntimeRunHistoryState();
+}
+
+class _RuntimeRunHistoryState extends State<_RuntimeRunHistory> {
+  Stream<List<ProjectRuntimeRun>>? _watchRuntimeRuns;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _watchRuntimeRuns ??= AppStateScope.of(context)
+        .watchProjectRuntimeRuns(widget.projectId, limit: 8);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectRuntimeRun>>(
-      stream: state.watchProjectRuntimeRuns(projectId, limit: 8),
+      stream: _watchRuntimeRuns,
       builder: (context, snap) {
         final runs = snap.data ?? const <ProjectRuntimeRun>[];
         if (runs.isEmpty) {
@@ -7424,17 +7485,30 @@ class _ProjectStatusColumn extends StatelessWidget {
   }
 }
 
-class _TagsSection extends StatelessWidget {
+class _TagsSection extends StatefulWidget {
   final String projectId;
   final VoidCallback onEdit;
 
   const _TagsSection({required this.projectId, required this.onEdit});
 
   @override
+  State<_TagsSection> createState() => _TagsSectionState();
+}
+
+class _TagsSectionState extends State<_TagsSection> {
+  Stream<List<Tag>>? _watchTags;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _watchTags ??=
+        AppStateScope.of(context).watchTagsForProject(widget.projectId);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
     return StreamBuilder<List<Tag>>(
-      stream: state.watchTagsForProject(projectId),
+      stream: _watchTags,
       builder: (context, snap) {
         if (snap.hasError) {
           return Text(
@@ -7467,7 +7541,7 @@ class _TagsSection extends StatelessWidget {
                 ),
               ),
             OutlinedButton.icon(
-              onPressed: onEdit,
+              onPressed: widget.onEdit,
               icon: const Icon(Icons.sell_outlined, size: 16),
               label: const Text('Edit tags'),
             ),
@@ -7478,22 +7552,39 @@ class _TagsSection extends StatelessWidget {
   }
 }
 
-class _MediaSection extends StatelessWidget {
+class _MediaSection extends StatefulWidget {
   final String projectId;
   final VoidCallback onImportMedia;
 
   const _MediaSection({required this.projectId, required this.onImportMedia});
 
   @override
+  State<_MediaSection> createState() => _MediaSectionState();
+}
+
+class _MediaSectionState extends State<_MediaSection> {
+  Stream<List<ProjectMediaItem>>? _watchMedia;
+  Stream<List<Document>>? _watchDocuments;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _watchMedia ??=
+        AppStateScope.of(context).watchProjectMedia(widget.projectId);
+    _watchDocuments ??=
+        AppStateScope.of(context).watchDocumentsForProject(widget.projectId);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
     return StreamBuilder<List<ProjectMediaItem>>(
-      stream: state.watchProjectMedia(projectId),
+      stream: _watchMedia,
       builder: (context, mediaSnap) {
         final media = mediaSnap.data ?? const <ProjectMediaItem>[];
         final cover = media.where((item) => item.isCover).firstOrNull;
         return StreamBuilder<List<Document>>(
-          stream: state.watchDocumentsForProject(projectId),
+          stream: _watchDocuments,
           builder: (context, docSnap) {
             final docs = docSnap.data ?? const <Document>[];
             return Column(
@@ -7508,7 +7599,7 @@ class _MediaSection extends StatelessWidget {
                   runSpacing: 8,
                   children: [
                     OutlinedButton.icon(
-                      onPressed: onImportMedia,
+                      onPressed: widget.onImportMedia,
                       icon: const Icon(
                         Icons.add_photo_alternate_outlined,
                         size: 16,
@@ -7517,7 +7608,7 @@ class _MediaSection extends StatelessWidget {
                     ),
                     OutlinedButton.icon(
                       onPressed: () =>
-                          context.go(_libraryRouteForProject(projectId)),
+                          context.go(_libraryRouteForProject(widget.projectId)),
                       icon: const Icon(Icons.library_books_outlined, size: 16),
                       label: const Text('Open Library'),
                     ),
@@ -7546,8 +7637,8 @@ class _MediaSection extends StatelessWidget {
                     itemCount: media.length,
                     itemBuilder: (context, i) => _MediaTile(
                       item: media[i],
-                      onSetCover: () =>
-                          state.setProjectCoverMedia(projectId, media[i].id),
+                      onSetCover: () => state.setProjectCoverMedia(
+                          widget.projectId, media[i].id),
                       onDelete: () => state.deleteProjectMedia(media[i].id),
                     ),
                   ),
@@ -7560,7 +7651,7 @@ class _MediaSection extends StatelessWidget {
                       child: InkWell(
                         onTap: () => context.go(
                           _libraryRouteForProject(
-                            projectId,
+                            widget.projectId,
                             entryType: 'document',
                             entryId: d.id,
                           ),

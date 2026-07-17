@@ -55,6 +55,7 @@ DRIFT_TIMESTAMP_FIELDS = (
     TimestampField("event_log", "timestamp"),
     TimestampField("documents", "created_at"),
     TimestampField("documents", "updated_at"),
+    TimestampField("documents", "deleted_at"),
     TimestampField("document_links", "created_at"),
     TimestampField("contacts", "created_at"),
     TimestampField("contacts", "updated_at"),

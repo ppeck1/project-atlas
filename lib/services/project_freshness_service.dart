@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import '../db/app_db.dart';
 import '../shared/models/project_metadata.dart' as project_meta;
 import 'project_identity_resolver.dart';
@@ -406,7 +408,9 @@ class ProjectFreshnessService {
       if (decoded is Map) {
         return decoded.map((key, value) => MapEntry('$key', value));
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Atlas] ProjectFreshnessService._decodeObjectMap: JSON decode failed: $e');
+    }
     return const {};
   }
 
