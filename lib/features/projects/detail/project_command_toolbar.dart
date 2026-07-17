@@ -50,8 +50,7 @@ class _ProjectCommandToolbarState extends State<ProjectCommandToolbar> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        // TODO(paul): near-miss of AtlasColors.surfaceDeep (0xFF10141B).
-        color: const Color(0xFF10151D),
+        color: colors.surfaceDeep,
         border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(8),
       ),

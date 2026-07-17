@@ -33,10 +33,7 @@ class AtlasColors extends ThemeExtension<AtlasColors> {
   /// Unselected / muted icon colour. #879AB5
   final Color inactive;
 
-  /// Selected-item pill background on the nav rail. 0x26799AFF
-  // TODO(paul): the color bits here are 799AFF while [primary] uses 79A7FF
-  // (transposed "A7" vs "99"). Decide whether this is an intentional tint or
-  // a long-standing typo before collapsing into a derived value.
+  /// Selected-item pill background on the nav rail: 15% [primary].
   final Color selectedFill;
 
   /// Slightly darker surface used for task tiles and non-general group panels.
@@ -56,7 +53,7 @@ class AtlasColors extends ThemeExtension<AtlasColors> {
     line: Color(0xFF273044),
     primary: Color(0xFF79A7FF),
     inactive: Color(0xFF879AB5),
-    selectedFill: Color(0x26799AFF),
+    selectedFill: Color(0x2679A7FF),
     surfaceDeep: Color(0xFF10141B),
     warningFill: Color(0x22FF9800),
     warningBorder: Color(0x55FF9800),
