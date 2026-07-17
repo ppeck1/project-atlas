@@ -23,7 +23,6 @@ class _TodayScreenState extends State<TodayScreen> {
   String? _projectFilterId;
   String? _tagFilterId;
   String? _statusFilter;
-  int _taskListRevision = 0;
 
   Timer? _midnightTimer;
   Stream<List<WorkItem>>? _items;
@@ -140,14 +139,12 @@ class _TodayScreenState extends State<TodayScreen> {
                 projectFilterId: _projectFilterId,
                 tagFilterId: _tagFilterId,
                 statusFilter: _statusFilter,
-                refreshRevision: _taskListRevision,
                 onProjectFilterChanged: (value) =>
                     setState(() => _projectFilterId = value),
                 onTagFilterChanged: (value) =>
                     setState(() => _tagFilterId = value),
                 onStatusFilterChanged: (value) =>
                     setState(() => _statusFilter = value),
-                onTaskTagsChanged: () => setState(() => _taskListRevision++),
               ),
               const SizedBox(height: 16),
               if (doing.isNotEmpty) ...[
@@ -263,8 +260,8 @@ class _TodayScreenState extends State<TodayScreen> {
         planningNotes: draft.planningNotes,
       );
     }
-    if (!mounted) return;
-    setState(() => _taskListRevision++);
+    // No manual refresh needed: the new item and its tags arrive via the
+    // cached watchAllActiveWorkItems / tag streams.
   }
 
   String _formattedDate() {
@@ -314,155 +311,185 @@ class _TodayTaskGroup {
   String get title => project?.title ?? 'General tasks';
 }
 
-Future<_TodayTaskContext> _loadTodayTaskContext(
-  AppState state,
-  List<WorkItem> items,
-  int refreshRevision,
-) async {
-  final projects = await state.getProjectsFull();
-  final tags = await state.getTags();
-  final tagsByItem = await state.getTagsForWorkItems(
-    items.map((item) => item.id),
-  );
-  final projectByItem = <String, ProjectFull?>{};
-  for (final item in items) {
-    projectByItem[item.id] = await state.getProjectForWorkItem(item.id);
-  }
-  return _TodayTaskContext(
-    projects: projects,
-    tags: tags,
-    tagsByItem: tagsByItem,
-    projectByItem: projectByItem,
-  );
-}
-
-class _TodayTaskList extends StatelessWidget {
+class _TodayTaskList extends StatefulWidget {
   final List<WorkItem> items;
   final String? projectFilterId;
   final String? tagFilterId;
   final String? statusFilter;
-  final int refreshRevision;
   final ValueChanged<String?> onProjectFilterChanged;
   final ValueChanged<String?> onTagFilterChanged;
   final ValueChanged<String?> onStatusFilterChanged;
-  final VoidCallback onTaskTagsChanged;
 
   const _TodayTaskList({
     required this.items,
     required this.projectFilterId,
     required this.tagFilterId,
     required this.statusFilter,
-    required this.refreshRevision,
     required this.onProjectFilterChanged,
     required this.onTagFilterChanged,
     required this.onStatusFilterChanged,
-    required this.onTaskTagsChanged,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-    return FutureBuilder<_TodayTaskContext>(
-      future: _loadTodayTaskContext(state, items, refreshRevision),
-      builder: (context, snap) {
-        final contextData = snap.data;
-        final filtered = contextData == null
-            ? items
-            : items
-                  .where((item) {
-                    if (projectFilterId != null) {
-                      final itemProject = contextData.projectByItem[item.id];
-                      if (projectFilterId == AppDb.kGeneralTasksProjectId) {
-                        if (itemProject != null) return false;
-                      } else if (itemProject?.id != projectFilterId) {
-                        return false;
-                      }
-                    }
-                    if (tagFilterId != null &&
-                        !(contextData.tagsByItem[item.id] ?? const <Tag>[]).any(
-                          (tag) => tag.id == tagFilterId,
-                        )) {
-                      return false;
-                    }
-                    if (statusFilter != null &&
-                        normalizeStatusValue(item.status) != statusFilter) {
-                      return false;
-                    }
-                    return true;
-                  })
-                  .toList(growable: false);
-        final groups = contextData == null
-            ? const <_TodayTaskGroup>[]
-            : _groupTodayTasks(filtered, contextData.projectByItem);
+  State<_TodayTaskList> createState() => _TodayTaskListState();
+}
 
-        final colors = Theme.of(context).extension<AtlasColors>()!;
-        return Container(
-          decoration: BoxDecoration(
-            color: colors.panel,
-            border: Border.all(color: colors.line),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.checklist, size: 18, color: Colors.white70),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Task list',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  Text(
-                    '${filtered.length}/${items.length}',
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
+class _TodayTaskListState extends State<_TodayTaskList> {
+  Stream<List<ProjectFull>>? _projects;
+  Stream<List<Tag>>? _tags;
+  Stream<Map<String, List<Tag>>>? _workItemTags;
+  Stream<Map<String, ProjectFull>>? _projectsByStage;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppStateScope.of(context);
+    _projects ??= state.watchProjectsFull();
+    _tags ??= state.watchTags();
+    _workItemTags ??= state.watchWorkItemTags();
+    _projectsByStage ??= state.watchProjectsByStage();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Nested cached-stream builders replace the old notify-driven
+    // FutureBuilder: each Drift stream re-emits only when its tables change.
+    return StreamBuilder<List<ProjectFull>>(
+      stream: _projects,
+      builder: (context, projectsSnap) => StreamBuilder<List<Tag>>(
+        stream: _tags,
+        builder: (context, tagsSnap) => StreamBuilder<Map<String, List<Tag>>>(
+          stream: _workItemTags,
+          builder: (context, itemTagsSnap) =>
+              StreamBuilder<Map<String, ProjectFull>>(
+                stream: _projectsByStage,
+                builder: (context, stageProjectsSnap) {
+                  final projects = projectsSnap.data;
+                  final tags = tagsSnap.data;
+                  final tagsByItem = itemTagsSnap.data;
+                  final projectsByStage = stageProjectsSnap.data;
+                  final contextData =
+                      projects == null ||
+                          tags == null ||
+                          tagsByItem == null ||
+                          projectsByStage == null
+                      ? null
+                      : _TodayTaskContext(
+                          projects: projects,
+                          tags: tags,
+                          tagsByItem: tagsByItem,
+                          projectByItem: {
+                            for (final item in widget.items)
+                              item.id: projectsByStage[item.stageId],
+                          },
+                        );
+                  return _buildTaskList(context, contextData);
+                },
               ),
-              const SizedBox(height: 12),
-              if (contextData == null)
-                const LinearProgressIndicator(minHeight: 2)
-              else
-                _TodayTaskFilters(
-                  projects: contextData.projects,
-                  tags: contextData.tags,
-                  projectFilterId: projectFilterId,
-                  tagFilterId: tagFilterId,
-                  statusFilter: statusFilter,
-                  onProjectFilterChanged: onProjectFilterChanged,
-                  onTagFilterChanged: onTagFilterChanged,
-                  onStatusFilterChanged: onStatusFilterChanged,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTaskList(BuildContext context, _TodayTaskContext? contextData) {
+    final items = widget.items;
+    final projectFilterId = widget.projectFilterId;
+    final tagFilterId = widget.tagFilterId;
+    final statusFilter = widget.statusFilter;
+    final filtered = contextData == null
+        ? items
+        : items
+              .where((item) {
+                if (projectFilterId != null) {
+                  final itemProject = contextData.projectByItem[item.id];
+                  if (projectFilterId == AppDb.kGeneralTasksProjectId) {
+                    if (itemProject != null) return false;
+                  } else if (itemProject?.id != projectFilterId) {
+                    return false;
+                  }
+                }
+                if (tagFilterId != null &&
+                    !(contextData.tagsByItem[item.id] ?? const <Tag>[]).any(
+                      (tag) => tag.id == tagFilterId,
+                    )) {
+                  return false;
+                }
+                if (statusFilter != null &&
+                    normalizeStatusValue(item.status) != statusFilter) {
+                  return false;
+                }
+                return true;
+              })
+              .toList(growable: false);
+    final groups = contextData == null
+        ? const <_TodayTaskGroup>[]
+        : _groupTodayTasks(filtered, contextData.projectByItem);
+
+    final colors = Theme.of(context).extension<AtlasColors>()!;
+    return Container(
+      decoration: BoxDecoration(
+        color: colors.panel,
+        border: Border.all(color: colors.line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.checklist, size: 18, color: Colors.white70),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Task list',
+                  style: TextStyle(fontWeight: FontWeight.w700),
                 ),
-              const SizedBox(height: 12),
-              if (filtered.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Center(
-                    child: Text(
-                      'No active tasks match these filters.',
-                      style: TextStyle(color: Colors.white54),
-                    ),
-                  ),
-                )
-              else
-                ...groups.map(
-                  (group) => _TodayTaskGroupPanel(
-                    group: group,
-                    tagsByItem: contextData!.tagsByItem,
-                    allTags: contextData.tags,
-                    onChanged: onTaskTagsChanged,
-                  ),
+              ),
+              Text(
+                '${filtered.length}/${items.length}',
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontFeatures: [FontFeature.tabularFigures()],
                 ),
+              ),
             ],
           ),
-        );
-      },
+          const SizedBox(height: 12),
+          if (contextData == null)
+            const LinearProgressIndicator(minHeight: 2)
+          else
+            _TodayTaskFilters(
+              projects: contextData.projects,
+              tags: contextData.tags,
+              projectFilterId: projectFilterId,
+              tagFilterId: tagFilterId,
+              statusFilter: statusFilter,
+              onProjectFilterChanged: widget.onProjectFilterChanged,
+              onTagFilterChanged: widget.onTagFilterChanged,
+              onStatusFilterChanged: widget.onStatusFilterChanged,
+            ),
+          const SizedBox(height: 12),
+          if (filtered.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                child: Text(
+                  'No active tasks match these filters.',
+                  style: TextStyle(color: Colors.white54),
+                ),
+              ),
+            )
+          else
+            ...groups.map(
+              (group) => _TodayTaskGroupPanel(
+                group: group,
+                tagsByItem: contextData!.tagsByItem,
+                allTags: contextData.tags,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -506,13 +533,11 @@ class _TodayTaskGroupPanel extends StatelessWidget {
   final _TodayTaskGroup group;
   final Map<String, List<Tag>> tagsByItem;
   final List<Tag> allTags;
-  final VoidCallback onChanged;
 
   const _TodayTaskGroupPanel({
     required this.group,
     required this.tagsByItem,
     required this.allTags,
-    required this.onChanged,
   });
 
   @override
@@ -559,7 +584,6 @@ class _TodayTaskGroupPanel extends StatelessWidget {
                 showProjectChip: false,
                 tags: tagsByItem[item.id] ?? const <Tag>[],
                 allTags: allTags,
-                onChanged: onChanged,
               ),
           ],
         ),
@@ -690,7 +714,6 @@ class _TaskListTile extends StatelessWidget {
   final bool showProjectChip;
   final List<Tag> tags;
   final List<Tag> allTags;
-  final VoidCallback onChanged;
 
   const _TaskListTile({
     required this.item,
@@ -698,7 +721,6 @@ class _TaskListTile extends StatelessWidget {
     this.showProjectChip = true,
     required this.tags,
     required this.allTags,
-    required this.onChanged,
   });
 
   @override
@@ -722,10 +744,7 @@ class _TaskListTile extends StatelessWidget {
             children: [
               Checkbox(
                 value: item.completed,
-                onChanged: (_) async {
-                  await state.toggleWorkDone(item.id);
-                  onChanged();
-                },
+                onChanged: (_) => state.toggleWorkDone(item.id),
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               const SizedBox(width: 6),
@@ -801,7 +820,7 @@ class _TaskListTile extends StatelessWidget {
       createdIds.add(await state.saveTag(name: name));
     }
     await state.setWorkItemTags(item.id, {...selection.tagIds, ...createdIds});
-    onChanged();
+    // The updated chips arrive via the work-item-tag stream; no manual refresh.
   }
 }
 

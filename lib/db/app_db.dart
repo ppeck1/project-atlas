@@ -2481,6 +2481,25 @@ class AppDb extends _$AppDb {
     );
   }
 
+  /// Watches every project-tag assignment at once, keyed by project id.
+  /// Projects without tags simply have no entry; read with `?? const []`.
+  Stream<Map<String, List<Tag>>> watchTagsByProject() {
+    final query =
+        select(
+            tags,
+          ).join([innerJoin(projectTags, projectTags.tagId.equalsExp(tags.id))])
+          ..orderBy([OrderingTerm.asc(tags.name)]);
+    return query.watch().map((rows) {
+      final result = <String, List<Tag>>{};
+      for (final row in rows) {
+        result
+            .putIfAbsent(row.readTable(projectTags).projectId, () => <Tag>[])
+            .add(row.readTable(tags));
+      }
+      return result;
+    });
+  }
+
   Future<List<Tag>> getTagsForProject(String projectId) {
     final query =
         select(
@@ -3697,6 +3716,25 @@ class AppDb extends _$AppDb {
   Future<bool> workItemExists(String id) async =>
       (await getWorkItem(id)) != null;
 
+  /// Watches the stage -> project mapping used to resolve a work item's
+  /// project reactively (via `workItem.stageId`). Mirrors
+  /// [getProjectForWorkItem]: stages whose project is hidden (deleted,
+  /// General Tasks) are omitted, so lookups for them yield null.
+  Stream<Map<String, ProjectFull>> watchProjectsByStage() {
+    final query = select(
+      stages,
+    ).join([innerJoin(projects, projects.id.equalsExp(stages.projectId))]);
+    return query.watch().map((rows) {
+      final result = <String, ProjectFull>{};
+      for (final row in rows) {
+        final project = row.readTable(projects);
+        if (!_isVisibleProject(project)) continue;
+        result[row.readTable(stages).id] = project;
+      }
+      return result;
+    });
+  }
+
   Future<Project?> getProjectForWorkItem(String workItemId) async {
     final item = await getWorkItem(workItemId);
     if (item == null) return null;
@@ -3746,12 +3784,19 @@ class AppDb extends _$AppDb {
     );
   }
 
+  /// `work_item_tags` is a hand-managed table (no generated Drift class), so
+  /// mutations must notify streams explicitly with this table name.
+  static const _workItemTagsTableName = 'work_item_tags';
+
   Future<void> assignTagToWorkItem(String workItemId, String tagId) async {
     await customStatement(
       'INSERT OR REPLACE INTO work_item_tags '
       '(work_item_id, tag_id, created_at) VALUES (?, ?, ?)',
       [workItemId, tagId, DateTime.now().millisecondsSinceEpoch],
     );
+    notifyUpdates({
+      const TableUpdate(_workItemTagsTableName, kind: UpdateKind.insert),
+    });
   }
 
   Future<void> setWorkItemTags(
@@ -3768,6 +3813,7 @@ class AppDb extends _$AppDb {
         await assignTagToWorkItem(workItemId, tagId);
       }
     });
+    notifyUpdates({const TableUpdate(_workItemTagsTableName)});
   }
 
   Tag _tagFromRow(QueryRow row) => Tag(
@@ -3812,6 +3858,44 @@ class AppDb extends _$AppDb {
       result.putIfAbsent(workItemId, () => <Tag>[]).add(_tagFromRow(row));
     }
     return result;
+  }
+
+  /// Watches tag assignments for every work item, keyed by work item id.
+  /// Items without tags have no entry; read with `?? const []`.
+  ///
+  /// Because `work_item_tags` has no generated Drift class, the query cannot
+  /// use `readsFrom` for it. Instead this listens to [tableUpdates] for the
+  /// raw table name (emitted by [assignTagToWorkItem]/[setWorkItemTags]) and
+  /// for `tags` (renames, recolors, deletions), re-running the join on either.
+  Stream<Map<String, List<Tag>>> watchWorkItemTags() {
+    Future<Map<String, List<Tag>>> fetch() async {
+      final rows = await customSelect(
+        '''SELECT wt.work_item_id, t.id, t.name, t.color, t.created_at, t.updated_at
+           FROM work_item_tags wt
+           INNER JOIN tags t ON wt.tag_id = t.id
+           ORDER BY LOWER(t.name) ASC''',
+      ).get();
+      final result = <String, List<Tag>>{};
+      for (final row in rows) {
+        final workItemId = row.data['work_item_id'] as String;
+        result.putIfAbsent(workItemId, () => <Tag>[]).add(_tagFromRow(row));
+      }
+      return result;
+    }
+
+    Stream<Map<String, List<Tag>>> watch() async* {
+      yield await fetch();
+      await for (final _ in tableUpdates(
+        TableUpdateQuery.allOf([
+          TableUpdateQuery.onTable(tags),
+          const TableUpdateQuery.onTableName(_workItemTagsTableName),
+        ]),
+      )) {
+        yield await fetch();
+      }
+    }
+
+    return watch();
   }
 
   Future<Map<String, int>> mergeProjects({

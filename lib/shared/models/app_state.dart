@@ -2678,6 +2678,11 @@ class AppState extends ChangeNotifier {
   Future<List<Tag>> getTags() => db.getTags();
   Stream<List<Tag>> watchTagsForProject(String projectId) =>
       db.watchTagsForProject(projectId);
+  Stream<Map<String, List<Tag>>> watchTagsByProject() =>
+      db.watchTagsByProject();
+  Stream<Map<String, List<Tag>>> watchWorkItemTags() => db.watchWorkItemTags();
+  Stream<Map<String, ProjectFull>> watchProjectsByStage() =>
+      db.watchProjectsByStage();
   Future<List<Tag>> getTagsForProject(String projectId) =>
       db.getTagsForProject(projectId);
   Stream<List<Project>> watchProjectsForTag(String tagId) =>
@@ -2689,40 +2694,29 @@ class AppState extends ChangeNotifier {
     bool matchAll = false,
   }) => db.getProjectsMatchingTags(tagIds, matchAll: matchAll);
 
+  // Tag CRUD: no notifyListeners. All UI consumers read tags/assignments via
+  // Drift streams (watchTags, watchTagsByProject, watchTagsForProject,
+  // watchWorkItemTags); remaining Future reads are dialog-scoped one-shots.
+
   Future<String> saveTag({
     String? id,
     required String name,
     String? color,
-  }) async {
-    final tagId = await db.saveTag(id: id, name: name, color: color);
-    notifyListeners();
-    return tagId;
-  }
+  }) => db.saveTag(id: id, name: name, color: color);
 
-  Future<void> updateTag(String id, {String? name, String? color}) async {
-    await db.updateTag(id, name: name, color: color);
-    notifyListeners();
-  }
+  Future<void> updateTag(String id, {String? name, String? color}) =>
+      db.updateTag(id, name: name, color: color);
 
-  Future<void> deleteTag(String id) async {
-    await db.deleteTag(id);
-    notifyListeners();
-  }
+  Future<void> deleteTag(String id) => db.deleteTag(id);
 
-  Future<void> assignTagToProject(String projectId, String tagId) async {
-    await db.assignTagToProject(projectId, tagId);
-    notifyListeners();
-  }
+  Future<void> assignTagToProject(String projectId, String tagId) =>
+      db.assignTagToProject(projectId, tagId);
 
-  Future<void> unassignTagFromProject(String projectId, String tagId) async {
-    await db.unassignTagFromProject(projectId, tagId);
-    notifyListeners();
-  }
+  Future<void> unassignTagFromProject(String projectId, String tagId) =>
+      db.unassignTagFromProject(projectId, tagId);
 
-  Future<void> setProjectTags(String projectId, Iterable<String> tagIds) async {
-    await db.setProjectTags(projectId, tagIds);
-    notifyListeners();
-  }
+  Future<void> setProjectTags(String projectId, Iterable<String> tagIds) =>
+      db.setProjectTags(projectId, tagIds);
 
   Future<List<Tag>> getTagsForWorkItem(String workItemId) =>
       db.getTagsForWorkItem(workItemId);
@@ -2731,13 +2725,8 @@ class AppState extends ChangeNotifier {
     Iterable<String> workItemIds,
   ) => db.getTagsForWorkItems(workItemIds);
 
-  Future<void> setWorkItemTags(
-    String workItemId,
-    Iterable<String> tagIds,
-  ) async {
-    await db.setWorkItemTags(workItemId, tagIds);
-    notifyListeners();
-  }
+  Future<void> setWorkItemTags(String workItemId, Iterable<String> tagIds) =>
+      db.setWorkItemTags(workItemId, tagIds);
 
   // Project media
   Stream<List<ProjectMediaItem>> watchAllProjectMedia() =>

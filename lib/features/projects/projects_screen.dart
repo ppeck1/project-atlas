@@ -97,6 +97,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   Stream<List<Project>>? _projects;
   Stream<List<Tag>>? _tags;
+  Stream<Map<String, List<Tag>>>? _tagsByProject;
   Stream<Map<String, ProjectUpdateAttribution>>? _projectUpdateAttributions;
   Stream<Project?>? _activeProject;
 
@@ -113,6 +114,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     final state = AppStateScope.of(context);
     _projects ??= state.watchProjects();
     _tags ??= state.watchTags();
+    _tagsByProject ??= state.watchTagsByProject();
     _projectUpdateAttributions ??= state.watchProjectUpdateAttributions();
     _activeProject ??= state.watchActiveProject();
     if (_loadedOrderingPreferences) return;
@@ -997,8 +999,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                     return _ProjectsLoadError(error: tagSnap.error);
                   }
                   final tags = tagSnap.data ?? const <Tag>[];
-                  return FutureBuilder<Map<String, List<Tag>>>(
-                    future: _loadTagsForProjects(state, projects),
+                  return StreamBuilder<Map<String, List<Tag>>>(
+                    stream: _tagsByProject,
                     builder: (context, projectTagSnap) {
                       if (projectTagSnap.hasError) {
                         return _ProjectsLoadError(error: projectTagSnap.error);
@@ -1240,18 +1242,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         context.go('/projects/${project.id}');
       },
     );
-  }
-
-  Future<Map<String, List<Tag>>> _loadTagsForProjects(
-    AppState state,
-    List<Project> projects,
-  ) async {
-    final entries = await Future.wait(
-      projects.map(
-        (p) async => MapEntry(p.id, await state.getTagsForProject(p.id)),
-      ),
-    );
-    return Map.fromEntries(entries);
   }
 
   List<Project> _filterProjects(
