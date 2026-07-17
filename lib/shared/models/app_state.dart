@@ -9,16 +9,28 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../db/app_db.dart';
+import '../../services/github_archive_service.dart';
 import '../../services/github_remote_metadata_service.dart';
 import '../../services/local_git_visibility_service.dart';
 import '../../services/local_project_refresh_service.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../services/ollama_service.dart';
+import '../../services/project_enrichment_service.dart';
 import '../../services/project_runtime_service.dart';
 import '../../services/project_summary_models.dart';
 import '../../services/shopify_seo_review_service.dart';
 import '../../services/telegram_service.dart';
 import '../../services/workload_planning_service.dart';
+
+export '../../services/github_archive_service.dart'
+    show GithubArchiveFetcher;
+export '../../services/project_enrichment_service.dart'
+    show
+        ProjectEnrichmentStatusCallback,
+        ProjectEnrichmentFindingDraft,
+        ProjectEnrichmentAudit,
+        ProjectIdentityEnrichmentResult,
+        ProjectEnrichmentService;
 
 class ProjectLocalRepoSummary {
   final ProjectRegistryEntry? registry;
@@ -452,9 +464,6 @@ class ProjectReconciliationPreview {
   };
 }
 
-typedef ProjectEnrichmentStatusCallback =
-    void Function(String status, {int? current, int? total});
-
 class ProjectEnrichmentRunResult {
   final ProjectEnrichmentRun run;
   final List<ProjectEnrichmentFinding> findings;
@@ -540,9 +549,6 @@ String? _cleanNullableString(Object? value) {
   return text;
 }
 
-typedef GithubArchiveFetcher =
-    Future<List<int>> Function(GithubRemoteIdentity identity, String ref);
-
 class _ProjectGitArchive {
   final List<int> bytes;
   final String archivePath;
@@ -555,18 +561,6 @@ class _ProjectGitArchive {
   });
 }
 
-class _GithubArchiveCandidate {
-  final GithubRemoteIdentity identity;
-  final String ref;
-  final ProjectGitRemoteStatus? status;
-
-  const _GithubArchiveCandidate({
-    required this.identity,
-    required this.ref,
-    required this.status,
-  });
-}
-
 class _LocalGitArchiveCandidate {
   final ProjectRegistryEntry registry;
   final LocalGitVisibilityReport report;
@@ -574,89 +568,6 @@ class _LocalGitArchiveCandidate {
   const _LocalGitArchiveCandidate({
     required this.registry,
     required this.report,
-  });
-}
-
-Future<List<int>> _downloadPublicGithubArchive(
-  GithubRemoteIdentity identity,
-  String ref,
-) async {
-  final safeRef = ref.trim();
-  if (safeRef.isEmpty) {
-    throw StateError('GitHub archive ref is required.');
-  }
-  final uri = Uri.https(
-    'codeload.github.com',
-    '/${identity.owner}/${identity.repo}/zip/$safeRef',
-  );
-  final client = HttpClient();
-  try {
-    final request = await client
-        .getUrl(uri)
-        .timeout(const Duration(seconds: 8));
-    final response = await request.close().timeout(const Duration(seconds: 20));
-    if (response.statusCode != HttpStatus.ok) {
-      throw HttpException(
-        'GitHub archive request returned HTTP ${response.statusCode}.',
-        uri: uri,
-      );
-    }
-    final bytes = <int>[];
-    await for (final chunk in response) {
-      bytes.addAll(chunk);
-    }
-    if (bytes.isEmpty) {
-      throw HttpException('GitHub archive response was empty.', uri: uri);
-    }
-    return bytes;
-  } finally {
-    client.close(force: true);
-  }
-}
-
-class _ProjectEnrichmentFindingDraft {
-  final String? projectId;
-  final String? registryId;
-  final String severity;
-  final String category;
-  final String title;
-  final String? detail;
-  final Map<String, Object?> evidence;
-
-  const _ProjectEnrichmentFindingDraft({
-    this.projectId,
-    this.registryId,
-    required this.severity,
-    required this.category,
-    required this.title,
-    this.detail,
-    this.evidence = const {},
-  });
-}
-
-class _ProjectEnrichmentAudit {
-  final List<_ProjectEnrichmentFindingDraft> findings;
-  final Map<String, Object?> coverage;
-
-  const _ProjectEnrichmentAudit({
-    required this.findings,
-    required this.coverage,
-  });
-}
-
-class _ProjectIdentityEnrichmentResult {
-  final int considered;
-  final int updated;
-  final int unchanged;
-  final int skipped;
-  final List<String> warnings;
-
-  const _ProjectIdentityEnrichmentResult({
-    required this.considered,
-    required this.updated,
-    required this.unchanged,
-    required this.skipped,
-    required this.warnings,
   });
 }
 
@@ -683,54 +594,10 @@ class AppState extends ChangeNotifier {
     'pubspec.yaml',
     'pyproject.toml',
   };
-  static const int _projectEnrichmentProposalCap = 120;
-  static const int _projectSummaryMaxCharsPerDoc = 3000;
-  static const int _projectSummaryMaxTotalDocChars = 16000;
-  static const Map<String, int> _projectSummaryCategoryWeights = {
-    'active_task': 1200,
-    'current_state': 1180,
-    'handoff': 1160,
-    'readme': 1140,
-    'acceptance': 1120,
-    'operations': 1100,
-    'roadmap': 1060,
-    'requirements': 1040,
-    'change_history': 1020,
-    'agent_guidance': 1000,
-    'text': 560,
-    'source': 240,
-    'binary': 160,
-    'other': 100,
-  };
-  static const Set<String> _projectSummaryTextExtensions = {
-    'md',
-    'mdx',
-    'txt',
-    'log',
-    'rst',
-    'html',
-    'htm',
-    'eml',
-    'json',
-    'yaml',
-    'yml',
-    'toml',
-    'ini',
-    'csv',
-    'xml',
-  };
-  static const Set<String> _projectSummarySourceExtensions = {
-    'dart',
-    'py',
-    'js',
-    'ts',
-    'tsx',
-    'jsx',
-    'java',
-    'cs',
-    'go',
-    'rs',
-  };
+  late final ProjectEnrichmentService _projectEnrichmentService =
+      ProjectEnrichmentService(db);
+  late final GithubArchiveService _githubArchiveService =
+      GithubArchiveService(db);
 
   Timer? _localProjectRefreshTimer;
   bool _summaryRefreshRunning = false;
@@ -783,7 +650,8 @@ class AppState extends ChangeNotifier {
     bool enableBackgroundSummaryRefresh = true,
     GithubArchiveFetcher? githubArchiveFetcher,
   }) : _githubArchiveFetcher =
-           githubArchiveFetcher ?? _downloadPublicGithubArchive {
+           githubArchiveFetcher ??
+           GithubArchiveService.downloadPublicGithubArchive {
     _watchProjectAiSummarySettings();
     unawaited(
       _migrateRuntimeManifestPathSetting().catchError((
@@ -1440,7 +1308,10 @@ class AppState extends ChangeNotifier {
           'items': refs.map((ref) => ref.toJson()).toList(),
         }),
       );
-      notifyListeners();
+      // No notifyListeners: work_items writes invalidate Drift streams,
+      // llm_task_queue writes are broadcast via notifyUpdates in AppDb
+      // (watchLlmTasks*), and the workboard reloads itself explicitly after
+      // every bulk-planning action.
     }
   }
 
@@ -1513,7 +1384,8 @@ class AppState extends ChangeNotifier {
       entityId: workItemId,
       outputJson: jsonEncode({'taskId': taskId, 'projectId': project.id}),
     );
-    notifyListeners();
+    // No notifyListeners: the queue write re-emits watchLlmTasks*; callers
+    // (workboard link dialog) reload their snapshot explicitly.
   }
 
   Future<Map<String, Object?>> getWorkItemContextBundle(
@@ -2678,6 +2550,11 @@ class AppState extends ChangeNotifier {
   Future<List<Tag>> getTags() => db.getTags();
   Stream<List<Tag>> watchTagsForProject(String projectId) =>
       db.watchTagsForProject(projectId);
+  Stream<Map<String, List<Tag>>> watchTagsByProject() =>
+      db.watchTagsByProject();
+  Stream<Map<String, List<Tag>>> watchWorkItemTags() => db.watchWorkItemTags();
+  Stream<Map<String, ProjectFull>> watchProjectsByStage() =>
+      db.watchProjectsByStage();
   Future<List<Tag>> getTagsForProject(String projectId) =>
       db.getTagsForProject(projectId);
   Stream<List<Project>> watchProjectsForTag(String tagId) =>
@@ -2689,40 +2566,29 @@ class AppState extends ChangeNotifier {
     bool matchAll = false,
   }) => db.getProjectsMatchingTags(tagIds, matchAll: matchAll);
 
+  // Tag CRUD: no notifyListeners. All UI consumers read tags/assignments via
+  // Drift streams (watchTags, watchTagsByProject, watchTagsForProject,
+  // watchWorkItemTags); remaining Future reads are dialog-scoped one-shots.
+
   Future<String> saveTag({
     String? id,
     required String name,
     String? color,
-  }) async {
-    final tagId = await db.saveTag(id: id, name: name, color: color);
-    notifyListeners();
-    return tagId;
-  }
+  }) => db.saveTag(id: id, name: name, color: color);
 
-  Future<void> updateTag(String id, {String? name, String? color}) async {
-    await db.updateTag(id, name: name, color: color);
-    notifyListeners();
-  }
+  Future<void> updateTag(String id, {String? name, String? color}) =>
+      db.updateTag(id, name: name, color: color);
 
-  Future<void> deleteTag(String id) async {
-    await db.deleteTag(id);
-    notifyListeners();
-  }
+  Future<void> deleteTag(String id) => db.deleteTag(id);
 
-  Future<void> assignTagToProject(String projectId, String tagId) async {
-    await db.assignTagToProject(projectId, tagId);
-    notifyListeners();
-  }
+  Future<void> assignTagToProject(String projectId, String tagId) =>
+      db.assignTagToProject(projectId, tagId);
 
-  Future<void> unassignTagFromProject(String projectId, String tagId) async {
-    await db.unassignTagFromProject(projectId, tagId);
-    notifyListeners();
-  }
+  Future<void> unassignTagFromProject(String projectId, String tagId) =>
+      db.unassignTagFromProject(projectId, tagId);
 
-  Future<void> setProjectTags(String projectId, Iterable<String> tagIds) async {
-    await db.setProjectTags(projectId, tagIds);
-    notifyListeners();
-  }
+  Future<void> setProjectTags(String projectId, Iterable<String> tagIds) =>
+      db.setProjectTags(projectId, tagIds);
 
   Future<List<Tag>> getTagsForWorkItem(String workItemId) =>
       db.getTagsForWorkItem(workItemId);
@@ -2731,13 +2597,8 @@ class AppState extends ChangeNotifier {
     Iterable<String> workItemIds,
   ) => db.getTagsForWorkItems(workItemIds);
 
-  Future<void> setWorkItemTags(
-    String workItemId,
-    Iterable<String> tagIds,
-  ) async {
-    await db.setWorkItemTags(workItemId, tagIds);
-    notifyListeners();
-  }
+  Future<void> setWorkItemTags(String workItemId, Iterable<String> tagIds) =>
+      db.setWorkItemTags(workItemId, tagIds);
 
   // Project media
   Stream<List<ProjectMediaItem>> watchAllProjectMedia() =>
@@ -3750,7 +3611,7 @@ class AppState extends ChangeNotifier {
     );
   }
 
-  String _fingerprintForFindingDraft(_ProjectEnrichmentFindingDraft finding) {
+  String _fingerprintForFindingDraft(ProjectEnrichmentFindingDraft finding) {
     return _projectHealthFindingFingerprint(
       projectId: finding.projectId,
       registryId: finding.registryId,
@@ -3870,158 +3731,14 @@ class AppState extends ChangeNotifier {
     required String title,
   }) {
     _setProjectEnrichmentStatus('$title...', resetProgress: true);
-    return db.startProjectEnrichmentStep(
-      runId: runId,
-      worker: worker,
-      title: title,
-      startedAt: DateTime.now(),
-    );
-  }
-
-  Future<void> _finishEnrichmentStep(
-    String stepId, {
-    required String status,
-    int considered = 0,
-    int createdItems = 0,
-    int updatedItems = 0,
-    int skippedItems = 0,
-    int failedItems = 0,
-    int findings = 0,
-    int proposals = 0,
-    List<String> warnings = const [],
-    Map<String, Object?> output = const {},
-  }) {
-    return db.finishProjectEnrichmentStep(
-      id: stepId,
-      completedAt: DateTime.now(),
-      status: status,
-      considered: considered,
-      createdItems: createdItems,
-      updatedItems: updatedItems,
-      skippedItems: skippedItems,
-      failedItems: failedItems,
-      findings: findings,
-      proposals: proposals,
-      warningsJson: jsonEncode(warnings),
-      outputJson: jsonEncode(output),
-    );
-  }
-
-  Future<void> _addEnrichmentProposal({
-    required String runId,
-    String? projectId,
-    String? registryId,
-    required String worker,
-    required String proposalType,
-    required String title,
-    String? detail,
-    required Map<String, Object?> payload,
-    int confidence = 70,
-  }) async {
-    final now = DateTime.now();
-    final raw = [
+    return _projectEnrichmentService.startStep(
       runId,
-      worker,
-      proposalType,
-      projectId,
-      registryId,
-      title,
-    ].whereType<String>().join('__');
-    await db.addProjectEnrichmentProposal(
-      id: 'proposal_${now.microsecondsSinceEpoch}_${raw.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')}',
-      runId: runId,
-      projectId: projectId,
-      registryId: registryId,
       worker: worker,
-      proposalType: proposalType,
       title: title,
-      detail: detail,
-      payloadJson: jsonEncode(payload),
-      confidence: confidence,
-      createdAt: now,
     );
   }
 
-  Future<int> _createCorrectionProposalsForFindings(
-    String runId,
-    List<_ProjectEnrichmentFindingDraft> findings,
-  ) async {
-    var created = 0;
-    for (final finding in findings) {
-      if (created >= _projectEnrichmentProposalCap) break;
-      await _addEnrichmentProposal(
-        runId: runId,
-        projectId: finding.projectId,
-        registryId: finding.registryId,
-        worker: 'correction',
-        proposalType: _proposalTypeForFinding(finding),
-        title: 'Resolve: ${finding.title}',
-        detail: finding.detail,
-        payload: {
-          'schema': 'project_atlas_enrichment_correction_v1',
-          'finding': {
-            'severity': finding.severity,
-            'category': finding.category,
-            'title': finding.title,
-            'detail': finding.detail,
-            'evidence': finding.evidence,
-          },
-          'recommendedAction': _recommendedActionForFinding(finding),
-          'writeBoundary': 'atlas_only',
-          'sourceReposMutated': false,
-        },
-        confidence: _proposalConfidenceForFinding(finding),
-      );
-      created++;
-    }
-    return created;
-  }
-
-  String _proposalTypeForFinding(_ProjectEnrichmentFindingDraft finding) {
-    return switch (finding.category) {
-      'registry' => 'registry_review',
-      'library' => 'library_import_review',
-      'media' => 'media_import_review',
-      'identity' => 'identity_update',
-      'people' => 'people_role_update',
-      'workboard' => 'task_update',
-      'governance' => 'governance_update',
-      'repository' => 'repository_metadata_review',
-      _ => 'enrichment_follow_up',
-    };
-  }
-
-  String _recommendedActionForFinding(_ProjectEnrichmentFindingDraft finding) {
-    return switch (finding.category) {
-      'registry' =>
-        'Link, import, merge, or ignore the local registry entry in Operations.',
-      'library' =>
-        'Refresh linked project documents/cards/source files or review import exclusions.',
-      'media' =>
-        'Attach project media or confirm that this project intentionally has none.',
-      'identity' =>
-        'Review project identity fields such as description, tags, type, phase, and priority.',
-      'people' =>
-        'Add owner or people/role assignments, or mark the project as unassigned.',
-      'workboard' =>
-        'Create or import project tasks, or mark the project as intentionally taskless.',
-      'governance' =>
-        'Add risks/issues or decision-log entries, or confirm no governance record is needed.',
-      'repository' =>
-        'Refresh local/GitHub repository metadata or mark the project local-only.',
-      _ => 'Review and resolve this enrichment finding.',
-    };
-  }
-
-  int _proposalConfidenceForFinding(_ProjectEnrichmentFindingDraft finding) {
-    return switch (finding.severity) {
-      'error' => 85,
-      'warning' => 75,
-      _ => 60,
-    };
-  }
-
-  Future<_ProjectIdentityEnrichmentResult> _refreshProjectIdentityRecords(
+  Future<ProjectIdentityEnrichmentResult> _refreshProjectIdentityRecords(
     List<ProjectRegistryEntry> registry, {
     LocalProjectRefreshService service = const LocalProjectRefreshService(),
     ProjectEnrichmentStatusCallback? onStatus,
@@ -4106,7 +3823,7 @@ class AppState extends ChangeNotifier {
       }
     }
 
-    return _ProjectIdentityEnrichmentResult(
+    return ProjectIdentityEnrichmentResult(
       considered: considered,
       updated: updated,
       unchanged: unchanged,
@@ -4383,7 +4100,7 @@ class AppState extends ChangeNotifier {
       List<String> warnings = const [],
       Map<String, Object?> output = const {},
     }) async {
-      await _finishEnrichmentStep(
+      await _projectEnrichmentService.finishStep(
         stepId,
         status: status,
         considered: considered,
@@ -4639,10 +4356,8 @@ class AppState extends ChangeNotifier {
             : 'Correction agent: skipped by run scope',
       );
       if (shouldCreateProposals) {
-        final proposalCount = await _createCorrectionProposalsForFindings(
-          runId,
-          activeFindings,
-        );
+        final proposalCount = await _projectEnrichmentService
+            .createCorrectionProposalsForFindings(runId, activeFindings);
         savedProposals = await db.getProjectEnrichmentProposalsForRun(runId);
         await finishTrackedStep(
           correctionStepId,
@@ -4652,7 +4367,7 @@ class AppState extends ChangeNotifier {
           output: {
             'policy': 'proposal_only',
             'autoApplied': false,
-            'proposalCap': _projectEnrichmentProposalCap,
+            'proposalCap': ProjectEnrichmentService.proposalCap,
           },
         );
       } else {
@@ -4844,11 +4559,11 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<_ProjectEnrichmentAudit> _buildProjectEnrichmentAudit({
+  Future<ProjectEnrichmentAudit> _buildProjectEnrichmentAudit({
     required List<ProjectRegistryEntry> registry,
     required List<Project> projects,
   }) async {
-    final findings = <_ProjectEnrichmentFindingDraft>[];
+    final findings = <ProjectEnrichmentFindingDraft>[];
     final registryByProjectId = <String, ProjectRegistryEntry>{};
     final registryEntriesByProjectId = <String, List<ProjectRegistryEntry>>{};
     for (final entry in registry) {
@@ -4892,7 +4607,7 @@ class AppState extends ChangeNotifier {
       Map<String, Object?> evidence = const {},
     }) {
       findings.add(
-        _ProjectEnrichmentFindingDraft(
+        ProjectEnrichmentFindingDraft(
           projectId: project?.id,
           registryId: registryEntry?.id,
           severity: severity,
@@ -5303,7 +5018,7 @@ class AppState extends ChangeNotifier {
         'duplicateNormalizedIdentities': duplicateSourceIdentities,
       },
     };
-    return _ProjectEnrichmentAudit(findings: findings, coverage: coverage);
+    return ProjectEnrichmentAudit(findings: findings, coverage: coverage);
   }
 
   bool _isActivePrimarySource(ProjectRegistryEntry entry) {
@@ -5661,6 +5376,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // LLM queue mutations: no notifyListeners. `llm_task_queue` is hand-managed,
+  // so AppDb emits notifyUpdates('llm_task_queue') on every mutation and UI
+  // consumers read via watchLlmTasks/watchLlmTasksForProject (project detail
+  // task header). Remaining Future reads are dialog-scoped one-shots or
+  // explicit workboard reloads; event-log writes invalidate watchRecentEvents
+  // on their own and no cached AppState field derives from the queue.
   Future<String> enqueueLlmTask({
     required String projectId,
     String? workItemId,
@@ -5704,7 +5425,6 @@ class AppState extends ChangeNotifier {
       entityId: projectId,
       outputJson: jsonEncode({'taskId': id, 'workItemId': workItemId}),
     );
-    notifyListeners();
     return id;
   }
 
@@ -5714,10 +5434,21 @@ class AppState extends ChangeNotifier {
     int limit = 50,
   }) => db.getLlmTasks(projectId: projectId, status: status, limit: limit);
 
+  Stream<List<LlmTaskQueueItem>> watchLlmTasks({
+    String? projectId,
+    String? status,
+    int limit = 50,
+  }) => db.watchLlmTasks(projectId: projectId, status: status, limit: limit);
+
   Future<List<LlmTaskQueueItem>> getLlmTasksForProject(
     String projectId, {
     int limit = 50,
   }) => db.getLlmTasksForProject(projectId, limit: limit);
+
+  Stream<List<LlmTaskQueueItem>> watchLlmTasksForProject(
+    String projectId, {
+    int limit = 50,
+  }) => db.watchLlmTasksForProject(projectId, limit: limit);
 
   Future<LlmTaskQueueItem?> getLlmTask(String taskId) => db.getLlmTask(taskId);
 
@@ -5793,7 +5524,6 @@ class AppState extends ChangeNotifier {
         'leaseRevoked': existing.status == 'leased',
       }),
     );
-    notifyListeners();
     return item;
   }
 
@@ -5801,15 +5531,11 @@ class AppState extends ChangeNotifier {
     String? taskId,
     required String leasedBy,
     Duration leaseDuration = const Duration(hours: 1),
-  }) async {
-    final item = await db.claimLlmTask(
-      taskId: taskId,
-      leasedBy: leasedBy,
-      leaseDuration: leaseDuration,
-    );
-    if (item != null) notifyListeners();
-    return item;
-  }
+  }) => db.claimLlmTask(
+    taskId: taskId,
+    leasedBy: leasedBy,
+    leaseDuration: leaseDuration,
+  );
 
   Future<LlmTaskQueueItem> cancelLlmTask(
     String taskId, {
@@ -5837,7 +5563,6 @@ class AppState extends ChangeNotifier {
       entityId: taskId,
       outputJson: jsonEncode({'projectId': item.projectId}),
     );
-    notifyListeners();
     return item;
   }
 
@@ -5858,7 +5583,6 @@ class AppState extends ChangeNotifier {
       entityId: taskId,
       outputJson: jsonEncode({'projectId': item.projectId}),
     );
-    notifyListeners();
     return item;
   }
 
@@ -5872,13 +5596,11 @@ class AppState extends ChangeNotifier {
     if (existing.status != 'leased') {
       throw StateError('Only leased LLM tasks can be completed.');
     }
-    final item = await db.completeLlmTask(
+    return db.completeLlmTask(
       id: taskId,
       resultJson: jsonEncode(result),
       reviewDraftId: reviewDraftId,
     );
-    notifyListeners();
-    return item;
   }
 
   Future<LlmTaskQueueItem?> failLlmTask({
@@ -5891,13 +5613,11 @@ class AppState extends ChangeNotifier {
     if (existing.status != 'leased') {
       throw StateError('Only leased LLM tasks can be failed.');
     }
-    final item = await db.failLlmTask(
+    return db.failLlmTask(
       id: taskId,
       error: error,
       resultJson: result.isEmpty ? null : jsonEncode(result),
     );
-    notifyListeners();
-    return item;
   }
 
   Future<ProjectGitRemoteStatus> refreshProjectGithubRemoteMetadata(
@@ -7599,15 +7319,19 @@ class AppState extends ChangeNotifier {
         final ranked = rankedDocs[index];
         final doc = ranked.doc;
         String? excerpt;
-        if (totalChars < _projectSummaryMaxTotalDocChars) {
+        if (totalChars < ProjectSummaryEvidencePolicy.maxTotalDocChars) {
           final rawText = await _readDocumentText(doc);
           if (rawText != null) {
             excerpt = rawText;
-            if (excerpt.length > _projectSummaryMaxCharsPerDoc) {
-              excerpt = excerpt.substring(0, _projectSummaryMaxCharsPerDoc);
+            if (excerpt.length > ProjectSummaryEvidencePolicy.maxCharsPerDoc) {
+              excerpt = excerpt.substring(
+                0,
+                ProjectSummaryEvidencePolicy.maxCharsPerDoc,
+              );
               documentCapTruncations++;
             }
-            final remaining = _projectSummaryMaxTotalDocChars - totalChars;
+            final remaining =
+                ProjectSummaryEvidencePolicy.maxTotalDocChars - totalChars;
             if (excerpt.length > remaining) {
               excerpt = excerpt.substring(0, remaining);
               packetCapTruncations++;
@@ -7647,7 +7371,7 @@ class AppState extends ChangeNotifier {
       }
       if (documentCapTruncations > 0) {
         warnings.add(
-          '$documentCapTruncations document excerpt(s) truncated at $_projectSummaryMaxCharsPerDoc chars.',
+          '$documentCapTruncations document excerpt(s) truncated at ${ProjectSummaryEvidencePolicy.maxCharsPerDoc} chars.',
         );
       }
       if (packetCapTruncations > 0 || budgetMetadataOnlyDocuments > 0) {
@@ -7655,7 +7379,7 @@ class AppState extends ChangeNotifier {
             ? '; $budgetMetadataOnlyDocuments lower-ranked document(s) metadata only.'
             : '.';
         warnings.add(
-          'Excerpt budget reached at $_projectSummaryMaxTotalDocChars chars'
+          'Excerpt budget reached at ${ProjectSummaryEvidencePolicy.maxTotalDocChars} chars'
           '$metadataOnlyDetail',
         );
       }
@@ -7721,8 +7445,8 @@ class AppState extends ChangeNotifier {
       context: context,
       includeLibrary: resolvedIncludeLibrary,
       suppliedDocumentCount: suppliedDocs.length,
-      maxExcerptCharsPerDoc: _projectSummaryMaxCharsPerDoc,
-      maxTotalExcerptChars: _projectSummaryMaxTotalDocChars,
+      maxExcerptCharsPerDoc: ProjectSummaryEvidencePolicy.maxCharsPerDoc,
+      maxTotalExcerptChars: ProjectSummaryEvidencePolicy.maxTotalDocChars,
       warnings: warnings,
     );
   }
@@ -7730,90 +7454,24 @@ class AppState extends ChangeNotifier {
   ({String category, String reason, int score})
   _projectSummaryDocumentClassification(Document doc) {
     final category = _projectSummaryEvidenceCategory(doc);
-    var score =
-        _projectSummaryCategoryWeights[category] ??
-        _projectSummaryCategoryWeights['other']!;
-    final ext = doc.extension?.toLowerCase();
-
-    if (_projectSummaryTextExtensions.contains(ext)) score += 80;
-    if (const {'pdf', 'docx', 'doc'}.contains(ext)) score += 25;
-    if (_projectSummarySourceExtensions.contains(ext)) score += 15;
-    if (_hasStoredSummaryText(doc)) score += 35;
-    if ((doc.source ?? '').toLowerCase().contains('local_project')) {
-      score += 20;
-    }
-
     return (
       category: category,
-      reason: _projectSummaryDocumentReason(category),
-      score: score,
+      reason: ProjectSummaryEvidencePolicy.documentReason(category),
+      score: ProjectSummaryEvidencePolicy.documentScore(
+        category: category,
+        extension: doc.extension,
+        hasStoredText: _hasStoredSummaryText(doc),
+        source: doc.source,
+      ),
     );
   }
 
-  String _projectSummaryEvidenceCategory(Document doc) {
-    final identity = _summaryDocumentIdentity(doc);
-    final normalized = identity.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
-    bool has(String needle) {
-      final token = needle.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
-      return normalized.contains(token);
-    }
-
-    final ext = doc.extension?.toLowerCase();
-    if (has('active_task')) return 'active_task';
-    if (has('current_state')) return 'current_state';
-    if (has('handoff')) return 'handoff';
-    if (has('readme')) return 'readme';
-    if (has('acceptance')) return 'acceptance';
-    if (has('operations')) return 'operations';
-    if (has('roadmap')) return 'roadmap';
-    if (has('requirements') || has('spec')) return 'requirements';
-    if (has('changelog') || has('change_log') || has('history')) {
-      return 'change_history';
-    }
-    if (has('agents') || has('agent') || has('claude')) {
-      return 'agent_guidance';
-    }
-    if (_projectSummarySourceExtensions.contains(ext)) return 'source';
-    if (_projectSummaryTextExtensions.contains(ext) ||
-        _hasStoredSummaryText(doc)) {
-      return 'text';
-    }
-    if (ext != null && ext.isNotEmpty) return 'binary';
-    return 'other';
-  }
-
-  String _projectSummaryDocumentReason(String category) {
-    switch (category) {
-      case 'active_task':
-        return 'active task';
-      case 'current_state':
-        return 'current state';
-      case 'handoff':
-        return 'handoff';
-      case 'readme':
-        return 'project readme';
-      case 'acceptance':
-        return 'acceptance criteria';
-      case 'operations':
-        return 'operations note';
-      case 'roadmap':
-        return 'roadmap';
-      case 'requirements':
-        return 'requirements/spec';
-      case 'change_history':
-        return 'change history';
-      case 'agent_guidance':
-        return 'agent guidance';
-      case 'source':
-        return 'source-like document';
-      case 'text':
-        return 'text document';
-      case 'binary':
-        return 'binary or metadata-only document';
-      default:
-        return 'linked Library document';
-    }
-  }
+  String _projectSummaryEvidenceCategory(Document doc) =>
+      ProjectSummaryEvidencePolicy.evidenceCategory(
+        identity: _summaryDocumentIdentity(doc),
+        extension: doc.extension,
+        hasStoredText: _hasStoredSummaryText(doc),
+      );
 
   String _summaryDocumentIdentity(Document doc) =>
       '${doc.title} ${doc.originalFilename}'.toLowerCase();
@@ -8161,7 +7819,7 @@ class AppState extends ChangeNotifier {
     final ext = doc.extension?.toLowerCase();
     if (path != null &&
         path.isNotEmpty &&
-        _projectSummaryTextExtensions.contains(ext)) {
+        ProjectSummaryEvidencePolicy.textExtensions.contains(ext)) {
       try {
         final file = File(path);
         if (await file.exists()) {
@@ -10012,32 +9670,9 @@ class AppState extends ChangeNotifier {
     return 'Git ${registry.displayName}: git HEAD could not be resolved.';
   }
 
-  Future<_GithubArchiveCandidate?> _findGithubArchiveCandidate(
+  Future<GithubArchiveCandidate?> _findGithubArchiveCandidate(
     String projectId,
-  ) async {
-    final statuses = await db.getProjectGitRemoteStatuses(projectId);
-    for (final status in statuses) {
-      if (status.provider.toLowerCase() != 'github') continue;
-      if (status.hasError) continue;
-      final visibility = status.visibility?.trim().toLowerCase();
-      final isPublic = status.isPrivate == false || visibility == 'public';
-      if (!isPublic) continue;
-      final identity = GithubRemoteMetadataService.parseGithubRemoteUrl(
-        status.remoteUrl,
-      );
-      if (identity == null) continue;
-      final ref =
-          _cleanNullableString(status.onlineHeadSha) ??
-          _cleanNullableString(status.defaultBranch);
-      if (ref == null) continue;
-      return _GithubArchiveCandidate(
-        identity: identity,
-        ref: ref,
-        status: status,
-      );
-    }
-    return null;
-  }
+  ) => _githubArchiveService.findCandidateForProject(projectId);
 
   List<ProjectRegistryEntry> _orderedProjectRegistries(
     List<ProjectRegistryEntry> registries,

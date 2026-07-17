@@ -568,4 +568,136 @@ void main() {
       expect(outcome.isSuccess, isTrue);
     });
   });
+
+  group('ProjectSummaryEvidencePolicy', () {
+    test('weight table covers every category the classifier can emit', () {
+      const emittableCategories = {
+        'active_task',
+        'current_state',
+        'handoff',
+        'readme',
+        'acceptance',
+        'operations',
+        'roadmap',
+        'requirements',
+        'change_history',
+        'agent_guidance',
+        'source',
+        'text',
+        'binary',
+        'other',
+      };
+      expect(
+        ProjectSummaryEvidencePolicy.categoryWeights.keys.toSet(),
+        emittableCategories,
+      );
+      // Fallback weight must exist for unknown categories.
+      expect(
+        ProjectSummaryEvidencePolicy.categoryWeight('nonsense'),
+        ProjectSummaryEvidencePolicy.categoryWeights['other'],
+      );
+    });
+
+    test('operational docs outrank generic text, source, and binary', () {
+      final weights = ProjectSummaryEvidencePolicy.categoryWeights;
+      for (final operational in [
+        'active_task',
+        'current_state',
+        'handoff',
+        'readme',
+      ]) {
+        expect(weights[operational]!, greaterThan(weights['text']!));
+      }
+      expect(weights['text']!, greaterThan(weights['source']!));
+      expect(weights['source']!, greaterThan(weights['binary']!));
+      expect(weights['binary']!, greaterThan(weights['other']!));
+    });
+
+    test('excerpt caps are sane', () {
+      expect(ProjectSummaryEvidencePolicy.maxCharsPerDoc, greaterThan(0));
+      expect(
+        ProjectSummaryEvidencePolicy.maxTotalDocChars,
+        greaterThanOrEqualTo(ProjectSummaryEvidencePolicy.maxCharsPerDoc),
+      );
+    });
+
+    test('evidenceCategory classifies by identity then extension', () {
+      expect(
+        ProjectSummaryEvidencePolicy.evidenceCategory(
+          identity: 'active_task.md active_task.md',
+          extension: 'md',
+          hasStoredText: true,
+        ),
+        'active_task',
+      );
+      expect(
+        ProjectSummaryEvidencePolicy.evidenceCategory(
+          identity: 'current-state notes current_state.md',
+          extension: 'md',
+          hasStoredText: false,
+        ),
+        'current_state',
+      );
+      expect(
+        ProjectSummaryEvidencePolicy.evidenceCategory(
+          identity: 'main.dart main.dart',
+          extension: 'dart',
+          hasStoredText: false,
+        ),
+        'source',
+      );
+      expect(
+        ProjectSummaryEvidencePolicy.evidenceCategory(
+          identity: 'notes notes.txt',
+          extension: 'txt',
+          hasStoredText: false,
+        ),
+        'text',
+      );
+      expect(
+        ProjectSummaryEvidencePolicy.evidenceCategory(
+          identity: 'photo photo.png',
+          extension: 'png',
+          hasStoredText: false,
+        ),
+        'binary',
+      );
+      expect(
+        ProjectSummaryEvidencePolicy.evidenceCategory(
+          identity: 'mystery mystery',
+          extension: null,
+          hasStoredText: false,
+        ),
+        'other',
+      );
+    });
+
+    test('documentScore adds readable-format and provenance bonuses', () {
+      final base = ProjectSummaryEvidencePolicy.documentScore(
+        category: 'readme',
+        extension: null,
+        hasStoredText: false,
+        source: null,
+      );
+      expect(base, ProjectSummaryEvidencePolicy.categoryWeights['readme']);
+      final boosted = ProjectSummaryEvidencePolicy.documentScore(
+        category: 'readme',
+        extension: 'md',
+        hasStoredText: true,
+        source: 'local_project_refresh',
+      );
+      // +80 text extension, +35 stored text, +20 local project provenance.
+      expect(boosted, base + 80 + 35 + 20);
+    });
+
+    test('documentReason has a label for every weighted category', () {
+      for (final category
+          in ProjectSummaryEvidencePolicy.categoryWeights.keys) {
+        expect(
+          ProjectSummaryEvidencePolicy.documentReason(category),
+          isNotEmpty,
+        );
+      }
+    });
+  });
 }

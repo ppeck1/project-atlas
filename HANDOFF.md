@@ -114,7 +114,10 @@ For public changes, also verify:
   timers do not reliably survive OS sleep/resume, so the date header may lag
   until the next rebuild after a resume.
 - Some `AppState.notifyListeners()` calls remain load-bearing for data with
-  no Drift watcher (Today-screen tag/project context, project
-  people/risks/decisions, the LLM task queue) and for `projects`-table writes
-  (`watchActiveProject` watches only `app_meta`). Do not remove those
-  notifies until stream coverage exists for the consumers.
+  no Drift watcher (project people/risks/decisions) and for `projects`-table
+  writes (`watchActiveProject` watches only `app_meta`). Do not remove those
+  notifies until stream coverage exists for the consumers. Tag data and the
+  LLM task queue are fully stream-backed; both are hand-managed (raw DDL)
+  tables whose mutations signal drift via explicit `notifyUpdates`, watched
+  through a controller-based helper (an `async*` generator parked in
+  `await for` on `tableUpdates` would hang cancellation and `close`).

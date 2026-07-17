@@ -2481,6 +2481,25 @@ class AppDb extends _$AppDb {
     );
   }
 
+  /// Watches every project-tag assignment at once, keyed by project id.
+  /// Projects without tags simply have no entry; read with `?? const []`.
+  Stream<Map<String, List<Tag>>> watchTagsByProject() {
+    final query =
+        select(
+            tags,
+          ).join([innerJoin(projectTags, projectTags.tagId.equalsExp(tags.id))])
+          ..orderBy([OrderingTerm.asc(tags.name)]);
+    return query.watch().map((rows) {
+      final result = <String, List<Tag>>{};
+      for (final row in rows) {
+        result
+            .putIfAbsent(row.readTable(projectTags).projectId, () => <Tag>[])
+            .add(row.readTable(tags));
+      }
+      return result;
+    });
+  }
+
   Future<List<Tag>> getTagsForProject(String projectId) {
     final query =
         select(
@@ -3697,6 +3716,25 @@ class AppDb extends _$AppDb {
   Future<bool> workItemExists(String id) async =>
       (await getWorkItem(id)) != null;
 
+  /// Watches the stage -> project mapping used to resolve a work item's
+  /// project reactively (via `workItem.stageId`). Mirrors
+  /// [getProjectForWorkItem]: stages whose project is hidden (deleted,
+  /// General Tasks) are omitted, so lookups for them yield null.
+  Stream<Map<String, ProjectFull>> watchProjectsByStage() {
+    final query = select(
+      stages,
+    ).join([innerJoin(projects, projects.id.equalsExp(stages.projectId))]);
+    return query.watch().map((rows) {
+      final result = <String, ProjectFull>{};
+      for (final row in rows) {
+        final project = row.readTable(projects);
+        if (!_isVisibleProject(project)) continue;
+        result[row.readTable(stages).id] = project;
+      }
+      return result;
+    });
+  }
+
   Future<Project?> getProjectForWorkItem(String workItemId) async {
     final item = await getWorkItem(workItemId);
     if (item == null) return null;
@@ -3746,12 +3784,19 @@ class AppDb extends _$AppDb {
     );
   }
 
+  /// `work_item_tags` is a hand-managed table (no generated Drift class), so
+  /// mutations must notify streams explicitly with this table name.
+  static const _workItemTagsTableName = 'work_item_tags';
+
   Future<void> assignTagToWorkItem(String workItemId, String tagId) async {
     await customStatement(
       'INSERT OR REPLACE INTO work_item_tags '
       '(work_item_id, tag_id, created_at) VALUES (?, ?, ?)',
       [workItemId, tagId, DateTime.now().millisecondsSinceEpoch],
     );
+    notifyUpdates({
+      const TableUpdate(_workItemTagsTableName, kind: UpdateKind.insert),
+    });
   }
 
   Future<void> setWorkItemTags(
@@ -3768,6 +3813,7 @@ class AppDb extends _$AppDb {
         await assignTagToWorkItem(workItemId, tagId);
       }
     });
+    notifyUpdates({const TableUpdate(_workItemTagsTableName)});
   }
 
   Tag _tagFromRow(QueryRow row) => Tag(
@@ -3812,6 +3858,74 @@ class AppDb extends _$AppDb {
       result.putIfAbsent(workItemId, () => <Tag>[]).add(_tagFromRow(row));
     }
     return result;
+  }
+
+  /// Watches tag assignments for every work item, keyed by work item id.
+  /// Items without tags have no entry; read with `?? const []`.
+  ///
+  /// Because `work_item_tags` has no generated Drift class, the query cannot
+  /// use `readsFrom` for it. Instead this listens to [tableUpdates] for the
+  /// raw table name (emitted by [assignTagToWorkItem]/[setWorkItemTags]) and
+  /// for `tags` (renames, recolors, deletions), re-running the join on either.
+  Stream<Map<String, List<Tag>>> watchWorkItemTags() {
+    Future<Map<String, List<Tag>>> fetch() async {
+      final rows = await customSelect(
+        '''SELECT wt.work_item_id, t.id, t.name, t.color, t.created_at, t.updated_at
+           FROM work_item_tags wt
+           INNER JOIN tags t ON wt.tag_id = t.id
+           ORDER BY LOWER(t.name) ASC''',
+      ).get();
+      final result = <String, List<Tag>>{};
+      for (final row in rows) {
+        final workItemId = row.data['work_item_id'] as String;
+        result.putIfAbsent(workItemId, () => <Tag>[]).add(_tagFromRow(row));
+      }
+      return result;
+    }
+
+    return _watchHandManagedTable(
+      TableUpdateQuery.allOf([
+        TableUpdateQuery.onTable(tags),
+        const TableUpdateQuery.onTableName(_workItemTagsTableName),
+      ]),
+      fetch,
+    );
+  }
+
+  /// Watches a hand-managed (raw DDL) table: emits an initial [fetch], then
+  /// re-fetches after every table update matching [query].
+  ///
+  /// Built on an explicit controller instead of an `async*` generator: a
+  /// generator parked in `await for` on [tableUpdates] cannot complete
+  /// cancellation until the inner stream emits again, which hangs
+  /// subscription cancel and [close]. Fetches are chained so emissions stay
+  /// in order even when updates arrive faster than queries complete.
+  Stream<T> _watchHandManagedTable<T>(
+    TableUpdateQuery query,
+    Future<T> Function() fetch,
+  ) {
+    return Stream.multi((listener) {
+      var cancelled = false;
+      var chain = Future<void>.value();
+      void scheduleEmit() {
+        chain = chain
+            .then((_) async {
+              if (cancelled) return;
+              final value = await fetch();
+              if (!cancelled) listener.add(value);
+            })
+            .catchError((Object e, StackTrace st) {
+              if (!cancelled) listener.addError(e, st);
+            });
+      }
+
+      final sub = tableUpdates(query).listen((_) => scheduleEmit());
+      listener.onCancel = () {
+        cancelled = true;
+        return sub.cancel();
+      };
+      scheduleEmit();
+    });
   }
 
   Future<Map<String, int>> mergeProjects({
@@ -5288,6 +5402,14 @@ class AppDb extends _$AppDb {
             rows.map(_projectEnrichmentProposalFromRow).toList(growable: false),
       );
 
+  /// `llm_task_queue` is a hand-managed table (raw customStatement DDL, no
+  /// generated Drift class), so mutations must notify streams explicitly with
+  /// this table name — same contract as `work_item_tags`.
+  static const _llmTaskQueueTableName = 'llm_task_queue';
+
+  void _notifyLlmTaskQueueChanged({UpdateKind? kind}) =>
+      notifyUpdates({TableUpdate(_llmTaskQueueTableName, kind: kind)});
+
   LlmTaskQueueItem _llmTaskQueueItemFromRow(QueryRow row) => LlmTaskQueueItem(
     id: row.data['id'] as String,
     projectId: row.data['project_id'] as String,
@@ -5372,6 +5494,7 @@ class AppDb extends _$AppDb {
         lastReviewedAt?.millisecondsSinceEpoch,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.insert);
     return id;
   }
 
@@ -5405,6 +5528,28 @@ class AppDb extends _$AppDb {
     String projectId, {
     int limit = 50,
   }) => getLlmTasks(projectId: projectId, limit: limit);
+
+  /// Watches the LLM task queue with the same filters and ordering as
+  /// [getLlmTasks].
+  ///
+  /// Because `llm_task_queue` has no generated Drift class, a plain `.watch()`
+  /// cannot invalidate on it. Instead every mutating queue method calls
+  /// [_notifyLlmTaskQueueChanged] and this stream listens to [tableUpdates]
+  /// for the raw table name, re-running the query on each hit — the same
+  /// shape as [watchWorkItemTags].
+  Stream<List<LlmTaskQueueItem>> watchLlmTasks({
+    String? projectId,
+    String? status,
+    int limit = 50,
+  }) => _watchHandManagedTable(
+    const TableUpdateQuery.onTableName(_llmTaskQueueTableName),
+    () => getLlmTasks(projectId: projectId, status: status, limit: limit),
+  );
+
+  Stream<List<LlmTaskQueueItem>> watchLlmTasksForProject(
+    String projectId, {
+    int limit = 50,
+  }) => watchLlmTasks(projectId: projectId, limit: limit);
 
   Future<LlmTaskQueueItem?> getLlmTask(String id) async {
     await _ensureLlmTaskQueueTable();
@@ -5454,6 +5599,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5501,6 +5647,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5517,6 +5664,7 @@ class AppDb extends _$AppDb {
       'UPDATE llm_task_queue SET work_item_id = ?, updated_at = ? WHERE id = ?',
       [workItemId, now.millisecondsSinceEpoch, id],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5542,6 +5690,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5562,6 +5711,7 @@ class AppDb extends _$AppDb {
          WHERE id = ? AND status IN ('failed', 'cancelled')''',
       [now.millisecondsSinceEpoch, id],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5605,6 +5755,7 @@ class AppDb extends _$AppDb {
         task.id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(task.id);
   }
 
@@ -5630,6 +5781,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5655,6 +5807,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 }

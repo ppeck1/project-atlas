@@ -3,6 +3,29 @@ import 'package:go_router/go_router.dart';
 import '../theme/atlas_colors.dart';
 import 'atlas_shortcuts.dart';
 
+/// Derives a human-readable display label from a route [path].
+///
+/// Rules:
+///   - "/" → "Home"
+///   - "/some-path" → "Some Path" (first segment, hyphens→spaces, title-cased)
+///   - deeper paths fall back to the first segment the same way
+///
+/// This is a pure function so it can be unit-tested in isolation.
+String legacyRouteLabel(String path) {
+  if (path == '/') return 'Home';
+  // Strip leading slash, take the first path segment.
+  final segment = path.replaceFirst('/', '').split('/').first;
+  if (segment.isEmpty) return 'Home';
+  // Replace hyphens/underscores with spaces and title-case each word.
+  return segment
+      .replaceAll(RegExp(r'[-_]'), ' ')
+      .split(' ')
+      .map(
+        (w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}',
+      )
+      .join(' ');
+}
+
 /// Resolves the selected nav-rail index for [location] against [destinationPaths].
 ///
 /// Returns the index of the longest path in [destinationPaths] that is an
@@ -21,6 +44,62 @@ int resolveNavSelectedIndex(String location, List<String> destinationPaths) {
     }
   }
   return selectedIndex;
+}
+
+/// A slim chrome bar shown at the top of the content area when the current
+/// route is not represented in the nav rail (e.g. /review, /export, /governance,
+/// /log, /).
+///
+/// The bar contains a back button (pops if possible, otherwise navigates to
+/// /today) and a humanized route label.  It is styled with [AtlasColors] tokens
+/// so it reads as chrome rather than content.
+class AtlasLegacyRouteBar extends StatelessWidget {
+  /// The current route path, e.g. "/review".
+  final String path;
+
+  const AtlasLegacyRouteBar({super.key, required this.path});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
+    final label = legacyRouteLabel(path);
+
+    return Container(
+      height: 40,
+      decoration: BoxDecoration(
+        color: colors.panel,
+        border: Border(bottom: BorderSide(color: colors.line)),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            icon: Icon(Icons.arrow_back, size: 18, color: colors.inactive),
+            tooltip: 'Back',
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            constraints: const BoxConstraints(),
+            onPressed: () {
+              final nav = Navigator.of(context, rootNavigator: false);
+              if (nav.canPop()) {
+                nav.pop();
+              } else {
+                context.go('/today');
+              }
+            },
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: colors.inactive,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class AtlasShell extends StatelessWidget {
@@ -82,7 +161,16 @@ class AtlasShell extends StatelessWidget {
                   onSettingsSelected: () => context.go('/settings'),
                 ),
                 const VerticalDivider(width: 1),
-                Expanded(child: child),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (selectedIndex == -1 && !settingsSelected)
+                        AtlasLegacyRouteBar(path: location),
+                      Expanded(child: child),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
