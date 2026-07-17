@@ -76,4 +76,42 @@ void main() {
       expect(resolveNavSelectedIndex('', _paths), -1);
     });
   });
+
+  group('legacyRouteLabel', () {
+    test('"/" returns "Home"', () {
+      expect(legacyRouteLabel('/'), 'Home');
+    });
+
+    test('"/review" returns "Review"', () {
+      expect(legacyRouteLabel('/review'), 'Review');
+    });
+
+    test('"/export" returns "Export"', () {
+      expect(legacyRouteLabel('/export'), 'Export');
+    });
+
+    test('"/governance" returns "Governance"', () {
+      expect(legacyRouteLabel('/governance'), 'Governance');
+    });
+
+    test('"/log" returns "Log"', () {
+      expect(legacyRouteLabel('/log'), 'Log');
+    });
+
+    test('hyphenated segment becomes title-cased words', () {
+      expect(legacyRouteLabel('/some-feature'), 'Some Feature');
+    });
+
+    test('underscore segment becomes title-cased words', () {
+      expect(legacyRouteLabel('/my_screen'), 'My Screen');
+    });
+
+    test('only first path segment is used for deeper paths', () {
+      expect(legacyRouteLabel('/review/detail/123'), 'Review');
+    });
+
+    test('upper-case input is normalised to title case', () {
+      expect(legacyRouteLabel('/EXPORT'), 'Export');
+    });
+  });
 }
