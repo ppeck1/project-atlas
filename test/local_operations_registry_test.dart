@@ -48,9 +48,9 @@ void main() {
   });
 
   test(
-    'schema v22 creates local operations, source topology, runtime, git remote, enrichment, and queue tables',
+    'schema v23 creates local operations, source topology, runtime, git remote, enrichment, and queue tables',
     () async {
-      expect(db.schemaVersion, 22);
+      expect(db.schemaVersion, 23);
 
       final tables = await db
           .customSelect(
@@ -143,7 +143,7 @@ void main() {
         final rows = await migrated.getProjectRegistry();
         final row = rows.single;
 
-        expect(migrated.schemaVersion, 22);
+        expect(migrated.schemaVersion, 23);
         expect(row.id, 'legacy-source-1');
         expect(row.localPath, 'https://github.com/example/repo.git');
         expect(row.atlasProjectId, 'atlas-project-1');

@@ -534,53 +534,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                               selected.document != null &&
                                                   !selected.isDraft
                                               ? () async {
-                                                  final ok = await showDialog<bool>(
-                                                    context: context,
-                                                    builder: (ctx) => AlertDialog(
-                                                      backgroundColor: _panel,
-                                                      title: Text(
-                                                        'Delete ${selected.title}?',
-                                                      ),
+                                                  final docId =
+                                                      selected.document!.id;
+                                                  final messenger =
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      );
+                                                  await state
+                                                      .softDeleteDocument(
+                                                        docId,
+                                                      );
+                                                  if (!mounted) return;
+                                                  setState(
+                                                    () => _selectedId = null,
+                                                  );
+                                                  messenger.showSnackBar(
+                                                    SnackBar(
                                                       content: const Text(
-                                                        'This permanently removes the file from disk.',
+                                                        'Document deleted',
                                                       ),
-                                                      actions: [
-                                                        TextButton(
-                                                          onPressed: () =>
-                                                              Navigator.pop(
-                                                                ctx,
-                                                                false,
-                                                              ),
-                                                          child: const Text(
-                                                            'Cancel',
-                                                          ),
-                                                        ),
-                                                        FilledButton(
-                                                          style:
-                                                              FilledButton.styleFrom(
-                                                                backgroundColor:
-                                                                    Colors.red,
-                                                              ),
-                                                          onPressed: () =>
-                                                              Navigator.pop(
-                                                                ctx,
-                                                                true,
-                                                              ),
-                                                          child: const Text(
-                                                            'Delete',
-                                                          ),
-                                                        ),
-                                                      ],
+                                                      duration: const Duration(
+                                                        seconds: 6,
+                                                      ),
+                                                      action: SnackBarAction(
+                                                        label: 'Undo',
+                                                        onPressed: () => state
+                                                            .restoreDocument(
+                                                              docId,
+                                                            ),
+                                                      ),
                                                     ),
                                                   );
-                                                  if (ok == true && mounted) {
-                                                    await state.deleteDocument(
-                                                      selected.document!.id,
-                                                    );
-                                                    setState(
-                                                      () => _selectedId = null,
-                                                    );
-                                                  }
                                                 }
                                               : null,
                                         ),

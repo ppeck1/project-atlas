@@ -815,6 +815,15 @@ class AppState extends ChangeNotifier {
         debugPrintStack(stackTrace: stackTrace);
       }),
     );
+    unawaited(
+      purgeExpiredDeletedDocuments().catchError((
+        Object error,
+        StackTrace stackTrace,
+      ) {
+        debugPrint('[Atlas] purge of expired deleted documents failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }),
+    );
     if (enableBackgroundSummaryRefresh) {
       _localProjectRefreshTimer = Timer.periodic(
         const Duration(hours: 12),
@@ -2953,8 +2962,75 @@ class AppState extends ChangeNotifier {
     );
   }
 
+  /// Immediate, permanent delete (row + links + stored file). Kept for the
+  /// purge path and internal replace flows; UI deletion goes through
+  /// [softDeleteDocument] so it can be undone.
   Future<void> deleteDocument(String id) async {
     await db.deleteDocument(id);
+  }
+
+  /// Soft-deletes a document: hides it from every read query but leaves the
+  /// DB row and the file on disk untouched so the action can be undone.
+  Future<void> softDeleteDocument(String id) async {
+    await db.softDeleteDocument(id);
+    await db.logEvent(
+      area: 'documents',
+      action: 'document_soft_deleted',
+      entityType: 'document',
+      entityId: id,
+    );
+    notifyListeners();
+  }
+
+  /// Undoes a soft delete.
+  Future<void> restoreDocument(String id) async {
+    await db.restoreDocument(id);
+    await db.logEvent(
+      area: 'documents',
+      action: 'document_restored',
+      entityType: 'document',
+      entityId: id,
+    );
+    notifyListeners();
+  }
+
+  /// Permanently removes documents that were soft-deleted at least
+  /// [olderThan] ago. The stored file is deleted from disk only when it lives
+  /// inside the app-owned `atlas_documents` directory (imports always copy
+  /// there; foreign paths are never touched); the row and its links are then
+  /// hard-deleted.
+  Future<void> purgeExpiredDeletedDocuments({
+    Duration olderThan = const Duration(days: 7),
+  }) async {
+    final expired = await db.getSoftDeletedDocumentsOlderThan(olderThan);
+    if (expired.isEmpty) return;
+    final appDocDir = await getApplicationDocumentsDirectory();
+    final atlasDir = p.normalize(p.join(appDocDir.path, 'atlas_documents'));
+    var purged = 0;
+    for (final doc in expired) {
+      final storedPath = doc.storedPath?.trim() ?? '';
+      if (storedPath.isNotEmpty) {
+        final normalized = p.normalize(storedPath);
+        if (p.isWithin(atlasDir, normalized)) {
+          try {
+            final file = File(normalized);
+            if (await file.exists()) await file.delete();
+          } on FileSystemException catch (error) {
+            debugPrint(
+              '[Atlas] purgeExpiredDeletedDocuments: failed to delete '
+              '$normalized: $error',
+            );
+          }
+        }
+      }
+      await db.deleteDocumentRowOnly(doc.id);
+      purged++;
+    }
+    await db.logEvent(
+      area: 'documents',
+      action: 'documents_purged',
+      outputJson: jsonEncode({'purged': purged}),
+    );
   }
 
   Future<Directory> _projectMediaDirectory(String projectId) async {

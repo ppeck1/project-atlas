@@ -815,7 +815,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 22;
+  int get schemaVersion => 23;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1020,6 +1020,16 @@ class AppDb extends _$AppDb {
       }
       if (from < 22) {
         await _ensureProjectRegistrySourceColumns();
+      }
+      if (from < 23) {
+        try {
+          await m.addColumn(documents, documents.deletedAt);
+        } catch (e) {
+          _logToleratedSchemaError(
+            'migration v23 addColumn documents.deleted_at',
+            e,
+          );
+        }
       }
     },
     beforeOpen: (_) async {
@@ -2147,9 +2157,9 @@ class AppDb extends _$AppDb {
   Future<Map<String, String?>> getDocumentPathsForProject(
     String projectId,
   ) async {
-    final docs = await (select(
-      documents,
-    )..where((t) => t.projectId.equals(projectId))).get();
+    final docs = await (select(documents)..where(
+          (t) => t.projectId.equals(projectId) & t.deletedAt.isNull(),
+        )).get();
     return {for (final d in docs) d.id: d.storedPath};
   }
 
@@ -2812,13 +2822,15 @@ class AppDb extends _$AppDb {
 
   // ── Documents ─────────────────────────────────────────────────────────────
 
-  Stream<List<Document>> watchDocuments() => (select(
-    documents,
-  )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
+  Stream<List<Document>> watchDocuments() =>
+      (select(documents)
+            ..where((t) => t.deletedAt.isNull())
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
 
   Stream<List<Document>> watchDocumentsForProject(String projectId) =>
       (select(documents)
-            ..where((t) => t.projectId.equals(projectId))
+            ..where((t) => t.projectId.equals(projectId) & t.deletedAt.isNull())
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .watch();
 
@@ -2933,7 +2945,7 @@ class AppDb extends _$AppDb {
 
   Future<List<Document>> getDocumentsForProject(String projectId) =>
       (select(documents)
-            ..where((t) => t.projectId.equals(projectId))
+            ..where((t) => t.projectId.equals(projectId) & t.deletedAt.isNull())
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .get();
 
@@ -2943,7 +2955,10 @@ class AppDb extends _$AppDb {
   ) =>
       (select(documents)
             ..where(
-              (t) => t.projectId.equals(projectId) & t.source.equals(source),
+              (t) =>
+                  t.projectId.equals(projectId) &
+                  t.source.equals(source) &
+                  t.deletedAt.isNull(),
             )
             ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
             ..limit(1))
@@ -2957,16 +2972,17 @@ class AppDb extends _$AppDb {
             ..where(
               (t) =>
                   t.projectId.equals(projectId) &
-                  t.originalFilename.equals(originalFilename),
+                  t.originalFilename.equals(originalFilename) &
+                  t.deletedAt.isNull(),
             )
             ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)])
             ..limit(1))
           .getSingleOrNull();
 
   Future<bool> documentExists(String id) async =>
-      (await (select(
-        documents,
-      )..where((t) => t.id.equals(id))).getSingleOrNull()) !=
+      (await (select(documents)..where(
+            (t) => t.id.equals(id) & t.deletedAt.isNull(),
+          )).getSingleOrNull()) !=
       null;
 
   Future<String> importGeneratedDocument({
@@ -3021,12 +3037,47 @@ class AppDb extends _$AppDb {
       documents,
     )..where((d) => d.id.equals(id))).getSingleOrNull();
     if (doc == null) return;
-    await (delete(documentLinks)..where((l) => l.documentId.equals(id))).go();
-    await (delete(documents)..where((d) => d.id.equals(id))).go();
+    await deleteDocumentRowOnly(id);
     if (doc.storedPath != null) {
       final file = File(doc.storedPath!);
       if (await file.exists()) await file.delete();
     }
+  }
+
+  /// Hard-deletes the document row and its links without touching any file
+  /// on disk. Used by the purge path, which applies its own app-ownership
+  /// check before removing the stored copy.
+  Future<void> deleteDocumentRowOnly(String id) async {
+    await (delete(documentLinks)..where((l) => l.documentId.equals(id))).go();
+    await (delete(documents)..where((d) => d.id.equals(id))).go();
+  }
+
+  /// Marks a document deleted without touching the row's file on disk.
+  /// Soft-deleted documents disappear from every read query until restored
+  /// or purged.
+  Future<void> softDeleteDocument(String id) async {
+    await (update(documents)..where((d) => d.id.equals(id))).write(
+      DocumentsCompanion(deletedAt: Value(DateTime.now())),
+    );
+  }
+
+  /// Clears a document's soft-delete marker (undo).
+  Future<void> restoreDocument(String id) async {
+    await (update(documents)..where((d) => d.id.equals(id))).write(
+      const DocumentsCompanion(deletedAt: Value(null)),
+    );
+  }
+
+  /// Soft-deleted documents whose deletion is at least [olderThan] in the
+  /// past — i.e. those eligible for permanent purge.
+  Future<List<Document>> getSoftDeletedDocumentsOlderThan(Duration olderThan) {
+    final cutoff = DateTime.now().subtract(olderThan);
+    return (select(documents)..where(
+          (t) =>
+              t.deletedAt.isNotNull() &
+              t.deletedAt.isSmallerOrEqualValue(cutoff),
+        ))
+        .get();
   }
 
   // ── Event log ─────────────────────────────────────────────────────────────
@@ -3041,7 +3092,8 @@ class AppDb extends _$AppDb {
           ])
           ..where(
             documentLinks.entityType.equals('work_item') &
-                documentLinks.entityId.equals(workItemId),
+                documentLinks.entityId.equals(workItemId) &
+                documents.deletedAt.isNull(),
           )
           ..orderBy([OrderingTerm.desc(documents.createdAt)]);
     return query.watch().map(
@@ -3060,7 +3112,8 @@ class AppDb extends _$AppDb {
           ])
           ..where(
             documentLinks.entityType.equals('work_item') &
-                documentLinks.entityId.equals(workItemId),
+                documentLinks.entityId.equals(workItemId) &
+                documents.deletedAt.isNull(),
           )
           ..orderBy([OrderingTerm.desc(documents.createdAt)]);
     return query.get().then(
@@ -3886,7 +3939,7 @@ class AppDb extends _$AppDb {
                 NULL AS output_json
          FROM documents doc
          LEFT JOIN projects p ON p.id = doc.project_id
-         WHERE doc.project_id IS NOT NULL
+         WHERE doc.project_id IS NOT NULL AND doc.deleted_at IS NULL
          UNION ALL
          SELECT pm.project_id AS project_id,
                 pm.updated_at AS updated_at,

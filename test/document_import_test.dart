@@ -338,6 +338,126 @@ This is the email body.''';
     });
   });
 
+  group('soft delete, restore, and purge', () {
+    test(
+      'softDelete hides doc without touching disk; restore brings it back',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        final src = File(p.join(tempDir.path, 'undoable.txt'))
+          ..writeAsStringSync('Undo me');
+        await db.importDocumentFromPath(src.path);
+        final doc = (await db.watchDocuments().first).single;
+        final storedPath = doc.storedPath!;
+
+        await state.softDeleteDocument(doc.id);
+        expect(await db.watchDocuments().first, isEmpty);
+        expect(await db.documentExists(doc.id), isFalse);
+        // Disk copy must remain during the undo window.
+        expect(File(storedPath).existsSync(), isTrue);
+
+        await state.restoreDocument(doc.id);
+        final restored = await db.watchDocuments().first;
+        expect(restored.map((d) => d.id), [doc.id]);
+        expect(restored.single.deletedAt, isNull);
+      },
+    );
+
+    test('soft-deleted docs are hidden from project queries', () async {
+      await db.createProject('project-a', 'Alpha', DateTime(2026, 1, 1));
+      final src = File(p.join(tempDir.path, 'proj-doc.txt'))
+        ..writeAsStringSync('Project doc');
+      final id = await db.importDocumentFromPath(
+        src.path,
+        projectId: 'project-a',
+      );
+
+      await db.softDeleteDocument(id);
+
+      expect(await db.getDocumentsForProject('project-a'), isEmpty);
+      expect(await db.watchDocumentsForProject('project-a').first, isEmpty);
+      expect(await db.getDocumentPathsForProject('project-a'), isEmpty);
+    });
+
+    test(
+      'purge with olderThan Duration.zero removes row, links, and file',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        final src = File(p.join(tempDir.path, 'purgeable.txt'))
+          ..writeAsStringSync('Purge me');
+        final id = await db.importDocumentFromPath(src.path);
+        final doc = (await db.watchDocuments().first).single;
+        final storedPath = doc.storedPath!;
+        await db
+            .into(db.documentLinks)
+            .insert(
+              DocumentLinksCompanion(
+                id: const Value('purge_link_1'),
+                documentId: Value(id),
+                entityType: const Value('work_item'),
+                entityId: const Value('fake_work_item_id'),
+                createdAt: Value(DateTime.now()),
+              ),
+            );
+
+        await state.softDeleteDocument(id);
+        await state.purgeExpiredDeletedDocuments(olderThan: Duration.zero);
+
+        expect(await db.select(db.documents).get(), isEmpty);
+        expect(await db.select(db.documentLinks).get(), isEmpty);
+        expect(File(storedPath).existsSync(), isFalse);
+      },
+    );
+
+    test('purge with default retention keeps a fresh soft-delete', () async {
+      final state = AppState(db, enableBackgroundSummaryRefresh: false);
+      addTearDown(state.dispose);
+
+      final src = File(p.join(tempDir.path, 'recent.txt'))
+        ..writeAsStringSync('Too recent to purge');
+      final id = await db.importDocumentFromPath(src.path);
+
+      await state.softDeleteDocument(id);
+      await state.purgeExpiredDeletedDocuments();
+
+      final rows = await db.select(db.documents).get();
+      expect(rows.map((d) => d.id), [id]);
+      expect(rows.single.deletedAt, isNotNull);
+    });
+
+    test(
+      'purge never deletes files outside the app-owned atlas_documents dir',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+
+        final foreign = File(p.join(tempDir.path, 'foreign.txt'))
+          ..writeAsStringSync('Not app-owned');
+        await db
+            .into(db.documents)
+            .insert(
+              DocumentsCompanion(
+                id: const Value('doc-foreign'),
+                title: const Value('Foreign'),
+                originalFilename: const Value('foreign.txt'),
+                storedPath: Value(foreign.path),
+                createdAt: Value(DateTime.now()),
+                updatedAt: Value(DateTime.now()),
+              ),
+            );
+
+        await state.softDeleteDocument('doc-foreign');
+        await state.purgeExpiredDeletedDocuments(olderThan: Duration.zero);
+
+        expect(await db.select(db.documents).get(), isEmpty);
+        expect(foreign.existsSync(), isTrue);
+      },
+    );
+  });
+
   group('project media attachments', () {
     test(
       'work item media import is visible as project media for Library',

@@ -16,9 +16,9 @@ void main() {
   });
 
   test(
-    'schema v22 creates project, media-link, runtime, queue, and operations tables',
+    'schema v23 creates project, media-link, runtime, queue, and operations tables',
     () async {
-      expect(db.schemaVersion, 22);
+      expect(db.schemaVersion, 23);
 
       final tables = await db
           .customSelect(

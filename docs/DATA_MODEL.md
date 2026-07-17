@@ -1,6 +1,6 @@
 # Data model
 
-Project Atlas uses SQLite through Drift. The current schema version is `22`.
+Project Atlas uses SQLite through Drift. The current schema version is `23`.
 
 ## Core records
 
@@ -8,6 +8,9 @@ Project Atlas uses SQLite through Drift. The current schema version is `22`.
 - Work items: status, priority, dates, blockers, project scope, and attribution.
 - Decisions and risks: structured project context with reviewable history.
 - Documents and media: app-owned copies, extracted text, metadata, and links.
+  Document deletion is soft (`documents.deleted_at`, added in v23): deleted
+  documents are hidden from queries and undoable; a startup purge removes the
+  app-owned file and row after a retention window.
 - Activity events: operator-visible history for important actions.
 
 ## Operational records

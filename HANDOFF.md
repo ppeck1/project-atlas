@@ -16,7 +16,8 @@ Last updated: 2026-07-15.
 - Public authorship: Paul Peck / `ppeck1`
 - README images: captures of the real Windows application using an isolated
   public-safe demo database
-- Current source-topology line: schema `22` with Project Sources,
+- Current source-topology line: schema `23` (adds `documents.deleted_at`
+  soft delete with undo and deferred purge) with Project Sources,
   reconciliation preview, local/remote source roles, and Atlas-only source
   bookkeeping updates
 
