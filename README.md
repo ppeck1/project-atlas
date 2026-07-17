@@ -14,6 +14,8 @@ Created and maintained by [Paul Peck](https://github.com/ppeck1).
 
 _Actual Project Atlas Windows capture. Every screenshot in this README comes
 from the running application using an isolated, public-safe demo database._
+The capture set is refreshed against the current release build and includes the
+same navigation, source-topology, and theme surfaces described below.
 
 ## Portfolio snapshot
 

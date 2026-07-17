@@ -226,8 +226,7 @@ class _MediaTile extends StatelessWidget {
           Expanded(
             child: Container(
               width: double.infinity,
-              // TODO(paul): near-miss of AtlasColors.surfaceDeep (0xFF10141B).
-              color: const Color(0xFF10151E),
+              color: colors.surfaceDeep,
               child: isImage && file.existsSync()
                   ? Image.file(file, fit: BoxFit.cover)
                   : Icon(

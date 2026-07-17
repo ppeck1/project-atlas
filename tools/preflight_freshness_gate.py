@@ -31,6 +31,7 @@ README_SCREENSHOTS = (
     "docs/screenshots/today.jpg",
     "docs/screenshots/projects.jpg",
     "docs/screenshots/workboard.jpg",
+    "docs/screenshots/operations-project-sources.jpg",
     "docs/screenshots/library.jpg",
 )
 

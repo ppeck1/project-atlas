@@ -26,11 +26,9 @@ void main() {
       expect(colors.primary, const Color(0xFF79A7FF));
     });
 
-    test('selectedFill == Color(0x26799AFF) — preserves exact value', () {
-      // NOTE: selectedFill uses 799AFF while primary uses 79A7FF.
-      // This discrepancy is intentional-or-typo — do not collapse.
+    test('selectedFill == 15% primary', () {
       final colors = theme.extension<AtlasColors>()!;
-      expect(colors.selectedFill, const Color(0x26799AFF));
+      expect(colors.selectedFill, const Color(0x2679A7FF));
     });
 
     test('panel == Color(0xFF151A22)', () {

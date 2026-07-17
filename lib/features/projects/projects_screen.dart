@@ -2575,8 +2575,7 @@ class _ProjectCategorySection extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                // TODO(paul): 0xFF10151D vs surfaceDeep 0xFF10141B — near-miss (1 step diff); keep literal until resolved.
-                color: const Color(0xFF10151D),
+                color: colors.surfaceDeep,
                 border: Border.all(color: colors.line),
                 borderRadius: BorderRadius.circular(8),
               ),
