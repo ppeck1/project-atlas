@@ -11,7 +11,6 @@ import 'package:path/path.dart' as p;
 import '../../db/app_db.dart';
 import '../../services/github_remote_metadata_service.dart';
 import '../../services/local_git_visibility_service.dart';
-import '../../services/project_runtime_service.dart' as runtime;
 import '../../services/project_summary_models.dart';
 import '../../services/shopify_seo_analyzer.dart';
 import '../../services/shopify_seo_review_service.dart';
@@ -20,6 +19,12 @@ import '../../shared/models/app_state_scope.dart';
 import '../../shared/models/project_metadata.dart';
 import '../../shared/widgets/contact_picker.dart';
 import '../../shared/widgets/create_work_item_dialog.dart';
+import 'detail/project_command_toolbar.dart';
+import 'detail/project_detail_atoms.dart';
+import 'detail/project_media_section.dart';
+import 'detail/project_runtime_section.dart';
+import 'detail/project_tags_section.dart';
+import 'detail/summary_run_provenance.dart';
 import 'project_metadata_dialog.dart';
 import '../today/work_item_detail_sheet.dart';
 import '../work/status_priority_helpers.dart';
@@ -46,13 +51,6 @@ const _kPriorityColors = <String, Color>{
 Color _pc(String? p) => _kPhaseColors[p] ?? const Color(0x61FFFFFF);
 Color _prc(String? p) => _kPriorityColors[p] ?? const Color(0x61FFFFFF);
 String _shortSha(String sha) => sha.length <= 8 ? sha : sha.substring(0, 8);
-String _compactDate(DateTime value) =>
-    '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
-String _compactDateTime(DateTime? value) {
-  if (value == null) return 'n/a';
-  return '${_compactDate(value)} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
-}
-
 String _prettyJsonObject(Map<String, Object?> value) =>
     const JsonEncoder.withIndent('  ').convert(value);
 Map<String, Object?> _parseJsonObject(String raw) {
@@ -65,44 +63,11 @@ Map<String, Object?> _parseJsonObject(String raw) {
   return decoded.map((key, value) => MapEntry('$key', value));
 }
 
-Map<String, Object?> _tryParseJsonObject(String? raw) {
-  if (raw == null || raw.trim().isEmpty) return const <String, Object?>{};
-  try {
-    final decoded = jsonDecode(raw);
-    if (decoded is Map) {
-      return decoded.map((key, value) => MapEntry('$key', value));
-    }
-  } catch (e) {
-    debugPrint('[Atlas] _tryParseJsonObject (project_detail_screen): JSON decode failed: $e');
-  }
-  return const <String, Object?>{};
-}
-
-String _libraryRouteForProject(
-  String projectId, {
-  String? entryType,
-  String? entryId,
-}) {
-  final queryParameters = <String, String>{'projectId': projectId};
-  if (entryType != null) queryParameters['entryType'] = entryType;
-  if (entryId != null) queryParameters['entryId'] = entryId;
-  return Uri(path: '/library', queryParameters: queryParameters).toString();
-}
-
 String _workboardRouteForProject(String projectId) {
   return Uri(
     path: '/work',
     queryParameters: {'projectId': projectId, 'scope': 'project'},
   ).toString();
-}
-
-Color _tagColor(Tag tag) {
-  final raw = tag.color;
-  if (raw != null && raw.startsWith('#') && raw.length == 7) {
-    final parsed = int.tryParse(raw.substring(1), radix: 16);
-    if (parsed != null) return Color(0xFF000000 | parsed);
-  }
-  return _kPrimary;
 }
 
 IconData _projectMediaIcon(String mediaType) {
@@ -548,7 +513,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        '${item.status} - ${item.priority} - updated ${_compactDateTime(item.updatedAt)}',
+                        '${item.status} - ${item.priority} - updated ${compactDateTime(item.updatedAt)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -691,15 +656,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        _MiniPill('Status', item.status),
-                        _MiniPill('Attempts', '${item.attempts}'),
+                        MiniPill('Status', item.status),
+                        MiniPill('Attempts', '${item.attempts}'),
                         if (item.leasedBy != null)
-                          _MiniPill('Leased', item.leasedBy!),
+                          MiniPill('Leased', item.leasedBy!),
                       ],
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Created ${_compactDateTime(item.createdAt)} by ${item.createdBy}',
+                      'Created ${compactDateTime(item.createdAt)} by ${item.createdBy}',
                       style: const TextStyle(
                         color: Colors.white54,
                         fontSize: 12,
@@ -707,7 +672,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     ),
                     if (item.completedAt != null)
                       Text(
-                        '$terminalLabel ${_compactDateTime(item.completedAt)}',
+                        '$terminalLabel ${compactDateTime(item.completedAt)}',
                         style: const TextStyle(
                           color: Colors.white54,
                           fontSize: 12,
@@ -1131,7 +1096,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              _ProjectCommandToolbar(
+              ProjectCommandToolbar(
                 projectId: widget.projectId,
                 onOpenWorkboard: () => _openProjectWorkboard(context, project),
                 onEditMeta: () => _showMetaDialog(context, project),
@@ -1196,7 +1161,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   subtitle: 'Separate home, work, personal, and other contexts',
                   expanded: _expandedSection == 'tags',
                   onTap: () => _toggleSection('tags'),
-                  child: _TagsSection(
+                  child: ProjectTagsSection(
                     projectId: widget.projectId,
                     onEdit: () => _showTagsDialog(context),
                   ),
@@ -1252,7 +1217,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   subtitle: 'Launch, tests, and capsule checks',
                   expanded: _expandedSection == 'runtime',
                   onTap: () => _toggleSection('runtime'),
-                  child: _ProjectRuntimeSection(
+                  child: ProjectRuntimeSection(
                     projectId: widget.projectId,
                     onEdit: () => _showMetaDialog(context, project),
                   ),
@@ -1338,7 +1303,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   subtitle: 'Images, reference files, and project evidence',
                   expanded: _expandedSection == 'media',
                   onTap: () => _toggleSection('media'),
-                  child: _MediaSection(
+                  child: ProjectMediaSection(
                     projectId: widget.projectId,
                     onImportMedia: () => _showImportMediaDialog(context),
                   ),
@@ -1411,9 +1376,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   spacing: 10,
                   runSpacing: 6,
                   children: [
-                    _MiniPill('Outcome', reconciliation.outcome),
-                    _MiniPill('Boundary', reconciliation.writeBoundary),
-                    _MiniPill(
+                    MiniPill('Outcome', reconciliation.outcome),
+                    MiniPill('Boundary', reconciliation.writeBoundary),
+                    MiniPill(
                       'Source repos mutated',
                       reconciliation.sourceReposMutated ? 'yes' : 'no',
                     ),
@@ -1499,15 +1464,15 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                   spacing: 10,
                   runSpacing: 6,
                   children: [
-                    _MiniPill('Outcome', reconciliation.outcome),
-                    _MiniPill('Boundary', reconciliation.writeBoundary),
-                    _MiniPill('Profile', preview.profile),
+                    MiniPill('Outcome', reconciliation.outcome),
+                    MiniPill('Boundary', reconciliation.writeBoundary),
+                    MiniPill('Profile', preview.profile),
                     if ((preview.branch ?? '').isNotEmpty)
-                      _MiniPill('Branch', preview.branch!),
+                      MiniPill('Branch', preview.branch!),
                     if ((preview.headSha ?? '').isNotEmpty)
-                      _MiniPill('SHA', _shortSha(preview.headSha!)),
+                      MiniPill('SHA', _shortSha(preview.headSha!)),
                     if (preview.dirtyCount != null)
-                      _MiniPill('Dirty', '${preview.dirtyCount}'),
+                      MiniPill('Dirty', '${preview.dirtyCount}'),
                   ],
                 ),
                 if (reconciliation.warnings.isNotEmpty) ...[
@@ -1905,23 +1870,23 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                             spacing: 8,
                             runSpacing: 8,
                             children: [
-                              _MiniPill(
+                              MiniPill(
                                 'Atlas records',
                                 '${preview.atlasRecordCount}',
                               ),
-                              _MiniPill('Documents', '${preview.documents}'),
-                              _MiniPill(
+                              MiniPill('Documents', '${preview.documents}'),
+                              MiniPill(
                                 'Copied files',
                                 '${preview.copiedFileCount}',
                               ),
-                              _MiniPill('Work', '${preview.workItems}'),
-                              _MiniPill('Risks', '${preview.risks}'),
-                              _MiniPill('Decisions', '${preview.decisions}'),
-                              _MiniPill(
+                              MiniPill('Work', '${preview.workItems}'),
+                              MiniPill('Risks', '${preview.risks}'),
+                              MiniPill('Decisions', '${preview.decisions}'),
+                              MiniPill(
                                 'Observations',
                                 '${preview.observations}',
                               ),
-                              _MiniPill(
+                              MiniPill(
                                 'Refresh ledger',
                                 '${preview.refreshItems}',
                               ),
@@ -2989,15 +2954,15 @@ class _ShopifySeoSectionState extends State<_ShopifySeoSection> {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            _MiniPill('Shop', snapshot.shopDomain),
-            _MiniPill('Products', '${snapshot.products.length}'),
-            _MiniPill('Avg score', '$avgScore'),
-            _MiniPill('Critical', '$critical'),
-            _MiniPill('Warnings', '$warnings'),
-            _MiniPill('Missing meta', '$missingMeta'),
-            _MiniPill('Missing alt', '$missingAlt'),
-            _MiniPill('Queued', '${snapshot.queuedCount}'),
-            _MiniPill('Synced', _compactDateTime(snapshot.syncedAt)),
+            MiniPill('Shop', snapshot.shopDomain),
+            MiniPill('Products', '${snapshot.products.length}'),
+            MiniPill('Avg score', '$avgScore'),
+            MiniPill('Critical', '$critical'),
+            MiniPill('Warnings', '$warnings'),
+            MiniPill('Missing meta', '$missingMeta'),
+            MiniPill('Missing alt', '$missingAlt'),
+            MiniPill('Queued', '${snapshot.queuedCount}'),
+            MiniPill('Synced', compactDateTime(snapshot.syncedAt)),
           ],
         ),
         const SizedBox(height: 12),
@@ -3349,12 +3314,12 @@ class _ShopifySeoProductCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    _MiniPill('Status', product.status.replaceAll('_', ' ')),
-                    _MiniPill('Score', '${analysis.score}/100'),
-                    _MiniPill('Critical', '${analysis.criticalCount}'),
-                    _MiniPill('Warnings', '${analysis.warningCount}'),
+                    MiniPill('Status', product.status.replaceAll('_', ' ')),
+                    MiniPill('Score', '${analysis.score}/100'),
+                    MiniPill('Critical', '${analysis.criticalCount}'),
+                    MiniPill('Warnings', '${analysis.warningCount}'),
                     if ((product.productType ?? '').isNotEmpty)
-                      _MiniPill('Type', product.productType!),
+                      MiniPill('Type', product.productType!),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -3424,23 +3389,23 @@ class _ShopifySeoProductCard extends StatelessWidget {
                           spacing: 6,
                           runSpacing: 6,
                           children: [
-                            _MiniPill(
+                            MiniPill(
                               'Snippet',
                               '${analysis.breakdown.searchSnippet}/35',
                             ),
-                            _MiniPill(
+                            MiniPill(
                               'Content',
                               '${analysis.breakdown.content}/25',
                             ),
-                            _MiniPill(
+                            MiniPill(
                               'Images',
                               '${analysis.breakdown.imageAltText}/15',
                             ),
-                            _MiniPill(
+                            MiniPill(
                               'URL/tax',
                               '${analysis.breakdown.urlAndTaxonomy}/10',
                             ),
-                            _MiniPill(
+                            MiniPill(
                               'Merchant',
                               '${analysis.breakdown.merchantDataReadiness}/15',
                             ),
@@ -3593,34 +3558,6 @@ class _BackBtn extends StatelessWidget {
   );
 }
 
-class _Pill extends StatelessWidget {
-  final String label;
-  final Color color;
-  final String? tooltip;
-  const _Pill({required this.label, required this.color, this.tooltip});
-
-  @override
-  Widget build(BuildContext context) {
-    final child = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withAlpha(34),
-        border: Border.all(color: color.withAlpha(68)),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          color: color,
-        ),
-      ),
-    );
-    return tooltip == null ? child : Tooltip(message: tooltip!, child: child);
-  }
-}
-
 class _ProjectBundleExportRequest {
   final String path;
   final bool includeFiles;
@@ -3629,26 +3566,6 @@ class _ProjectBundleExportRequest {
     required this.path,
     required this.includeFiles,
   });
-}
-
-class _MiniPill extends StatelessWidget {
-  final String label;
-  final String value;
-  const _MiniPill(this.label, this.value);
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    decoration: BoxDecoration(
-      color: Colors.white.withAlpha(8),
-      border: Border.all(color: _kLine),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Text(
-      '$label: $value',
-      style: const TextStyle(fontSize: 11, color: Colors.white70),
-    ),
-  );
 }
 
 class _StatusDot extends StatelessWidget {
@@ -3706,15 +3623,15 @@ class _GitVisibilityDialog extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _MiniPill('Branch', report.branch ?? 'unknown'),
-                _MiniPill('HEAD', shortSha ?? 'unknown'),
-                _MiniPill('Compare', report.comparisonRef ?? 'none'),
-                _MiniPill(
+                MiniPill('Branch', report.branch ?? 'unknown'),
+                MiniPill('HEAD', shortSha ?? 'unknown'),
+                MiniPill('Compare', report.comparisonRef ?? 'none'),
+                MiniPill(
                   'Remote',
                   report.remoteUrl == null ? 'none' : 'origin',
                 ),
-                _MiniPill('Tracked', '${report.localTrackedCount}'),
-                _MiniPill('Remote files', '${report.remoteTrackedCount}'),
+                MiniPill('Tracked', '${report.localTrackedCount}'),
+                MiniPill('Remote files', '${report.remoteTrackedCount}'),
               ],
             ),
             const SizedBox(height: 12),
@@ -3864,7 +3781,7 @@ class _GitPathGroup extends StatelessWidget {
           tilePadding: const EdgeInsets.symmetric(horizontal: 12),
           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           title: Text(title, style: const TextStyle(fontSize: 13)),
-          trailing: _MiniPill('Count', '${paths.length}'),
+          trailing: MiniPill('Count', '${paths.length}'),
           initiallyExpanded: paths.isNotEmpty && paths.length <= 8,
           children: [
             if (paths.isEmpty)
@@ -4005,9 +3922,9 @@ class _ProjectTaskHeaderPanel extends StatelessWidget {
                       ),
                     ),
                   ),
-                  _MiniPill('Project', '${active.length}'),
+                  MiniPill('Project', '${active.length}'),
                   const SizedBox(width: 6),
-                  _MiniPill('LLM', '${pendingQueue.length}'),
+                  MiniPill('LLM', '${pendingQueue.length}'),
                   const SizedBox(width: 8),
                   IconButton(
                     tooltip: 'Refresh',
@@ -4482,7 +4399,7 @@ class _AiPanel extends StatelessWidget {
                 ],
               ),
             const SizedBox(height: 12),
-            _SummaryRunProvenance(projectId: projectId),
+            SummaryRunProvenance(projectId: projectId),
           ],
         ],
       ),
@@ -4553,11 +4470,11 @@ class _EvidencePacketPreview extends StatelessWidget {
                 Wrap(
                   spacing: 6,
                   children: [
-                    _MiniPill(
+                    MiniPill(
                       'Docs',
                       '${currentPacket.includedDocumentCount}/${currentPacket.suppliedDocumentCount}',
                     ),
-                    _MiniPill(
+                    MiniPill(
                       'Excerpt',
                       _chars(currentPacket.totalExcerptChars),
                     ),
@@ -4908,23 +4825,23 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
           subtitle: Text(
-            '${entry.actor} - ${_compactDateTime(entry.timestamp)} - ${entry.area}.${entry.action}',
+            '${entry.actor} - ${compactDateTime(entry.timestamp)} - ${entry.area}.${entry.action}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 11, color: Colors.white38),
           ),
-          trailing: _Pill(label: entry.level, color: color),
+          trailing: Pill(label: entry.level, color: color),
           children: [
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                _Pill(label: entry.actorType, color: actorColor),
-                _MiniPill('Source event', entry.sourceEventId),
+                Pill(label: entry.actorType, color: actorColor),
+                MiniPill('Source event', entry.sourceEventId),
                 if ((entry.entityType ?? '').isNotEmpty)
-                  _MiniPill('Entity', '${entry.entityType}:${entry.entityId}'),
+                  MiniPill('Entity', '${entry.entityType}:${entry.entityId}'),
                 if ((entry.correlationId ?? '').isNotEmpty)
-                  _MiniPill('Correlation', entry.correlationId!),
+                  MiniPill('Correlation', entry.correlationId!),
               ],
             ),
             const SizedBox(height: 8),
@@ -4991,7 +4908,7 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
                 ),
               ),
               if (_changeSummaryAt != null)
-                _MiniPill('Updated', _compactDateTime(_changeSummaryAt!)),
+                MiniPill('Updated', compactDateTime(_changeSummaryAt!)),
               if (hasSummary) ...[
                 const SizedBox(width: 8),
                 IconButton(
@@ -5044,7 +4961,7 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _MiniPill('Changes', '${rows.length}'),
+                MiniPill('Changes', '${rows.length}'),
                 DropdownButton<String>(
                   value: _window,
                   items: const [
@@ -5149,145 +5066,6 @@ class _ProjectChangeLogSectionState extends State<_ProjectChangeLogSection> {
                 ),
               ),
           ],
-        );
-      },
-    );
-  }
-}
-
-class _SummaryRunProvenance extends StatefulWidget {
-  final String projectId;
-
-  const _SummaryRunProvenance({required this.projectId});
-
-  @override
-  State<_SummaryRunProvenance> createState() => _SummaryRunProvenanceState();
-}
-
-class _SummaryRunProvenanceState extends State<_SummaryRunProvenance> {
-  Stream<List<EventLogData>>? _watchRecentEvents;
-
-  Object? _field(Map<String, Object?> map, String key) => map[key];
-
-  Map<String, Object?> _nestedMap(Map<String, Object?> map, String key) {
-    final value = map[key];
-    if (value is Map) return value.map((k, v) => MapEntry('$k', v));
-    return const <String, Object?>{};
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _watchRecentEvents ??= AppStateScope.of(context).watchRecentEvents();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<EventLogData>>(
-      stream: _watchRecentEvents,
-      builder: (context, snap) {
-        final rows = (snap.data ?? const <EventLogData>[])
-            .where(
-              (event) =>
-                  event.area == 'ai' &&
-                  event.entityType == 'project_summary' &&
-                  event.entityId == widget.projectId &&
-                  const {
-                    'project_summary_draft_saved',
-                    'project_summary_failed',
-                  }.contains(event.action),
-            )
-            .take(3)
-            .toList(growable: false);
-        if (rows.isEmpty) return const SizedBox.shrink();
-
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Colors.white.withAlpha(6),
-            border: Border.all(color: _kLine),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.history, size: 15, color: _kPrimary),
-                  SizedBox(width: 6),
-                  Text(
-                    'Recent summary runs',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white70,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              ...rows.map((event) {
-                final data = _tryParseJsonObject(event.outputJson);
-                final evidence = _nestedMap(data, 'evidence');
-                final success = data['success'] == true;
-                final model = (_field(data, 'model') ?? 'model n/a').toString();
-                final trigger = (_field(data, 'trigger') ?? 'manual')
-                    .toString();
-                final docs = (_field(evidence, 'includedDocumentCount') ?? '-')
-                    .toString();
-                final chars = (_field(evidence, 'totalExcerptChars') ?? '0')
-                    .toString();
-                final codes = data['validationIssueCodes'];
-                final codeText = codes is List && codes.isNotEmpty
-                    ? codes.map((code) => '$code').join(', ')
-                    : null;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        success
-                            ? Icons.check_circle_outline
-                            : Icons.error_outline,
-                        size: 14,
-                        color: success
-                            ? const Color(0xFF4CAF50)
-                            : const Color(0xFFFF8A80),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${success ? 'Saved' : 'Failed'} - $model - $trigger',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.white70,
-                              ),
-                            ),
-                            Text(
-                              '${_compactDateTime(event.timestamp)} - docs $docs - chars $chars${codeText == null ? '' : ' - $codeText'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Colors.white38,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            ],
-          ),
         );
       },
     );
@@ -5506,7 +5284,7 @@ class _StructuredSummaryView extends StatelessWidget {
                             OutlinedButton.icon(
                               onPressed: () {
                                 context.go(
-                                  _libraryRouteForProject(
+                                  libraryRouteForProject(
                                     projectId,
                                     entryType: 'document',
                                     entryId: doc.documentId,
@@ -5626,7 +5404,7 @@ class _QuickBar extends StatelessWidget {
         children: [
           Row(
             children: [
-              _Pill(
+              Pill(
                 label: projectStatusLabel(project.status),
                 color: projectStatusColor(project.status),
                 tooltip:
@@ -5635,19 +5413,19 @@ class _QuickBar extends StatelessWidget {
               ),
               if (normalizeProjectCategory(project.category) != null) ...[
                 const SizedBox(width: 6),
-                _Pill(
+                Pill(
                   label: projectCategoryLabel(project.category),
                   color: const Color(0xFF00BCD4),
                 ),
               ],
               if ((project.phase ?? '').isNotEmpty) ...[
                 const SizedBox(width: 6),
-                _Pill(label: project.phase!, color: _pc(project.phase)),
+                Pill(label: project.phase!, color: _pc(project.phase)),
               ],
               if ((project.priority ?? '').isNotEmpty &&
                   project.priority != 'normal') ...[
                 const SizedBox(width: 6),
-                _Pill(label: project.priority!, color: _prc(project.priority)),
+                Pill(label: project.priority!, color: _prc(project.priority)),
               ],
               if ((project.owner ?? '').isNotEmpty) ...[
                 const SizedBox(width: 8),
@@ -5793,70 +5571,6 @@ class _Section extends StatelessWidget {
   }
 }
 
-class _FieldRow extends StatelessWidget {
-  final String label;
-  final String? value;
-  final String placeholder;
-  final VoidCallback? onEdit;
-
-  const _FieldRow({
-    required this.label,
-    required this.value,
-    required this.placeholder,
-    this.onEdit,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final hasValue = value?.trim().isNotEmpty == true;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 140,
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 12, color: Colors.white38),
-            ),
-          ),
-          Expanded(
-            child: GestureDetector(
-              onTap: onEdit,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      hasValue ? value! : placeholder,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: hasValue
-                            ? const Color(0xDEFFFFFF)
-                            : Colors.white24,
-                        height: 1.5,
-                      ),
-                    ),
-                  ),
-                  if (onEdit != null) ...[
-                    const SizedBox(width: 6),
-                    const Icon(
-                      Icons.edit_outlined,
-                      size: 13,
-                      color: Colors.white24,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _IdentitySection extends StatelessWidget {
   final String projectId;
   final Project project;
@@ -5875,35 +5589,35 @@ class _IdentitySection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _FieldRow(
+        FieldRow(
           label: 'Purpose',
           value: project.description,
           placeholder: 'Not recorded — click to edit',
           onEdit: onEdit,
         ),
         const Divider(height: 1, color: Color(0x44273044)),
-        _FieldRow(
+        FieldRow(
           label: 'Desired outcome',
           value: project.desiredOutcome,
           placeholder: 'Click to edit',
           onEdit: onEdit,
         ),
         const Divider(height: 1, color: Color(0x44273044)),
-        _FieldRow(
+        FieldRow(
           label: 'Success criteria',
           value: project.successCriteria,
           placeholder: 'Click to edit',
           onEdit: onEdit,
         ),
         const Divider(height: 1, color: Color(0x44273044)),
-        _FieldRow(
+        FieldRow(
           label: 'Scope included',
           value: project.scopeIncluded,
           placeholder: 'Click to edit',
           onEdit: onEdit,
         ),
         const Divider(height: 1, color: Color(0x44273044)),
-        _FieldRow(
+        FieldRow(
           label: 'Scope excluded',
           value: project.scopeExcluded,
           placeholder: 'Click to edit',
@@ -5952,7 +5666,7 @@ class _GithubIdentityRow extends StatelessWidget {
           );
         }
         if (remoteSnap.connectionState == ConnectionState.waiting) {
-          return const _FieldRow(
+          return const FieldRow(
             label: 'GitHub repository',
             value: 'Loading...',
             placeholder: '',
@@ -5973,7 +5687,7 @@ class _GithubIdentityRow extends StatelessWidget {
               );
             }
             if (observationSnap.connectionState == ConnectionState.waiting) {
-              return const _FieldRow(
+              return const FieldRow(
                 label: 'GitHub repository',
                 value: 'Loading...',
                 placeholder: '',
@@ -6010,7 +5724,7 @@ class _GithubRepositoryControls extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _FieldRow(
+        FieldRow(
           label: 'GitHub repository',
           value: value,
           placeholder: 'No GitHub repository recorded',
@@ -6037,671 +5751,6 @@ class _GithubRepositoryControls extends StatelessWidget {
       ],
     );
   }
-}
-
-class _ProjectCommandToolbar extends StatefulWidget {
-  final String projectId;
-  final Future<void> Function() onOpenWorkboard;
-  final VoidCallback onEditMeta;
-  final VoidCallback onExportBundle;
-
-  const _ProjectCommandToolbar({
-    required this.projectId,
-    required this.onOpenWorkboard,
-    required this.onEditMeta,
-    required this.onExportBundle,
-  });
-
-  @override
-  State<_ProjectCommandToolbar> createState() => _ProjectCommandToolbarState();
-}
-
-class _ProjectCommandToolbarState extends State<_ProjectCommandToolbar> {
-  bool _openingWorkboard = false;
-  bool _launching = false;
-  bool _testing = false;
-  bool _checkingCapsule = false;
-
-  Stream<ProjectRuntimeProfile?>? _watchRuntimeProfile;
-  Stream<List<ProjectRuntimeRun>>? _watchRuntimeRuns;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _watchRuntimeProfile ??=
-        AppStateScope.of(context).watchProjectRuntimeProfile(widget.projectId);
-    _watchRuntimeRuns ??=
-        AppStateScope.of(context).watchProjectRuntimeRuns(widget.projectId, limit: 5);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF10151D),
-        border: Border.all(color: _kLine),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: StreamBuilder<ProjectRuntimeProfile?>(
-        stream: _watchRuntimeProfile,
-        builder: (context, profileSnap) {
-          final profile = profileSnap.data;
-          final runtimeReady = profile != null && profile.enabled;
-          final tests = profile == null
-              ? const <String>[]
-              : runtime.decodeStringList(profile.testCommandsJson);
-          final capsuleEnabled = profile?.capsuleEnabled ?? false;
-          return StreamBuilder<List<ProjectRuntimeRun>>(
-            stream: _watchRuntimeRuns,
-            builder: (context, runSnap) {
-              final runs = runSnap.data ?? const <ProjectRuntimeRun>[];
-              return Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  _ProjectToolbarButton(
-                    tooltip: 'Open work board',
-                    icon: Icons.view_kanban_outlined,
-                    label: 'Work board',
-                    busy: _openingWorkboard,
-                    onPressed: () async {
-                      if (_openingWorkboard) return;
-                      setState(() => _openingWorkboard = true);
-                      try {
-                        await widget.onOpenWorkboard();
-                      } finally {
-                        if (mounted) {
-                          setState(() => _openingWorkboard = false);
-                        }
-                      }
-                    },
-                  ),
-                  _ProjectToolbarButton(
-                    tooltip: 'Edit metadata',
-                    icon: Icons.edit_note_outlined,
-                    label: 'Metadata',
-                    onPressed: widget.onEditMeta,
-                  ),
-                  _ProjectToolbarButton(
-                    tooltip: 'Export project bundle',
-                    icon: Icons.archive_outlined,
-                    label: 'Export',
-                    onPressed: widget.onExportBundle,
-                  ),
-                  _ProjectToolbarButton(
-                    tooltip: runtimeReady
-                        ? 'Launch project'
-                        : 'No runtime profile configured',
-                    icon: Icons.rocket_launch_outlined,
-                    label: 'Launch',
-                    busy: _launching,
-                    color: _latestRuntimeRunColor(runs, 'launch'),
-                    onPressed: runtimeReady
-                        ? () => _runRuntimeAction(
-                            action: 'launch',
-                            body: () =>
-                                state.launchProjectRuntime(widget.projectId),
-                          )
-                        : null,
-                  ),
-                  _ProjectToolbarButton(
-                    tooltip: runtimeReady
-                        ? (tests.isEmpty ? 'No test command' : 'Run tests')
-                        : 'No runtime profile configured',
-                    icon: Icons.fact_check_outlined,
-                    label: 'Tests',
-                    busy: _testing,
-                    color: _latestRuntimeRunColor(runs, 'test'),
-                    onPressed: runtimeReady && tests.isNotEmpty
-                        ? () => _runRuntimeAction(
-                            action: 'test',
-                            body: () =>
-                                state.runProjectRuntimeTest(widget.projectId),
-                            showResult: true,
-                          )
-                        : null,
-                  ),
-                  _ProjectToolbarButton(
-                    tooltip: runtimeReady
-                        ? (capsuleEnabled
-                              ? 'Run capsule check'
-                              : 'Capsule disabled')
-                        : 'No runtime profile configured',
-                    icon: Icons.health_and_safety_outlined,
-                    label: 'Capsule',
-                    busy: _checkingCapsule,
-                    color: _latestRuntimeRunColor(runs, 'capsule'),
-                    onPressed: runtimeReady && capsuleEnabled
-                        ? () => _runRuntimeAction(
-                            action: 'capsule',
-                            body: () => state.runProjectRuntimeCapsule(
-                              widget.projectId,
-                            ),
-                            showResult: true,
-                          )
-                        : null,
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Future<void> _runRuntimeAction({
-    required String action,
-    required Future<ProjectRuntimeRun> Function() body,
-    bool showResult = false,
-  }) async {
-    if (_isBusy(action)) return;
-    final label = _runtimeActionLabel(action);
-    setState(() => _setBusy(action, true));
-    try {
-      final run = await body();
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_runtimeRunMessage(label, run))));
-      if (showResult && mounted) {
-        await showDialog<void>(
-          context: context,
-          builder: (_) => _RuntimeRunDialog(run: run, label: label),
-        );
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('$label failed: $error')));
-    } finally {
-      if (mounted) setState(() => _setBusy(action, false));
-    }
-  }
-
-  bool _isBusy(String action) => switch (action) {
-    'launch' => _launching,
-    'test' => _testing,
-    'capsule' => _checkingCapsule,
-    _ => false,
-  };
-
-  void _setBusy(String action, bool value) {
-    switch (action) {
-      case 'launch':
-        _launching = value;
-        break;
-      case 'test':
-        _testing = value;
-        break;
-      case 'capsule':
-        _checkingCapsule = value;
-        break;
-    }
-  }
-}
-
-class _ProjectToolbarButton extends StatelessWidget {
-  final String tooltip;
-  final IconData icon;
-  final String label;
-  final bool busy;
-  final Color? color;
-  final VoidCallback? onPressed;
-
-  const _ProjectToolbarButton({
-    required this.tooltip,
-    required this.icon,
-    required this.label,
-    this.busy = false,
-    this.color,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = onPressed != null && !busy;
-    final effectiveColor = enabled ? color : Colors.white24;
-    return Tooltip(
-      message: tooltip,
-      child: OutlinedButton.icon(
-        onPressed: busy ? null : onPressed,
-        icon: busy
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(icon, size: 16, color: effectiveColor),
-        label: Text(label),
-        style: OutlinedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          minimumSize: const Size(0, 36),
-        ),
-      ),
-    );
-  }
-}
-
-class _ProjectRuntimeSection extends StatefulWidget {
-  final String projectId;
-  final VoidCallback onEdit;
-
-  const _ProjectRuntimeSection({required this.projectId, required this.onEdit});
-
-  @override
-  State<_ProjectRuntimeSection> createState() => _ProjectRuntimeSectionState();
-}
-
-class _ProjectRuntimeSectionState extends State<_ProjectRuntimeSection> {
-  bool _launching = false;
-  String? _testingCommand;
-  bool _checkingCapsule = false;
-
-  Stream<ProjectRuntimeProfile?>? _watchRuntimeProfile;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _watchRuntimeProfile ??=
-        AppStateScope.of(context).watchProjectRuntimeProfile(widget.projectId);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-    return StreamBuilder<ProjectRuntimeProfile?>(
-      stream: _watchRuntimeProfile,
-      builder: (context, profileSnap) {
-        final profile = profileSnap.data;
-        if (profileSnap.connectionState == ConnectionState.waiting &&
-            profileSnap.data == null) {
-          return const LinearProgressIndicator(minHeight: 2);
-        }
-        if (profile == null || !profile.enabled) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'No runtime profile configured.',
-                style: TextStyle(fontSize: 13, color: Colors.white38),
-              ),
-              const SizedBox(height: 8),
-              FilledButton.icon(
-                onPressed: widget.onEdit,
-                icon: const Icon(Icons.settings_outlined, size: 16),
-                label: const Text('Configure runtime'),
-              ),
-            ],
-          );
-        }
-        final tests = runtime.decodeStringList(profile.testCommandsJson);
-        final ports = runtime.decodeIntList(profile.portsJson);
-        final urls = runtime.decodeRuntimeUrls(profile.urlsJson);
-        final healthUrls = runtime.decodeStringList(profile.healthUrlsJson);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _MiniPill('Mode', profile.enabled ? 'enabled' : 'off'),
-                if (profile.capsuleEnabled)
-                  _MiniPill('Capsule', profile.capsuleMode)
-                else
-                  const _MiniPill('Capsule', 'off'),
-                if (profile.autostart) const _MiniPill('Autostart', 'yes'),
-                if (ports.isNotEmpty) _MiniPill('Ports', ports.join(', ')),
-              ],
-            ),
-            const SizedBox(height: 10),
-            _FieldRow(
-              label: 'Working directory',
-              value: profile.workingDirectory,
-              placeholder: 'Not configured',
-              onEdit: widget.onEdit,
-            ),
-            const Divider(height: 1, color: Color(0x44273044)),
-            _FieldRow(
-              label: 'Launch command',
-              value: profile.launchCommand,
-              placeholder: 'Not configured',
-              onEdit: widget.onEdit,
-            ),
-            const Divider(height: 1, color: Color(0x44273044)),
-            _FieldRow(
-              label: 'Stop command',
-              value: profile.stopCommand,
-              placeholder: 'Not configured',
-              onEdit: widget.onEdit,
-            ),
-            if (urls.isNotEmpty) ...[
-              const Divider(height: 1, color: Color(0x44273044)),
-              _FieldRow(
-                label: 'URLs',
-                value: urls.map((url) => '${url.label}: ${url.url}').join('\n'),
-                placeholder: '',
-              ),
-            ],
-            if (healthUrls.isNotEmpty) ...[
-              const Divider(height: 1, color: Color(0x44273044)),
-              _FieldRow(
-                label: 'Health URLs',
-                value: healthUrls.join('\n'),
-                placeholder: '',
-              ),
-            ],
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed: _launching
-                      ? null
-                      : () => _runRuntimeAction(
-                          label: 'Launch',
-                          busy: 'launch',
-                          body: () =>
-                              state.launchProjectRuntime(widget.projectId),
-                        ),
-                  icon: _launching
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.rocket_launch_outlined, size: 16),
-                  label: const Text('Launch'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: profile.capsuleEnabled && !_checkingCapsule
-                      ? () => _runRuntimeAction(
-                          label: 'Capsule',
-                          busy: 'capsule',
-                          body: () =>
-                              state.runProjectRuntimeCapsule(widget.projectId),
-                          showResult: true,
-                        )
-                      : null,
-                  icon: _checkingCapsule
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.health_and_safety_outlined, size: 16),
-                  label: const Text('Capsule'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: widget.onEdit,
-                  icon: const Icon(Icons.edit_note_outlined, size: 16),
-                  label: const Text('Edit'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (tests.isEmpty)
-              const Text(
-                'No test commands configured.',
-                style: TextStyle(fontSize: 12, color: Colors.white38),
-              )
-            else ...[
-              const Text(
-                'Tests',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 6),
-              ...tests.map(
-                (command) => Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SelectableText(
-                          command,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.white70,
-                            fontFamily: 'monospace',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: _testingCommand == null
-                            ? () => _runRuntimeAction(
-                                label: 'Test',
-                                busy: 'test',
-                                command: command,
-                                body: () => state.runProjectRuntimeTest(
-                                  widget.projectId,
-                                  command: command,
-                                ),
-                                showResult: true,
-                              )
-                            : null,
-                        icon: _testingCommand == command
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.fact_check_outlined, size: 16),
-                        label: const Text('Run'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            _RuntimeRunHistory(projectId: widget.projectId),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _runRuntimeAction({
-    required String label,
-    required String busy,
-    required Future<ProjectRuntimeRun> Function() body,
-    String? command,
-    bool showResult = false,
-  }) async {
-    setState(() {
-      if (busy == 'launch') _launching = true;
-      if (busy == 'capsule') _checkingCapsule = true;
-      if (busy == 'test') _testingCommand = command ?? '';
-    });
-    try {
-      final run = await body();
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_runtimeRunMessage(label, run))));
-      if (showResult && mounted) {
-        await showDialog<void>(
-          context: context,
-          builder: (_) => _RuntimeRunDialog(run: run, label: label),
-        );
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('$label failed: $error')));
-    } finally {
-      if (mounted) {
-        setState(() {
-          if (busy == 'launch') _launching = false;
-          if (busy == 'capsule') _checkingCapsule = false;
-          if (busy == 'test') _testingCommand = null;
-        });
-      }
-    }
-  }
-}
-
-class _RuntimeRunHistory extends StatefulWidget {
-  final String projectId;
-
-  const _RuntimeRunHistory({required this.projectId});
-
-  @override
-  State<_RuntimeRunHistory> createState() => _RuntimeRunHistoryState();
-}
-
-class _RuntimeRunHistoryState extends State<_RuntimeRunHistory> {
-  Stream<List<ProjectRuntimeRun>>? _watchRuntimeRuns;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _watchRuntimeRuns ??= AppStateScope.of(context)
-        .watchProjectRuntimeRuns(widget.projectId, limit: 8);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<ProjectRuntimeRun>>(
-      stream: _watchRuntimeRuns,
-      builder: (context, snap) {
-        final runs = snap.data ?? const <ProjectRuntimeRun>[];
-        if (runs.isEmpty) {
-          return const SizedBox.shrink();
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Recent runtime runs',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            ...runs.map(
-              (run) => ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  _runtimeRunIcon(run),
-                  size: 18,
-                  color: _runtimeRunColor(run),
-                ),
-                title: Text(
-                  '${run.action} - ${run.status}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  '${_compactDateTime(run.startedAt)}'
-                  '${run.capsuleStatus == null ? '' : ' - capsule ${run.capsuleStatus}'}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: const Icon(Icons.chevron_right, size: 16),
-                onTap: () => showDialog<void>(
-                  context: context,
-                  builder: (_) => _RuntimeRunDialog(
-                    run: run,
-                    label: _runtimeActionLabel(run.action),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _RuntimeRunDialog extends StatelessWidget {
-  final ProjectRuntimeRun run;
-  final String label;
-
-  const _RuntimeRunDialog({required this.run, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final text = [
-      'Status: ${run.status}',
-      'Started: ${_compactDateTime(run.startedAt)}',
-      if (run.completedAt != null)
-        'Completed: ${_compactDateTime(run.completedAt)}',
-      if ((run.capsuleStatus ?? '').isNotEmpty) 'Capsule: ${run.capsuleStatus}',
-      if ((run.command ?? '').isNotEmpty) 'Command: ${run.command}',
-      if (run.exitCode != null) 'Exit code: ${run.exitCode}',
-      if ((run.outputText ?? '').isNotEmpty) '\nOutput:\n${run.outputText}',
-      if ((run.errorText ?? '').isNotEmpty) '\nError:\n${run.errorText}',
-      if ((run.capsuleOutputText ?? '').isNotEmpty)
-        '\nCapsule output:\n${run.capsuleOutputText}',
-    ].join('\n');
-    return AlertDialog(
-      title: Text('$label result'),
-      content: SizedBox(
-        width: 760,
-        height: 480,
-        child: SelectableText(
-          text,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
-        ),
-      ],
-    );
-  }
-}
-
-IconData _runtimeRunIcon(ProjectRuntimeRun run) => switch (run.action) {
-  'launch' => Icons.rocket_launch_outlined,
-  'test' => Icons.fact_check_outlined,
-  'capsule' => Icons.health_and_safety_outlined,
-  _ => Icons.terminal_outlined,
-};
-
-Color _runtimeRunColor(ProjectRuntimeRun run) => switch (run.status) {
-  'succeeded' || 'started' => const Color(0xFF4CAF50),
-  'running' => _kPrimary,
-  'failed' => const Color(0xFFFF8A80),
-  _ => Colors.white54,
-};
-
-Color _latestRuntimeRunColor(List<ProjectRuntimeRun> runs, String action) {
-  for (final run in runs) {
-    if (run.action == action) return _runtimeRunColor(run);
-  }
-  return Colors.white54;
-}
-
-String _runtimeActionLabel(String action) => switch (action) {
-  'launch' => 'Launch',
-  'test' => 'Test',
-  'capsule' => 'Capsule',
-  _ => action,
-};
-
-String _runtimeRunMessage(String label, ProjectRuntimeRun run) {
-  final capsule = (run.capsuleStatus ?? '').isEmpty
-      ? ''
-      : ' Capsule: ${run.capsuleStatus}.';
-  if (run.status == 'started') return '$label started.$capsule';
-  if (run.status == 'succeeded') return '$label succeeded.$capsule';
-  return '$label ${run.status}.$capsule';
 }
 
 class _LocalRepoSection extends StatelessWidget {
@@ -6782,28 +5831,28 @@ class _LocalRepoSection extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _FieldRow(
+            FieldRow(
               label: 'Repo root',
               value: summary.repoRoot,
               placeholder: '',
             ),
             if (summary.repoRoot != registry.localPath) ...[
               const Divider(height: 1, color: Color(0x44273044)),
-              _FieldRow(
+              FieldRow(
                 label: 'Selected folder',
                 value: registry.localPath,
                 placeholder: '',
               ),
             ],
             const Divider(height: 1, color: Color(0x44273044)),
-            _FieldRow(
+            FieldRow(
               label: 'Registry state',
               value: '${registry.classification} - ${registry.reviewState}',
               placeholder: '',
             ),
             if (observation != null) ...[
               const Divider(height: 1, color: Color(0x44273044)),
-              _FieldRow(
+              FieldRow(
                 label: 'Last observation',
                 value: [
                   if ((observation.branch ?? '').isNotEmpty)
@@ -6828,7 +5877,7 @@ class _LocalRepoSection extends StatelessWidget {
                   );
                 }
                 if (remote == null) {
-                  return const _FieldRow(
+                  return const FieldRow(
                     label: 'GitHub',
                     value: 'No cached GitHub metadata',
                     placeholder: '',
@@ -6838,26 +5887,26 @@ class _LocalRepoSection extends StatelessWidget {
                 final warning = remote.hasError ? ' - warning saved' : '';
                 return Column(
                   children: [
-                    _FieldRow(
+                    FieldRow(
                       label: 'GitHub',
                       value: '${remote.fullName} - $visibility$warning',
                       placeholder: '',
                     ),
                     const Divider(height: 1, color: Color(0x44273044)),
-                    _FieldRow(
+                    FieldRow(
                       label: 'Remote check',
                       value: [
                         if ((remote.defaultBranch ?? '').isNotEmpty)
                           'default ${remote.defaultBranch}',
                         if ((remote.onlineHeadSha ?? '').isNotEmpty)
                           'head ${_shortSha(remote.onlineHeadSha!)}',
-                        'checked ${_compactDate(remote.checkedAt)}',
+                        'checked ${compactDate(remote.checkedAt)}',
                       ].join(' - '),
                       placeholder: '',
                     ),
                     if (remote.hasError) ...[
                       const Divider(height: 1, color: Color(0x44273044)),
-                      _FieldRow(
+                      FieldRow(
                         label: 'GitHub warning',
                         value: remote.error,
                         placeholder: '',
@@ -6959,10 +6008,10 @@ class _LocalRepoAssociatedFiles extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            _MiniPill('Documents', '${summary.documents.length}'),
-            _MiniPill('Media', '${summary.media.length}'),
-            _MiniPill('Source files', '${summary.sourceFileCount}'),
-            _MiniPill('Cards', '${summary.cardCount}'),
+            MiniPill('Documents', '${summary.documents.length}'),
+            MiniPill('Media', '${summary.media.length}'),
+            MiniPill('Source files', '${summary.sourceFileCount}'),
+            MiniPill('Cards', '${summary.cardCount}'),
           ],
         ),
         const SizedBox(height: 8),
@@ -7485,344 +6534,6 @@ class _ProjectStatusColumn extends StatelessWidget {
   }
 }
 
-class _TagsSection extends StatefulWidget {
-  final String projectId;
-  final VoidCallback onEdit;
-
-  const _TagsSection({required this.projectId, required this.onEdit});
-
-  @override
-  State<_TagsSection> createState() => _TagsSectionState();
-}
-
-class _TagsSectionState extends State<_TagsSection> {
-  Stream<List<Tag>>? _watchTags;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _watchTags ??=
-        AppStateScope.of(context).watchTagsForProject(widget.projectId);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<Tag>>(
-      stream: _watchTags,
-      builder: (context, snap) {
-        if (snap.hasError) {
-          return Text(
-            'Error loading tags: ${snap.error}',
-            style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-          );
-        }
-        final tags = snap.data ?? const <Tag>[];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (tags.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10),
-                child: Text(
-                  'No tags assigned yet.',
-                  style: TextStyle(fontSize: 13, color: Colors.white38),
-                ),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final tag in tags)
-                      _Pill(label: '#${tag.name}', color: _tagColor(tag)),
-                  ],
-                ),
-              ),
-            OutlinedButton.icon(
-              onPressed: widget.onEdit,
-              icon: const Icon(Icons.sell_outlined, size: 16),
-              label: const Text('Edit tags'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _MediaSection extends StatefulWidget {
-  final String projectId;
-  final VoidCallback onImportMedia;
-
-  const _MediaSection({required this.projectId, required this.onImportMedia});
-
-  @override
-  State<_MediaSection> createState() => _MediaSectionState();
-}
-
-class _MediaSectionState extends State<_MediaSection> {
-  Stream<List<ProjectMediaItem>>? _watchMedia;
-  Stream<List<Document>>? _watchDocuments;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _watchMedia ??=
-        AppStateScope.of(context).watchProjectMedia(widget.projectId);
-    _watchDocuments ??=
-        AppStateScope.of(context).watchDocumentsForProject(widget.projectId);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = AppStateScope.of(context);
-    return StreamBuilder<List<ProjectMediaItem>>(
-      stream: _watchMedia,
-      builder: (context, mediaSnap) {
-        final media = mediaSnap.data ?? const <ProjectMediaItem>[];
-        final cover = media.where((item) => item.isCover).firstOrNull;
-        return StreamBuilder<List<Document>>(
-          stream: _watchDocuments,
-          builder: (context, docSnap) {
-            final docs = docSnap.data ?? const <Document>[];
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (cover != null && cover.mediaType == 'image') ...[
-                  _CoverImage(item: cover),
-                  const SizedBox(height: 12),
-                ],
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: widget.onImportMedia,
-                      icon: const Icon(
-                        Icons.add_photo_alternate_outlined,
-                        size: 16,
-                      ),
-                      label: const Text('Add image/file'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () =>
-                          context.go(_libraryRouteForProject(widget.projectId)),
-                      icon: const Icon(Icons.library_books_outlined, size: 16),
-                      label: const Text('Open Library'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (media.isEmpty && docs.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'No media or documents linked to this project yet.',
-                      style: TextStyle(fontSize: 13, color: Colors.white38),
-                    ),
-                  ),
-                if (media.isNotEmpty) ...[
-                  GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 190,
-                          mainAxisExtent: 190,
-                          crossAxisSpacing: 10,
-                          mainAxisSpacing: 10,
-                        ),
-                    itemCount: media.length,
-                    itemBuilder: (context, i) => _MediaTile(
-                      item: media[i],
-                      onSetCover: () => state.setProjectCoverMedia(
-                          widget.projectId, media[i].id),
-                      onDelete: () => state.deleteProjectMedia(media[i].id),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (docs.isNotEmpty)
-                  ...docs.map(
-                    (d) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: InkWell(
-                        onTap: () => context.go(
-                          _libraryRouteForProject(
-                            widget.projectId,
-                            entryType: 'document',
-                            entryId: d.id,
-                          ),
-                        ),
-                        borderRadius: BorderRadius.circular(6),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.description_outlined,
-                                size: 16,
-                                color: _kPrimary,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      d.title,
-                                      style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    Text(
-                                      d.originalFilename,
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.white38,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const Icon(
-                                Icons.chevron_right,
-                                size: 16,
-                                color: Colors.white24,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _CoverImage extends StatelessWidget {
-  final ProjectMediaItem item;
-
-  const _CoverImage({required this.item});
-
-  @override
-  Widget build(BuildContext context) {
-    final file = File(item.storedPath);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: AspectRatio(
-        aspectRatio: 16 / 7,
-        child: file.existsSync()
-            ? Image.file(file, fit: BoxFit.cover)
-            : Container(
-                color: const Color(0xFF0F1115),
-                alignment: Alignment.center,
-                child: const Text(
-                  'Cover file is missing',
-                  style: TextStyle(color: Colors.white54),
-                ),
-              ),
-      ),
-    );
-  }
-}
-
-class _MediaTile extends StatelessWidget {
-  final ProjectMediaItem item;
-  final VoidCallback onSetCover;
-  final VoidCallback onDelete;
-
-  const _MediaTile({
-    required this.item,
-    required this.onSetCover,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final file = File(item.storedPath);
-    final isImage = item.mediaType == 'image';
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F1115),
-        border: Border.all(color: item.isCover ? _kPrimary : _kLine),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              color: const Color(0xFF10151E),
-              child: isImage && file.existsSync()
-                  ? Image.file(file, fit: BoxFit.cover)
-                  : Icon(
-                      isImage
-                          ? Icons.broken_image_outlined
-                          : item.mediaType == 'folder'
-                          ? Icons.folder_outlined
-                          : Icons.insert_drive_file_outlined,
-                      color: Colors.white38,
-                      size: 32,
-                    ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                if ((item.caption ?? '').isNotEmpty)
-                  Text(
-                    item.caption!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11, color: Colors.white54),
-                  ),
-                Row(
-                  children: [
-                    if (!item.isCover)
-                      IconButton(
-                        tooltip: 'Use as cover',
-                        onPressed: isImage ? onSetCover : null,
-                        icon: const Icon(Icons.wallpaper, size: 16),
-                      ),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: 'Remove media',
-                      onPressed: onDelete,
-                      icon: const Icon(Icons.delete_outline, size: 16),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ClosureSection extends StatelessWidget {
   final Project project;
   final VoidCallback onEdit, onComplete, onArchive;
@@ -7839,14 +6550,14 @@ class _ClosureSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _FieldRow(
+        FieldRow(
           label: 'Outcome summary',
           value: project.outcomeSummary,
           placeholder: 'Not closed yet',
           onEdit: onEdit,
         ),
         const Divider(height: 1, color: Color(0x44273044)),
-        _FieldRow(
+        FieldRow(
           label: 'Lessons learned',
           value: project.lessonsLearned,
           placeholder: 'Not recorded',
