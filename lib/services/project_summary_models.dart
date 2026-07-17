@@ -1,6 +1,164 @@
 import 'dart:convert';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Evidence selection policy (weights, caps, extension sets)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Pure constants and functions that decide which Library documents are
+/// packed into a project summary evidence packet, how they are categorized,
+/// scored, and how much excerpt text is budgeted. No IO, no state.
+class ProjectSummaryEvidencePolicy {
+  static const int maxCharsPerDoc = 3000;
+  static const int maxTotalDocChars = 16000;
+
+  static const Map<String, int> categoryWeights = {
+    'active_task': 1200,
+    'current_state': 1180,
+    'handoff': 1160,
+    'readme': 1140,
+    'acceptance': 1120,
+    'operations': 1100,
+    'roadmap': 1060,
+    'requirements': 1040,
+    'change_history': 1020,
+    'agent_guidance': 1000,
+    'text': 560,
+    'source': 240,
+    'binary': 160,
+    'other': 100,
+  };
+
+  static const Set<String> textExtensions = {
+    'md',
+    'mdx',
+    'txt',
+    'log',
+    'rst',
+    'html',
+    'htm',
+    'eml',
+    'json',
+    'yaml',
+    'yml',
+    'toml',
+    'ini',
+    'csv',
+    'xml',
+  };
+
+  static const Set<String> sourceExtensions = {
+    'dart',
+    'py',
+    'js',
+    'ts',
+    'tsx',
+    'jsx',
+    'java',
+    'cs',
+    'go',
+    'rs',
+  };
+
+  static const Set<String> officeExtensions = {'pdf', 'docx', 'doc'};
+
+  static int categoryWeight(String category) =>
+      categoryWeights[category] ?? categoryWeights['other']!;
+
+  /// Classifies a document into an evidence category from its lowercased
+  /// [identity] (title + original filename), [extension], and whether stored
+  /// extracted text is available.
+  static String evidenceCategory({
+    required String identity,
+    String? extension,
+    required bool hasStoredText,
+  }) {
+    final normalized = identity.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    bool has(String needle) {
+      final token = needle.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+      return normalized.contains(token);
+    }
+
+    final ext = extension?.toLowerCase();
+    if (has('active_task')) return 'active_task';
+    if (has('current_state')) return 'current_state';
+    if (has('handoff')) return 'handoff';
+    if (has('readme')) return 'readme';
+    if (has('acceptance')) return 'acceptance';
+    if (has('operations')) return 'operations';
+    if (has('roadmap')) return 'roadmap';
+    if (has('requirements') || has('spec')) return 'requirements';
+    if (has('changelog') || has('change_log') || has('history')) {
+      return 'change_history';
+    }
+    if (has('agents') || has('agent') || has('claude')) {
+      return 'agent_guidance';
+    }
+    if (sourceExtensions.contains(ext)) return 'source';
+    if (textExtensions.contains(ext) || hasStoredText) {
+      return 'text';
+    }
+    if (ext != null && ext.isNotEmpty) return 'binary';
+    return 'other';
+  }
+
+  /// Ranking score for a document: category weight plus bonuses for readable
+  /// formats, stored text, and local-project provenance.
+  static int documentScore({
+    required String category,
+    String? extension,
+    required bool hasStoredText,
+    String? source,
+  }) {
+    var score = categoryWeight(category);
+    final ext = extension?.toLowerCase();
+
+    if (textExtensions.contains(ext)) score += 80;
+    if (officeExtensions.contains(ext)) score += 25;
+    if (sourceExtensions.contains(ext)) score += 15;
+    if (hasStoredText) score += 35;
+    if ((source ?? '').toLowerCase().contains('local_project')) {
+      score += 20;
+    }
+
+    return score;
+  }
+
+  /// Human-readable selection reason for an evidence category.
+  static String documentReason(String category) {
+    switch (category) {
+      case 'active_task':
+        return 'active task';
+      case 'current_state':
+        return 'current state';
+      case 'handoff':
+        return 'handoff';
+      case 'readme':
+        return 'project readme';
+      case 'acceptance':
+        return 'acceptance criteria';
+      case 'operations':
+        return 'operations note';
+      case 'roadmap':
+        return 'roadmap';
+      case 'requirements':
+        return 'requirements/spec';
+      case 'change_history':
+        return 'change history';
+      case 'agent_guidance':
+        return 'agent guidance';
+      case 'source':
+        return 'source-like document';
+      case 'text':
+        return 'text document';
+      case 'binary':
+        return 'binary or metadata-only document';
+      default:
+        return 'linked Library document';
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Input context fed to the LLM
 // ─────────────────────────────────────────────────────────────────────────────
 
