@@ -158,20 +158,36 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   Set<String> _visibleSectionIds = _projectDetailDefaultSectionIds.toSet();
 
   List<WorkItem> _workItems = const [];
-  List<LlmTaskQueueItem> _llmQueueItems = const [];
   List<ProjectPerson> _people = const [];
   List<ProjectRisk> _risks = const [];
   List<ProjectDecision> _decisions = const [];
   bool _didLoad = false;
 
   Stream<Project?>? _watchProject;
+  // Cached stream: the LLM queue is a hand-managed table whose watcher
+  // re-runs on notifyUpdates('llm_task_queue'), so queue mutations render
+  // here without notifyListeners or a _loadAll round-trip.
+  Stream<List<LlmTaskQueueItem>>? _llmQueue;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _watchProject ??= AppStateScope.of(context).watchProject(widget.projectId);
+    final state = AppStateScope.of(context);
+    _watchProject ??= state.watchProject(widget.projectId);
+    _llmQueue ??= state.watchLlmTasksForProject(widget.projectId, limit: 50);
     if (!_didLoad) {
       _didLoad = true;
+      _loadAll();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ProjectDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.projectId != widget.projectId) {
+      final state = AppStateScope.read(context);
+      _watchProject = state.watchProject(widget.projectId);
+      _llmQueue = state.watchLlmTasksForProject(widget.projectId, limit: 50);
       _loadAll();
     }
   }
@@ -182,12 +198,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     // missing column that _ensureProjectCompatibilityColumns hasn't patched
     // yet on this run) must not prevent the others from loading.
     final items = await state.getWorkItemsForProject(widget.projectId);
-    List<LlmTaskQueueItem> llmTasks = _llmQueueItems;
-    try {
-      llmTasks = await state.getLlmTasksForProject(widget.projectId, limit: 50);
-    } catch (e) {
-      debugPrint('[Atlas] _loadProjectDetail: getLlmTasksForProject failed (continuing with cached): $e');
-    }
+    // LLM queue rows are no longer loaded here: the header panel reads them
+    // from the cached _llmQueue stream.
     final people = await state.getProjectPeople(widget.projectId);
     List<ProjectRisk> risks = _risks;
     try {
@@ -221,7 +233,6 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     if (!mounted) return;
     setState(() {
       _workItems = items;
-      _llmQueueItems = llmTasks;
       _people = people;
       _risks = risks;
       _decisions = decisions;
@@ -463,7 +474,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     for (final path in attachmentPaths) {
       await state.importLlmTaskMediaFromPath(taskId, path);
     }
-    await _loadAll();
+    // No reload: the queue stream picks up the enqueued task.
   }
 
   Future<void> _showLlmQueueManagerDialog(BuildContext context) async {
@@ -923,7 +934,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           await state.requeueLlmTask(item.id);
           break;
       }
-      await _loadAll();
+      // No reload: save/cancel/requeue only touch the queue, which the
+      // cached _llmQueue stream re-emits on its own.
       if (!context.mounted) return;
       final moved =
           result.action == 'save' && result.projectId != widget.projectId;
@@ -1095,23 +1107,29 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     _showProjectBundleExportDialog(context, project.title),
               ),
               const SizedBox(height: 8),
-              _ProjectTaskHeaderPanel(
-                projectId: widget.projectId,
-                items: _workItems,
-                llmQueueItems: _llmQueueItems,
-                expanded: _taskHeaderExpanded,
-                onToggle: () =>
-                    setState(() => _taskHeaderExpanded = !_taskHeaderExpanded),
-                onAddProjectTask: () => _addProjectTask(context),
-                onAddLlmTask: () => _showCreateLlmTaskDialog(context),
-                onOpenWorkboard: () => _openProjectWorkboard(context, project),
-                onRefresh: _loadAll,
-                onOpenTask: (item) async {
-                  await showWorkItemDetailSheet(context, item.id);
-                  await _loadAll();
-                },
-                onOpenLlmTask: (item) => _showEditLlmTaskDialog(context, item),
-                onManageLlmTasks: () => _showLlmQueueManagerDialog(context),
+              StreamBuilder<List<LlmTaskQueueItem>>(
+                stream: _llmQueue,
+                builder: (context, llmSnap) => _ProjectTaskHeaderPanel(
+                  projectId: widget.projectId,
+                  items: _workItems,
+                  llmQueueItems: llmSnap.data ?? const [],
+                  expanded: _taskHeaderExpanded,
+                  onToggle: () => setState(
+                    () => _taskHeaderExpanded = !_taskHeaderExpanded,
+                  ),
+                  onAddProjectTask: () => _addProjectTask(context),
+                  onAddLlmTask: () => _showCreateLlmTaskDialog(context),
+                  onOpenWorkboard: () =>
+                      _openProjectWorkboard(context, project),
+                  onRefresh: _loadAll,
+                  onOpenTask: (item) async {
+                    await showWorkItemDetailSheet(context, item.id);
+                    await _loadAll();
+                  },
+                  onOpenLlmTask: (item) =>
+                      _showEditLlmTaskDialog(context, item),
+                  onManageLlmTasks: () => _showLlmQueueManagerDialog(context),
+                ),
               ),
               const SizedBox(height: 8),
 

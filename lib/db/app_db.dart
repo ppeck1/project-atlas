@@ -3883,19 +3883,49 @@ class AppDb extends _$AppDb {
       return result;
     }
 
-    Stream<Map<String, List<Tag>>> watch() async* {
-      yield await fetch();
-      await for (final _ in tableUpdates(
-        TableUpdateQuery.allOf([
-          TableUpdateQuery.onTable(tags),
-          const TableUpdateQuery.onTableName(_workItemTagsTableName),
-        ]),
-      )) {
-        yield await fetch();
-      }
-    }
+    return _watchHandManagedTable(
+      TableUpdateQuery.allOf([
+        TableUpdateQuery.onTable(tags),
+        const TableUpdateQuery.onTableName(_workItemTagsTableName),
+      ]),
+      fetch,
+    );
+  }
 
-    return watch();
+  /// Watches a hand-managed (raw DDL) table: emits an initial [fetch], then
+  /// re-fetches after every table update matching [query].
+  ///
+  /// Built on an explicit controller instead of an `async*` generator: a
+  /// generator parked in `await for` on [tableUpdates] cannot complete
+  /// cancellation until the inner stream emits again, which hangs
+  /// subscription cancel and [close]. Fetches are chained so emissions stay
+  /// in order even when updates arrive faster than queries complete.
+  Stream<T> _watchHandManagedTable<T>(
+    TableUpdateQuery query,
+    Future<T> Function() fetch,
+  ) {
+    return Stream.multi((listener) {
+      var cancelled = false;
+      var chain = Future<void>.value();
+      void scheduleEmit() {
+        chain = chain
+            .then((_) async {
+              if (cancelled) return;
+              final value = await fetch();
+              if (!cancelled) listener.add(value);
+            })
+            .catchError((Object e, StackTrace st) {
+              if (!cancelled) listener.addError(e, st);
+            });
+      }
+
+      final sub = tableUpdates(query).listen((_) => scheduleEmit());
+      listener.onCancel = () {
+        cancelled = true;
+        return sub.cancel();
+      };
+      scheduleEmit();
+    });
   }
 
   Future<Map<String, int>> mergeProjects({
@@ -5372,6 +5402,14 @@ class AppDb extends _$AppDb {
             rows.map(_projectEnrichmentProposalFromRow).toList(growable: false),
       );
 
+  /// `llm_task_queue` is a hand-managed table (raw customStatement DDL, no
+  /// generated Drift class), so mutations must notify streams explicitly with
+  /// this table name — same contract as `work_item_tags`.
+  static const _llmTaskQueueTableName = 'llm_task_queue';
+
+  void _notifyLlmTaskQueueChanged({UpdateKind? kind}) =>
+      notifyUpdates({TableUpdate(_llmTaskQueueTableName, kind: kind)});
+
   LlmTaskQueueItem _llmTaskQueueItemFromRow(QueryRow row) => LlmTaskQueueItem(
     id: row.data['id'] as String,
     projectId: row.data['project_id'] as String,
@@ -5456,6 +5494,7 @@ class AppDb extends _$AppDb {
         lastReviewedAt?.millisecondsSinceEpoch,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.insert);
     return id;
   }
 
@@ -5489,6 +5528,28 @@ class AppDb extends _$AppDb {
     String projectId, {
     int limit = 50,
   }) => getLlmTasks(projectId: projectId, limit: limit);
+
+  /// Watches the LLM task queue with the same filters and ordering as
+  /// [getLlmTasks].
+  ///
+  /// Because `llm_task_queue` has no generated Drift class, a plain `.watch()`
+  /// cannot invalidate on it. Instead every mutating queue method calls
+  /// [_notifyLlmTaskQueueChanged] and this stream listens to [tableUpdates]
+  /// for the raw table name, re-running the query on each hit — the same
+  /// shape as [watchWorkItemTags].
+  Stream<List<LlmTaskQueueItem>> watchLlmTasks({
+    String? projectId,
+    String? status,
+    int limit = 50,
+  }) => _watchHandManagedTable(
+    const TableUpdateQuery.onTableName(_llmTaskQueueTableName),
+    () => getLlmTasks(projectId: projectId, status: status, limit: limit),
+  );
+
+  Stream<List<LlmTaskQueueItem>> watchLlmTasksForProject(
+    String projectId, {
+    int limit = 50,
+  }) => watchLlmTasks(projectId: projectId, limit: limit);
 
   Future<LlmTaskQueueItem?> getLlmTask(String id) async {
     await _ensureLlmTaskQueueTable();
@@ -5538,6 +5599,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5585,6 +5647,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5601,6 +5664,7 @@ class AppDb extends _$AppDb {
       'UPDATE llm_task_queue SET work_item_id = ?, updated_at = ? WHERE id = ?',
       [workItemId, now.millisecondsSinceEpoch, id],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5626,6 +5690,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5646,6 +5711,7 @@ class AppDb extends _$AppDb {
          WHERE id = ? AND status IN ('failed', 'cancelled')''',
       [now.millisecondsSinceEpoch, id],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5689,6 +5755,7 @@ class AppDb extends _$AppDb {
         task.id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(task.id);
   }
 
@@ -5714,6 +5781,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 
@@ -5739,6 +5807,7 @@ class AppDb extends _$AppDb {
         id,
       ],
     );
+    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
     return getLlmTask(id);
   }
 }

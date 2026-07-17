@@ -1308,7 +1308,10 @@ class AppState extends ChangeNotifier {
           'items': refs.map((ref) => ref.toJson()).toList(),
         }),
       );
-      notifyListeners();
+      // No notifyListeners: work_items writes invalidate Drift streams,
+      // llm_task_queue writes are broadcast via notifyUpdates in AppDb
+      // (watchLlmTasks*), and the workboard reloads itself explicitly after
+      // every bulk-planning action.
     }
   }
 
@@ -1381,7 +1384,8 @@ class AppState extends ChangeNotifier {
       entityId: workItemId,
       outputJson: jsonEncode({'taskId': taskId, 'projectId': project.id}),
     );
-    notifyListeners();
+    // No notifyListeners: the queue write re-emits watchLlmTasks*; callers
+    // (workboard link dialog) reload their snapshot explicitly.
   }
 
   Future<Map<String, Object?>> getWorkItemContextBundle(
@@ -5372,6 +5376,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // LLM queue mutations: no notifyListeners. `llm_task_queue` is hand-managed,
+  // so AppDb emits notifyUpdates('llm_task_queue') on every mutation and UI
+  // consumers read via watchLlmTasks/watchLlmTasksForProject (project detail
+  // task header). Remaining Future reads are dialog-scoped one-shots or
+  // explicit workboard reloads; event-log writes invalidate watchRecentEvents
+  // on their own and no cached AppState field derives from the queue.
   Future<String> enqueueLlmTask({
     required String projectId,
     String? workItemId,
@@ -5415,7 +5425,6 @@ class AppState extends ChangeNotifier {
       entityId: projectId,
       outputJson: jsonEncode({'taskId': id, 'workItemId': workItemId}),
     );
-    notifyListeners();
     return id;
   }
 
@@ -5425,10 +5434,21 @@ class AppState extends ChangeNotifier {
     int limit = 50,
   }) => db.getLlmTasks(projectId: projectId, status: status, limit: limit);
 
+  Stream<List<LlmTaskQueueItem>> watchLlmTasks({
+    String? projectId,
+    String? status,
+    int limit = 50,
+  }) => db.watchLlmTasks(projectId: projectId, status: status, limit: limit);
+
   Future<List<LlmTaskQueueItem>> getLlmTasksForProject(
     String projectId, {
     int limit = 50,
   }) => db.getLlmTasksForProject(projectId, limit: limit);
+
+  Stream<List<LlmTaskQueueItem>> watchLlmTasksForProject(
+    String projectId, {
+    int limit = 50,
+  }) => db.watchLlmTasksForProject(projectId, limit: limit);
 
   Future<LlmTaskQueueItem?> getLlmTask(String taskId) => db.getLlmTask(taskId);
 
@@ -5504,7 +5524,6 @@ class AppState extends ChangeNotifier {
         'leaseRevoked': existing.status == 'leased',
       }),
     );
-    notifyListeners();
     return item;
   }
 
@@ -5512,15 +5531,11 @@ class AppState extends ChangeNotifier {
     String? taskId,
     required String leasedBy,
     Duration leaseDuration = const Duration(hours: 1),
-  }) async {
-    final item = await db.claimLlmTask(
-      taskId: taskId,
-      leasedBy: leasedBy,
-      leaseDuration: leaseDuration,
-    );
-    if (item != null) notifyListeners();
-    return item;
-  }
+  }) => db.claimLlmTask(
+    taskId: taskId,
+    leasedBy: leasedBy,
+    leaseDuration: leaseDuration,
+  );
 
   Future<LlmTaskQueueItem> cancelLlmTask(
     String taskId, {
@@ -5548,7 +5563,6 @@ class AppState extends ChangeNotifier {
       entityId: taskId,
       outputJson: jsonEncode({'projectId': item.projectId}),
     );
-    notifyListeners();
     return item;
   }
 
@@ -5569,7 +5583,6 @@ class AppState extends ChangeNotifier {
       entityId: taskId,
       outputJson: jsonEncode({'projectId': item.projectId}),
     );
-    notifyListeners();
     return item;
   }
 
@@ -5583,13 +5596,11 @@ class AppState extends ChangeNotifier {
     if (existing.status != 'leased') {
       throw StateError('Only leased LLM tasks can be completed.');
     }
-    final item = await db.completeLlmTask(
+    return db.completeLlmTask(
       id: taskId,
       resultJson: jsonEncode(result),
       reviewDraftId: reviewDraftId,
     );
-    notifyListeners();
-    return item;
   }
 
   Future<LlmTaskQueueItem?> failLlmTask({
@@ -5602,13 +5613,11 @@ class AppState extends ChangeNotifier {
     if (existing.status != 'leased') {
       throw StateError('Only leased LLM tasks can be failed.');
     }
-    final item = await db.failLlmTask(
+    return db.failLlmTask(
       id: taskId,
       error: error,
       resultJson: result.isEmpty ? null : jsonEncode(result),
     );
-    notifyListeners();
-    return item;
   }
 
   Future<ProjectGitRemoteStatus> refreshProjectGithubRemoteMetadata(
