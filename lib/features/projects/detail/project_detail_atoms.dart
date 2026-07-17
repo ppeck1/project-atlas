@@ -14,6 +14,8 @@ String compactDateTime(DateTime? value) {
   return '${compactDate(value)} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 }
 
+String shortSha(String sha) => sha.length <= 8 ? sha : sha.substring(0, 8);
+
 String libraryRouteForProject(
   String projectId, {
   String? entryType,

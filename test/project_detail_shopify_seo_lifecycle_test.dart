@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('Shopify SEO section defers inherited scope load past initState', () {
     final source = File(
-      'lib/features/projects/project_detail_screen.dart',
+      'lib/features/projects/detail/shopify_seo_section.dart',
     ).readAsStringSync();
     final classStart = source.indexOf('class _ShopifySeoSectionState');
     final nextClass = source.indexOf('\nclass ', classStart + 1);
