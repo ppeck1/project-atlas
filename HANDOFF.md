@@ -4,7 +4,7 @@ This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
 contact data, machine-specific paths, and unrelated project references.
 
-Last updated: 2026-07-15.
+Last updated: 2026-07-18.
 
 ## Current public state
 
@@ -91,6 +91,10 @@ For public changes, also verify:
 ## Maintainer map
 
 - Product surfaces: `lib/features/`
+- Project Detail composition: `lib/features/projects/project_detail_screen.dart`
+  owns screen lifecycle and orchestration; its task header and AI summary
+  presentation live in `lib/features/projects/detail/` with typed view models
+  and action bundles.
 - Design tokens: `lib/shared/theme/atlas_colors.dart`
   (`ThemeExtension<AtlasColors>`, registered in `lib/app/theme.dart`)
 - App-level keyboard shortcuts: `lib/shared/widgets/atlas_shortcuts.dart`
