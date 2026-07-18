@@ -5,9 +5,9 @@ import 'package:project_atlas/shared/widgets/atlas_shell.dart';
 //   index 0 → /today
 //   index 1 → /projects
 //   index 2 → /work
-//   index 3 → /operations
+//   index 3 → /capsule
 //   index 4 → /library
-const _paths = ['/today', '/projects', '/work', '/operations', '/library'];
+const _paths = ['/today', '/projects', '/work', '/capsule', '/library'];
 
 void main() {
   group('resolveNavSelectedIndex', () {
@@ -51,8 +51,12 @@ void main() {
       expect(resolveNavSelectedIndex('/work', _paths), 2);
     });
 
-    test('returns 3 for /operations (exact match)', () {
-      expect(resolveNavSelectedIndex('/operations', _paths), 3);
+    test('returns 3 for /capsule (exact match)', () {
+      expect(resolveNavSelectedIndex('/capsule', _paths), 3);
+    });
+
+    test('returns -1 for /operations (retained secondary route)', () {
+      expect(resolveNavSelectedIndex('/operations', _paths), -1);
     });
 
     test('returns 4 for /library (exact match)', () {

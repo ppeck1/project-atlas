@@ -23,6 +23,27 @@ source rows separate from canonical projects, stores source topology in
 authority is unresolved. Reconcile previews can update Atlas bookkeeping after
 operator review, but they do not mutate the linked source repositories.
 
+## Project Capsule projection
+
+`ProjectCapsuleService` derives one read-only collaboration contract from the
+existing project bootstrap and workload models. Its source port keeps the
+projection independent from Flutter widgets and persistence details; the
+current adapter delegates to `AtlasAgentService` rather than teaching the
+Capsule screen to recalculate project truth.
+
+The snapshot exposes three progressive-disclosure views:
+
+- `act` contains the recommended next action and attention lanes.
+- `understand` contains intent, accepted state, decisions, risks, and scope.
+- `audit` contains freshness, source/protocol posture, warnings, gaps, and
+  verification expectations.
+
+All views carry the same deterministic content hash and derived revision ID.
+The generation time is reported but excluded from the hash, so selecting a
+smaller view saves context without creating a contradictory revision. Agent
+results remain proposals and the human-acceptance boundary is explicit in the
+relevant views.
+
 ## Data flow
 
 - UI actions call `AppState` methods.
@@ -34,6 +55,8 @@ operator review, but they do not mutate the linked source repositories.
 - Project freshness, planning-context completeness, and source topology use
   shared model paths so UI, local MCP, and remote projection views do not
   independently calculate contradictory project status.
+- One-shot reads use database queries rather than awaiting the first value of a
+  reactive stream; streams remain reserved for consumers that need updates.
 
 ## External boundaries
 

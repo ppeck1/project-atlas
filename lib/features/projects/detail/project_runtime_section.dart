@@ -76,9 +76,9 @@ class _ProjectRuntimeSectionState extends State<ProjectRuntimeSection> {
               children: [
                 MiniPill('Mode', profile.enabled ? 'enabled' : 'off'),
                 if (profile.capsuleEnabled)
-                  MiniPill('Capsule', profile.capsuleMode)
+                  MiniPill('Preflight', profile.capsuleMode)
                 else
-                  const MiniPill('Capsule', 'off'),
+                  const MiniPill('Preflight', 'off'),
                 if (profile.autostart) const MiniPill('Autostart', 'yes'),
                 if (ports.isNotEmpty) MiniPill('Ports', ports.join(', ')),
               ],
@@ -146,7 +146,7 @@ class _ProjectRuntimeSectionState extends State<ProjectRuntimeSection> {
                 OutlinedButton.icon(
                   onPressed: profile.capsuleEnabled && !_checkingCapsule
                       ? () => _runRuntimeAction(
-                          label: 'Capsule',
+                          label: 'Protocol preflight',
                           busy: 'capsule',
                           body: () =>
                               state.runProjectRuntimeCapsule(widget.projectId),
@@ -160,7 +160,7 @@ class _ProjectRuntimeSectionState extends State<ProjectRuntimeSection> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.health_and_safety_outlined, size: 16),
-                  label: const Text('Capsule'),
+                  label: const Text('Preflight'),
                 ),
                 OutlinedButton.icon(
                   onPressed: widget.onEdit,
@@ -328,7 +328,7 @@ class _RuntimeRunHistoryState extends State<_RuntimeRunHistory> {
                 ),
                 subtitle: Text(
                   '${compactDateTime(run.startedAt)}'
-                  '${run.capsuleStatus == null ? '' : ' - capsule ${run.capsuleStatus}'}',
+                  '${run.capsuleStatus == null ? '' : ' - preflight ${run.capsuleStatus}'}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -362,13 +362,14 @@ class RuntimeRunDialog extends StatelessWidget {
       'Started: ${compactDateTime(run.startedAt)}',
       if (run.completedAt != null)
         'Completed: ${compactDateTime(run.completedAt)}',
-      if ((run.capsuleStatus ?? '').isNotEmpty) 'Capsule: ${run.capsuleStatus}',
+      if ((run.capsuleStatus ?? '').isNotEmpty)
+        'Protocol preflight: ${run.capsuleStatus}',
       if ((run.command ?? '').isNotEmpty) 'Command: ${run.command}',
       if (run.exitCode != null) 'Exit code: ${run.exitCode}',
       if ((run.outputText ?? '').isNotEmpty) '\nOutput:\n${run.outputText}',
       if ((run.errorText ?? '').isNotEmpty) '\nError:\n${run.errorText}',
       if ((run.capsuleOutputText ?? '').isNotEmpty)
-        '\nCapsule output:\n${run.capsuleOutputText}',
+        '\nProtocol preflight output:\n${run.capsuleOutputText}',
     ].join('\n');
     return AlertDialog(
       title: Text('$label result'),
@@ -419,14 +420,14 @@ Color latestRuntimeRunColor(
 String runtimeActionLabel(String action) => switch (action) {
   'launch' => 'Launch',
   'test' => 'Test',
-  'capsule' => 'Capsule',
+  'capsule' => 'Protocol preflight',
   _ => action,
 };
 
 String runtimeRunMessage(String label, ProjectRuntimeRun run) {
   final capsule = (run.capsuleStatus ?? '').isEmpty
       ? ''
-      : ' Capsule: ${run.capsuleStatus}.';
+      : ' Protocol preflight: ${run.capsuleStatus}.';
   if (run.status == 'started') return '$label started.$capsule';
   if (run.status == 'succeeded') return '$label succeeded.$capsule';
   return '$label ${run.status}.$capsule';

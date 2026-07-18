@@ -1577,6 +1577,7 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Stream<List<Draft>> watchDrafts() => db.watchDrafts();
+  Future<List<Draft>> getDrafts() => db.getDrafts();
   Future<Draft?> getDraft(String id) => db.getDraft(id);
 
   Future<String> saveDraft({
@@ -9249,7 +9250,7 @@ class AppState extends ChangeNotifier {
       project.id,
       limit: 50,
     )).where((task) => !{'completed', 'cancelled'}.contains(task.status));
-    final proposals = (await db.watchDrafts().first)
+    final proposals = (await db.getDrafts())
         .where(_isPendingAgentProposalDraft)
         .where((draft) => draft.projectId == project.id)
         .take(25)

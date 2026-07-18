@@ -707,8 +707,8 @@ class AtlasAgentService {
             .map(_planningCardDigest)
             .toList(growable: false),
       },
-      safeConstraints: _safePlanningConstraints(),
-      verification: _planningVerification(validation, workload),
+      safeConstraints: safePlanningConstraints(),
+      verification: planningVerification(validation, workload),
       recentEvidence: _planningRecentEvidence(
         status: status,
         capsule: capsule,
@@ -1090,7 +1090,7 @@ class AtlasAgentService {
   }
 
   Future<List<Draft>> listRecentAgentProposals({int limit = 50}) async {
-    final drafts = await state.watchDrafts().first;
+    final drafts = await state.getDrafts();
     return drafts
         .where((draft) => draft.kind == proposalDraftKind)
         .take(limit)
@@ -2007,7 +2007,7 @@ class AtlasAgentService {
     };
   }
 
-  static Map<String, Object?> _safePlanningConstraints() => {
+  static Map<String, Object?> safePlanningConstraints() => {
     'humanFinal': true,
     'noDirectFileMutationByChatGPT': true,
     'noRemoteWriteTools': true,
@@ -2043,7 +2043,7 @@ class AtlasAgentService {
     'showInMainWorkboard': card.showInMainWorkboard,
   };
 
-  static Map<String, Object?> _planningVerification(
+  static Map<String, Object?> planningVerification(
     Object? validation,
     WorkloadSnapshot workload,
   ) {

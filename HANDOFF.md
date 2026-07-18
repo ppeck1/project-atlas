@@ -20,6 +20,14 @@ Last updated: 2026-07-18.
   soft delete with undo and deferred purge) with Project Sources,
   reconciliation preview, local/remote source roles, and Atlas-only source
   bookkeeping updates
+- Capsule Resume is the fourth primary navigation surface. It derives Act,
+  Understand, and Audit views from one versioned project snapshot; Operations
+  remains available at `/operations` as Sources & Health.
+- The Capsule projection is read-only and proposal-first. It does not change
+  the schema, acceptance authority, or remote MCP disclosure policy.
+- Reactive tag and LLM-queue consumers are stream-backed, exact navigation and
+  keyboard behavior are covered by tests, project-detail decomposition is in
+  progress, and shared design colors use the normalized Atlas token layer.
 
 ## Portfolio maintenance invariants
 
@@ -54,8 +62,8 @@ Use an ignored local directory whose name includes `portfolio-capture`.
    python tools\seed_portfolio_capture.py --db <ignored-capture-database>
    ```
 
-4. Relaunch the same build and capture the Today, Projects, Workboard, and
-   Library surfaces.
+4. Relaunch the same build and capture the Today, Projects, Workboard, Capsule,
+   and Library surfaces.
 5. If another installed or development Atlas instance is running, give the
    capture executable a unique local filename before launch so Windows cannot
    resolve the wrong build.
@@ -95,6 +103,8 @@ For public changes, also verify:
   owns screen lifecycle and orchestration; its task header and AI summary
   presentation live in `lib/features/projects/detail/` with typed view models
   and action bundles.
+- Capsule product sequence: `docs/CAPSULE_PRODUCT_PLAN.md`
+- Capsule contract and projection: `lib/services/project_capsule_service.dart`
 - Design tokens: `lib/shared/theme/atlas_colors.dart`
   (`ThemeExtension<AtlasColors>`, registered in `lib/app/theme.dart`)
 - App-level keyboard shortcuts: `lib/shared/widgets/atlas_shortcuts.dart`
@@ -114,6 +124,9 @@ For public changes, also verify:
   profile switch.
 - Historical Git objects are not rewritten by normal public-tree cleanup.
 - Compatibility reads do not rename or modify linked project files.
+- Capsule Resume is currently a derived, read-only resumption surface. Editable
+  accepted/proposed fields, workflow templates, and outcome instrumentation are
+  future product slices rather than implied current behavior.
 - The Today screen's midnight rollover uses a wall-clock `Timer`; wall-clock
   timers do not reliably survive OS sleep/resume, so the date header may lag
   until the next rebuild after a resume.

@@ -2048,6 +2048,9 @@ class AppDb extends _$AppDb {
     drafts,
   )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
 
+  Future<List<Draft>> getDrafts() =>
+      (select(drafts)..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).get();
+
   Future<String> saveDraft({
     required String kind,
     required String title,
