@@ -20,6 +20,7 @@ import 'detail/local_repo_section.dart';
 import 'detail/project_change_log_section.dart';
 import 'detail/project_closure_section.dart';
 import 'detail/project_command_toolbar.dart';
+import 'detail/project_ai_panel.dart';
 import 'detail/project_decisions_section.dart';
 import 'detail/project_delete_dialog.dart';
 import 'detail/project_detail_atoms.dart';
@@ -30,9 +31,9 @@ import 'detail/project_quick_bar.dart';
 import 'detail/project_risks_section.dart';
 import 'detail/project_runtime_section.dart';
 import 'detail/project_tags_section.dart';
+import 'detail/project_task_header_panel.dart';
 import 'detail/project_work_section.dart';
 import 'detail/shopify_seo_section.dart';
-import 'detail/summary_run_provenance.dart';
 import 'project_metadata_dialog.dart';
 import '../today/work_item_detail_sheet.dart';
 import '../work/status_priority_helpers.dart';
@@ -205,13 +206,17 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     try {
       risks = await state.getProjectRisks(widget.projectId);
     } catch (e) {
-      debugPrint('[Atlas] _loadProjectDetail: getProjectRisks failed (continuing with cached): $e');
+      debugPrint(
+        '[Atlas] _loadProjectDetail: getProjectRisks failed (continuing with cached): $e',
+      );
     }
     List<ProjectDecision> decisions = _decisions;
     try {
       decisions = await state.getProjectDecisions(widget.projectId);
     } catch (e) {
-      debugPrint('[Atlas] _loadProjectDetail: getProjectDecisions failed (continuing with cached): $e');
+      debugPrint(
+        '[Atlas] _loadProjectDetail: getProjectDecisions failed (continuing with cached): $e',
+      );
     }
     final summarySettings = await state.loadProjectAiSummarySettings();
     final sectionVisibility = await state.loadProjectDetailSectionVisibility(
@@ -226,7 +231,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
           widget.projectId,
         );
       } catch (e) {
-        debugPrint('[Atlas] _loadProjectDetail: getLatestProjectSummaryDraft failed (continuing without cached draft): $e');
+        debugPrint(
+          '[Atlas] _loadProjectDetail: getLatestProjectSummaryDraft failed (continuing without cached draft): $e',
+        );
       }
     }
 
@@ -291,7 +298,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
         _summaryEvidenceLoading = false;
       });
     } catch (e) {
-      debugPrint('[Atlas] _loadSummaryEvidence: buildProjectSummaryEvidencePacket failed: $e');
+      debugPrint(
+        '[Atlas] _loadSummaryEvidence: buildProjectSummaryEvidencePacket failed: $e',
+      );
       if (!mounted) return;
       setState(() => _summaryEvidenceLoading = false);
     }
@@ -506,8 +515,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                     final item = items[index];
                     return ListTile(
                       leading: Icon(
-                        _llmQueueIcon(item.status),
-                        color: _llmQueueColor(item.status),
+                        llmQueueIcon(item.status),
+                        color: llmQueueColor(context, item.status),
                       ),
                       title: Text(
                         item.title,
@@ -1109,44 +1118,49 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
               const SizedBox(height: 8),
               StreamBuilder<List<LlmTaskQueueItem>>(
                 stream: _llmQueue,
-                builder: (context, llmSnap) => _ProjectTaskHeaderPanel(
-                  projectId: widget.projectId,
+                builder: (context, llmSnap) => ProjectTaskHeaderPanel(
                   items: _workItems,
                   llmQueueItems: llmSnap.data ?? const [],
                   expanded: _taskHeaderExpanded,
                   onToggle: () => setState(
                     () => _taskHeaderExpanded = !_taskHeaderExpanded,
                   ),
-                  onAddProjectTask: () => _addProjectTask(context),
-                  onAddLlmTask: () => _showCreateLlmTaskDialog(context),
-                  onOpenWorkboard: () =>
-                      _openProjectWorkboard(context, project),
-                  onRefresh: _loadAll,
-                  onOpenTask: (item) async {
-                    await showWorkItemDetailSheet(context, item.id);
-                    await _loadAll();
-                  },
-                  onOpenLlmTask: (item) =>
-                      _showEditLlmTaskDialog(context, item),
-                  onManageLlmTasks: () => _showLlmQueueManagerDialog(context),
+                  actions: ProjectTaskHeaderActions(
+                    onAddProjectTask: () => _addProjectTask(context),
+                    onAddLlmTask: () => _showCreateLlmTaskDialog(context),
+                    onOpenWorkboard: () =>
+                        _openProjectWorkboard(context, project),
+                    onRefresh: _loadAll,
+                    onOpenTask: (item) async {
+                      await showWorkItemDetailSheet(context, item.id);
+                      await _loadAll();
+                    },
+                    onOpenLlmTask: (item) =>
+                        _showEditLlmTaskDialog(context, item),
+                    onManageLlmTasks: () => _showLlmQueueManagerDialog(context),
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
 
               if (state.projectAiSummariesEnabled) ...[
-                _AiPanel(
-                  projectId: widget.projectId,
-                  expanded: _aiExpanded,
-                  includeLibrary: _includeLibrary,
-                  summaryLoading: _summaryLoading,
-                  summaryText: _summaryText,
-                  summaryOutcome: _summaryOutcome,
-                  generatedAt: _summaryGeneratedAt,
-                  evidencePacket: _summaryEvidencePacket,
-                  evidenceLoading: _summaryEvidenceLoading,
-                  onToggle: () => setState(() => _aiExpanded = !_aiExpanded),
-                  onToggleLibrary: _setIncludeLibrary,
-                  onGenerate: _generateSummary,
+                ProjectAiPanel(
+                  model: ProjectAiPanelModel(
+                    projectId: widget.projectId,
+                    expanded: _aiExpanded,
+                    includeLibrary: _includeLibrary,
+                    summaryLoading: _summaryLoading,
+                    summaryText: _summaryText,
+                    summaryOutcome: _summaryOutcome,
+                    generatedAt: _summaryGeneratedAt,
+                    evidencePacket: _summaryEvidencePacket,
+                    evidenceLoading: _summaryEvidenceLoading,
+                  ),
+                  actions: ProjectAiPanelActions(
+                    onToggle: () => setState(() => _aiExpanded = !_aiExpanded),
+                    onToggleLibrary: _setIncludeLibrary,
+                    onGenerate: _generateSummary,
+                  ),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -2762,1057 +2776,6 @@ class _StatusDot extends StatelessWidget {
       width: 12,
       height: 12,
       decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-    );
-  }
-}
-
-class _ProjectTaskHeaderPanel extends StatelessWidget {
-  final String projectId;
-  final List<WorkItem> items;
-  final List<LlmTaskQueueItem> llmQueueItems;
-  final bool expanded;
-  final VoidCallback onToggle;
-  final Future<void> Function() onAddProjectTask;
-  final Future<void> Function() onAddLlmTask;
-  final VoidCallback onOpenWorkboard;
-  final Future<void> Function() onRefresh;
-  final Future<void> Function(WorkItem item) onOpenTask;
-  final Future<void> Function(LlmTaskQueueItem item) onOpenLlmTask;
-  final Future<void> Function() onManageLlmTasks;
-
-  const _ProjectTaskHeaderPanel({
-    required this.projectId,
-    required this.items,
-    required this.llmQueueItems,
-    required this.expanded,
-    required this.onToggle,
-    required this.onAddProjectTask,
-    required this.onAddLlmTask,
-    required this.onOpenWorkboard,
-    required this.onRefresh,
-    required this.onOpenTask,
-    required this.onOpenLlmTask,
-    required this.onManageLlmTasks,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final active = items
-        .where((item) => !['done', 'archived'].contains(item.status))
-        .toList(growable: false);
-    final pendingQueue = llmQueueItems
-        .where((item) => item.status == 'pending' || item.status == 'leased')
-        .toList(growable: false);
-    return Container(
-      decoration: BoxDecoration(
-        color: _kPanel,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _kLine),
-      ),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: onToggle,
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              child: Row(
-                children: [
-                  Icon(
-                    expanded ? Icons.expand_less : Icons.expand_more,
-                    color: Colors.white70,
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Tasks',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ),
-                  MiniPill('Project', '${active.length}'),
-                  const SizedBox(width: 6),
-                  MiniPill('LLM', '${pendingQueue.length}'),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: 'Refresh',
-                    icon: const Icon(Icons.refresh, size: 18),
-                    onPressed: onRefresh,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (expanded) ...[
-            const Divider(height: 1, color: _kLine),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final wide = constraints.maxWidth >= 760;
-                  final sections = [
-                    _ProjectTaskHeaderSubsection(
-                      title: 'Project tasks',
-                      icon: Icons.task_alt,
-                      actionIcon: Icons.add,
-                      actionLabel: 'Add task',
-                      onAction: onAddProjectTask,
-                      child: _TaskHeaderProjectList(
-                        items: active,
-                        onOpenTask: onOpenTask,
-                        onOpenWorkboard: onOpenWorkboard,
-                      ),
-                    ),
-                    _ProjectTaskHeaderSubsection(
-                      title: 'LLM queue',
-                      icon: Icons.memory,
-                      actionIcon: Icons.add_task,
-                      actionLabel: 'Queue task',
-                      onAction: onAddLlmTask,
-                      child: _TaskHeaderLlmQueueList(
-                        items: llmQueueItems,
-                        onOpenTask: onOpenLlmTask,
-                        onShowAll: onManageLlmTasks,
-                      ),
-                    ),
-                  ];
-                  if (wide) {
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: sections[0]),
-                        const SizedBox(width: 12),
-                        Expanded(child: sections[1]),
-                      ],
-                    );
-                  }
-                  return Column(
-                    children: [
-                      sections[0],
-                      const SizedBox(height: 12),
-                      sections[1],
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ProjectTaskHeaderSubsection extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final IconData actionIcon;
-  final String actionLabel;
-  final Future<void> Function() onAction;
-  final Widget child;
-
-  const _ProjectTaskHeaderSubsection({
-    required this.title,
-    required this.icon,
-    required this.actionIcon,
-    required this.actionLabel,
-    required this.onAction,
-    required this.child,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white.withAlpha(7),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _kLine),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: _kPrimary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-              TextButton.icon(
-                onPressed: onAction,
-                icon: Icon(actionIcon, size: 16),
-                label: Text(actionLabel),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _TaskHeaderProjectList extends StatelessWidget {
-  final List<WorkItem> items;
-  final Future<void> Function(WorkItem item) onOpenTask;
-  final VoidCallback onOpenWorkboard;
-
-  const _TaskHeaderProjectList({
-    required this.items,
-    required this.onOpenTask,
-    required this.onOpenWorkboard,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (items.isEmpty) {
-      return const Text(
-        'No open project tasks.',
-        style: TextStyle(color: Colors.white38),
-      );
-    }
-    final visible = items.take(5).toList(growable: false);
-    return Column(
-      children: [
-        for (final item in visible)
-          _TaskHeaderRow(
-            icon: statusFor(item.status).icon,
-            iconColor: statusFor(item.status).color,
-            title: item.title,
-            subtitle: [
-              normalizeStatusValue(item.status),
-              normalizePriorityValue(item.priority),
-              if ((item.owner ?? '').trim().isNotEmpty) item.owner!.trim(),
-            ].join(' - '),
-            onTap: () => onOpenTask(item),
-          ),
-        if (items.length > visible.length)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onOpenWorkboard,
-              icon: const Icon(Icons.view_kanban_outlined, size: 16),
-              label: Text('${items.length - visible.length} more'),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _TaskHeaderLlmQueueList extends StatelessWidget {
-  final List<LlmTaskQueueItem> items;
-  final Future<void> Function(LlmTaskQueueItem item) onOpenTask;
-  final Future<void> Function() onShowAll;
-
-  const _TaskHeaderLlmQueueList({
-    required this.items,
-    required this.onOpenTask,
-    required this.onShowAll,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (items.isEmpty) {
-      return const Text(
-        'No queued LLM tasks.',
-        style: TextStyle(color: Colors.white38),
-      );
-    }
-    final visible = items.take(5).toList(growable: false);
-    return Column(
-      children: [
-        for (final item in visible)
-          _TaskHeaderRow(
-            icon: _llmQueueIcon(item.status),
-            iconColor: _llmQueueColor(item.status),
-            title: item.title,
-            subtitle: '${item.status} - ${item.priority}',
-            onTap: () => onOpenTask(item),
-          ),
-        if (items.length > visible.length)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onShowAll,
-              icon: const Icon(Icons.list_alt, size: 16),
-              label: Text('${items.length - visible.length} more'),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _TaskHeaderRow extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final String title;
-  final String subtitle;
-  final Future<void> Function()? onTap;
-
-  const _TaskHeaderRow({
-    required this.icon,
-    required this.iconColor,
-    required this.title,
-    required this.subtitle,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: iconColor),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: Colors.white54),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-IconData _llmQueueIcon(String status) => switch (status) {
-  'leased' => Icons.play_circle_outline,
-  'completed' => Icons.check_circle_outline,
-  'failed' => Icons.error_outline,
-  'cancelled' => Icons.cancel_outlined,
-  _ => Icons.schedule,
-};
-
-Color _llmQueueColor(String status) => switch (status) {
-  'leased' => const Color(0xFF79A7FF),
-  'completed' => const Color(0xFF4CAF50),
-  'failed' => const Color(0xFFF44336),
-  'cancelled' => const Color(0xFF90A4AE),
-  _ => const Color(0xFFFFC107),
-};
-
-class _AiPanel extends StatelessWidget {
-  final String projectId;
-  final bool expanded;
-  final bool includeLibrary;
-  final bool summaryLoading;
-  final String? summaryText;
-  final ProjectSummaryOutcome? summaryOutcome;
-  final DateTime? generatedAt;
-  final ProjectSummaryEvidencePacket? evidencePacket;
-  final bool evidenceLoading;
-  final VoidCallback onToggle;
-  final ValueChanged<bool> onToggleLibrary;
-  final VoidCallback onGenerate;
-
-  const _AiPanel({
-    required this.projectId,
-    required this.expanded,
-    required this.includeLibrary,
-    required this.summaryLoading,
-    required this.summaryText,
-    required this.summaryOutcome,
-    required this.generatedAt,
-    required this.evidencePacket,
-    required this.evidenceLoading,
-    required this.onToggle,
-    required this.onToggleLibrary,
-    required this.onGenerate,
-  });
-
-  String _formatAge(DateTime dt) {
-    final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hasContent = summaryOutcome != null || summaryText != null;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF79A7FF).withAlpha(15),
-        border: Border.all(color: const Color(0xFF79A7FF).withAlpha(51)),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.psychology, size: 18, color: _kPrimary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Row(
-                  children: [
-                    const Text(
-                      'AI Project Assistant',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: _kPrimary,
-                        fontSize: 14,
-                      ),
-                    ),
-                    if (generatedAt != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        _formatAge(generatedAt!),
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: Colors.white24,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => onToggleLibrary(!includeLibrary),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: Checkbox(
-                            value: includeLibrary,
-                            onChanged: (v) => onToggleLibrary(v ?? false),
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        const Text(
-                          'Include Library',
-                          style: TextStyle(fontSize: 11, color: Colors.white38),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    onPressed: onToggle,
-                    icon: Icon(
-                      expanded ? Icons.expand_less : Icons.expand_more,
-                      color: Colors.white38,
-                    ),
-                    iconSize: 20,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          if (expanded) ...[
-            const SizedBox(height: 12),
-            _EvidencePacketPreview(
-              packet: evidencePacket,
-              loading: evidenceLoading,
-              includeLibrary: includeLibrary,
-            ),
-            const SizedBox(height: 12),
-            if (summaryLoading)
-              const Row(
-                children: [
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  SizedBox(width: 10),
-                  Text(
-                    'Generating…',
-                    style: TextStyle(fontSize: 13, color: Colors.white54),
-                  ),
-                ],
-              )
-            else if (!hasContent)
-              FilledButton.icon(
-                onPressed: onGenerate,
-                icon: const Icon(Icons.psychology, size: 16),
-                label: const Text('Generate Summary'),
-              )
-            else if (summaryOutcome?.hasStructured == true)
-              _StructuredSummaryView(
-                projectId: projectId,
-                result: summaryOutcome!.structured!,
-                documentPaths: summaryOutcome!.documentPaths,
-                onRegenerate: onGenerate,
-              )
-            else
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withAlpha(10),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      summaryText ?? summaryOutcome?.rawOutput ?? '',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Colors.white70,
-                        fontFamily: 'monospace',
-                        height: 1.6,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: onGenerate,
-                    icon: const Icon(Icons.refresh, size: 14),
-                    label: const Text('Regenerate'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: _kPrimary,
-                      padding: EdgeInsets.zero,
-                      textStyle: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ],
-              ),
-            const SizedBox(height: 12),
-            SummaryRunProvenance(projectId: projectId),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Structured summary renderer ─────────────────────────────────────────────
-
-class _EvidencePacketPreview extends StatelessWidget {
-  final ProjectSummaryEvidencePacket? packet;
-  final bool loading;
-  final bool includeLibrary;
-
-  const _EvidencePacketPreview({
-    required this.packet,
-    required this.loading,
-    required this.includeLibrary,
-  });
-
-  String _chars(int value) {
-    if (value >= 10000) return '${(value / 1000).round()}k';
-    if (value >= 1000) return '${(value / 1000).toStringAsFixed(1)}k';
-    return '$value';
-  }
-
-  String _categoryLabel(String? value) =>
-      (value == null || value.trim().isEmpty)
-      ? 'other'
-      : value.replaceAll('_', ' ');
-
-  @override
-  Widget build(BuildContext context) {
-    final currentPacket = packet;
-    final docs = currentPacket?.documents ?? const <ProjectSummaryContextDoc>[];
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white.withAlpha(6),
-        border: Border.all(color: _kLine),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.fact_check_outlined, size: 15, color: _kPrimary),
-              const SizedBox(width: 6),
-              const Expanded(
-                child: Text(
-                  'Evidence packet',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white70,
-                  ),
-                ),
-              ),
-              if (loading)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else if (currentPacket != null)
-                Wrap(
-                  spacing: 6,
-                  children: [
-                    MiniPill(
-                      'Docs',
-                      '${currentPacket.includedDocumentCount}/${currentPacket.suppliedDocumentCount}',
-                    ),
-                    MiniPill(
-                      'Excerpt',
-                      _chars(currentPacket.totalExcerptChars),
-                    ),
-                  ],
-                ),
-            ],
-          ),
-          if (!loading) ...[
-            const SizedBox(height: 8),
-            if (currentPacket == null)
-              const Text(
-                'No packet loaded.',
-                style: TextStyle(fontSize: 12, color: Colors.white38),
-              )
-            else if (!includeLibrary)
-              Text(
-                'Library disabled (${currentPacket.suppliedDocumentCount} linked document${currentPacket.suppliedDocumentCount == 1 ? '' : 's'} available).',
-                style: const TextStyle(fontSize: 12, color: Colors.white54),
-              )
-            else if (docs.isEmpty)
-              const Text(
-                'No linked Library documents.',
-                style: TextStyle(fontSize: 12, color: Colors.white54),
-              )
-            else ...[
-              if (currentPacket.warnings.isNotEmpty) ...[
-                ...currentPacket.warnings
-                    .take(3)
-                    .map(
-                      (warning) => Padding(
-                        padding: const EdgeInsets.only(bottom: 5),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Icon(
-                              Icons.warning_amber_rounded,
-                              size: 13,
-                              color: Colors.amberAccent,
-                            ),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                warning,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white54,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                if (currentPacket.warnings.length > 3)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
-                    child: Text(
-                      '+${currentPacket.warnings.length - 3} more warning(s)',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: Colors.white38,
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 2),
-              ],
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: docs.take(6).map((doc) {
-                  final reason = doc.selectionReason ?? 'linked document';
-                  final category = _categoryLabel(doc.evidenceCategory);
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: 30,
-                          child: Text(
-                            '#${doc.rank ?? '-'}',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.white38,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                doc.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.white70,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                '$category - $reason - ${_chars(doc.excerptChars)} chars',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white38,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _StructuredSummaryView extends StatelessWidget {
-  final String projectId;
-  final ProjectSummaryResult result;
-  final Map<String, String?> documentPaths;
-  final VoidCallback onRegenerate;
-
-  const _StructuredSummaryView({
-    required this.projectId,
-    required this.result,
-    required this.documentPaths,
-    required this.onRegenerate,
-  });
-
-  static const _head = TextStyle(
-    fontSize: 12,
-    fontWeight: FontWeight.w700,
-    color: _kPrimary,
-    letterSpacing: 0.5,
-  );
-  static const _body = TextStyle(
-    fontSize: 13,
-    color: Color(0xDEFFFFFF),
-    height: 1.55,
-  );
-  static const _sub = TextStyle(
-    fontSize: 12,
-    color: Color(0x8AFFFFFF),
-    height: 1.5,
-  );
-
-  Widget _section(String title, Widget child) => Padding(
-    padding: const EdgeInsets.only(bottom: 14),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title.toUpperCase(), style: _head),
-        const SizedBox(height: 6),
-        child,
-      ],
-    ),
-  );
-
-  Widget _bullets(List<String> items) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: items
-        .map(
-          (t) => Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('• ', style: TextStyle(color: Color(0x8AFFFFFF))),
-                Expanded(child: Text(t, style: _body)),
-              ],
-            ),
-          ),
-        )
-        .toList(),
-  );
-
-  Widget _numbered(List<String> items) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: List.generate(
-      items.length,
-      (i) => Padding(
-        padding: const EdgeInsets.only(bottom: 3),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 20,
-              child: Text(
-                '${i + 1}.',
-                style: const TextStyle(color: Color(0x8AFFFFFF)),
-              ),
-            ),
-            Expanded(child: Text(items[i], style: _body)),
-          ],
-        ),
-      ),
-    ),
-  );
-
-  Future<void> _openInExplorer(BuildContext context, String path) async {
-    try {
-      // /select, highlights the file in Explorer on Windows
-      await Process.start('explorer.exe', ['/select,', path]);
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Could not open Explorer: $e')));
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = result;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withAlpha(8),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF79A7FF).withAlpha(30)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Goal
-          if (s.goal.isNotEmpty) _section('Goal', _bullets(s.goal)),
-
-          // Current State
-          if (s.currentState.isNotEmpty)
-            _section('Current State', Text(s.currentState, style: _body)),
-
-          // Ownership
-          if (s.ownership.isNotEmpty)
-            _section(
-              'Ownership / Active Work',
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: s.ownership
-                    .map(
-                      (o) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              o.person,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xDEFFFFFF),
-                              ),
-                            ),
-                            ...o.work.map(
-                              (w) => Padding(
-                                padding: const EdgeInsets.only(
-                                  left: 12,
-                                  top: 2,
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      '– ',
-                                      style: TextStyle(
-                                        color: Color(0x8AFFFFFF),
-                                      ),
-                                    ),
-                                    Expanded(child: Text(w, style: _sub)),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            if (o.basis != null)
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                  left: 12,
-                                  top: 2,
-                                ),
-                                child: Text(
-                                  'Basis: ${o.basis}',
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Color(0x61FFFFFF),
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
-            ),
-
-          // Relevant Library Docs
-          if (s.relevantDocuments.isNotEmpty)
-            _section(
-              'Relevant Library Docs',
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: s.relevantDocuments.map((doc) {
-                  final storedPath = documentPaths[doc.documentId];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          doc.title,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xDEFFFFFF),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(doc.reason, style: _sub),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 8,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: () {
-                                context.go(
-                                  libraryRouteForProject(
-                                    projectId,
-                                    entryType: 'document',
-                                    entryId: doc.documentId,
-                                  ),
-                                );
-                              },
-                              icon: const Icon(Icons.library_books, size: 13),
-                              label: const Text('Open in Library'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: _kPrimary,
-                                side: BorderSide(
-                                  color: _kPrimary.withAlpha(80),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 4,
-                                ),
-                                textStyle: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                            if (storedPath != null && storedPath.isNotEmpty)
-                              OutlinedButton.icon(
-                                onPressed: () =>
-                                    _openInExplorer(context, storedPath),
-                                icon: const Icon(Icons.folder_open, size: 13),
-                                label: const Text('Show in Explorer'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0x8AFFFFFF),
-                                  side: BorderSide(
-                                    color: const Color(
-                                      0xFF273044,
-                                    ).withAlpha(200),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 4,
-                                  ),
-                                  textStyle: const TextStyle(fontSize: 12),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-
-          // Blockers / Risks
-          if (s.blockersAndRisks.isNotEmpty)
-            _section('Blockers / Risks', _bullets(s.blockersAndRisks)),
-
-          // Next Actions
-          if (s.nextActions.isNotEmpty)
-            _section('Next Practical Actions', _numbered(s.nextActions)),
-
-          // Confidence / Gaps
-          if (s.confidence.isNotEmpty)
-            _section(
-              'Confidence / Gaps',
-              Text(
-                s.confidence,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0x61FFFFFF),
-                  fontStyle: FontStyle.italic,
-                  height: 1.5,
-                ),
-              ),
-            ),
-
-          // Regenerate
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: onRegenerate,
-              icon: const Icon(Icons.refresh, size: 14),
-              label: const Text('Regenerate'),
-              style: TextButton.styleFrom(
-                foregroundColor: _kPrimary,
-                padding: EdgeInsets.zero,
-                textStyle: const TextStyle(fontSize: 12),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
