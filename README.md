@@ -1,7 +1,7 @@
 # Project Atlas
 
-**A local-first Windows command center for planning, project health, documents,
-runtime operations, and review-gated AI assistance.**
+**A local-first Windows command center for resuming projects, choosing the next
+justified action, and collaborating with review-gated AI.**
 
 Project Atlas is a Flutter desktop application backed by Drift and SQLite. I
 built it to make complex project work legible without moving the working record
@@ -21,7 +21,7 @@ same navigation, source-topology, and theme surfaces described below.
 
 | Area | What this repository demonstrates |
 |---|---|
-| Product design | One desktop workflow spanning Today, Workboard, Projects, Operations, Library, Review, and Settings |
+| Product design | One desktop workflow spanning Capsule, Today, Workboard, Projects, Sources & Health, Library, Review, and Settings |
 | Desktop engineering | Flutter for Windows, responsive information-dense surfaces, navigation, dialogs, and long-lived local state |
 | Data integrity | Drift/SQLite persistence, schema migrations, timestamp contracts, linked sources, documents, and repository-style queries |
 | Governed automation | Operator-defined runtime actions, proposal-first AI writes, leases, review drafts, and auditable outcomes |
@@ -29,6 +29,18 @@ same navigation, source-topology, and theme surfaces described below.
 | Delivery discipline | Automated analysis, unit/widget/policy tests, Windows release builds, artifact scanning, and MCP smoke coverage |
 
 ## Product surfaces
+
+### Resume from accepted project truth
+
+Capsule brings intent, accepted state, current work, decisions, risks, evidence
+posture, and the recommended next action into one progressive-disclosure
+surface. Its Act, Understand, and Audit views share one live snapshot revision,
+while the authored project contract has a separate accepted revision.
+
+Humans can edit the authored contract, inspect every changed field, and then
+explicitly save it as accepted truth. Atlas appends immutable revision history
+and rejects stale saves. Agent-originated changes continue through the proposal
+review queue; they cannot silently become accepted state.
 
 ### Plan the day without losing project context
 
@@ -46,12 +58,12 @@ first-class planning fields rather than free-form conventions.
 
 ![Project Atlas Workboard screen](docs/screenshots/workboard.jpg)
 
-### Reconcile project sources before refreshing evidence
+### Reconcile sources before refreshing evidence
 
-Operations separates canonical Atlas projects from the source rows that support
-them. Source topology chips make local working folders, legacy remote URLs,
-ignored rows, and unresolved authority visible before a refresh can change
-Atlas bookkeeping.
+The secondary Sources & Health surface separates canonical Atlas projects from
+the source rows that support them. Source topology chips make local working
+folders, legacy remote URLs, ignored rows, and unresolved authority visible
+before a refresh can change Atlas bookkeeping.
 
 ![Project Atlas Operations Project Sources screen](docs/screenshots/operations-project-sources.jpg)
 
@@ -67,6 +79,9 @@ available without turning a project brief into an untraceable summary.
 
 - A project model with outcomes, scope, phases, priorities, risks, decisions,
   people, tags, media, and linked evidence.
+- A versioned Project Capsule with reviewed human edits, immutable accepted
+  history, stale-write protection, and distinct live-snapshot and truth
+  revisions.
 - A workload model that distinguishes execution-ready work from blocked,
   stale, review-dependent, and decision-dependent items.
 - Project discovery and health review with shallow scans, candidate triage,

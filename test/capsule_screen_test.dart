@@ -131,6 +131,219 @@ void main() {
     await tester.pump(const Duration(minutes: 1));
   });
 
+  testWidgets('reviews and saves accepted truth with immutable history', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+    await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+    await state.updateProjectMeta('atlas', {
+      'desiredOutcome': 'Resume the existing project.',
+      'phase': 'build',
+    });
+
+    await tester.pumpWidget(_harness(state));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('Understand'));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('capsule-edit-truth')));
+    await _pumpFrames(tester);
+
+    final titleField = find.byKey(const Key('capsule-edit-title'));
+    await tester.ensureVisible(titleField);
+    await tester.enterText(titleField, '');
+    await tester.tap(find.byKey(const Key('capsule-review-changes')));
+    await _pumpFrames(tester);
+    expect(find.text('Project title is required.'), findsOneWidget);
+    expect(find.byKey(const Key('capsule-truth-review-diff')), findsNothing);
+    await tester.enterText(titleField, 'Project Atlas');
+
+    final outcomeField = find.byKey(const Key('capsule-edit-desired-outcome'));
+    await tester.ensureVisible(outcomeField);
+    await tester.enterText(
+      outcomeField,
+      'Resume and delegate without reconstructing context.',
+    );
+    await tester.tap(find.byKey(const Key('capsule-review-changes')));
+    await _pumpFrames(tester);
+
+    expect(
+      find.textContaining('Current: Resume the existing project.'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Proposed: Resume and delegate without reconstructing context.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      (await db.getProjectFull('atlas'))!.desiredOutcome,
+      'Resume the existing project.',
+    );
+
+    await tester.tap(find.byKey(const Key('capsule-save-accepted')));
+    await _pumpFrames(tester);
+    expect(
+      (await db.getProjectFull('atlas'))!.desiredOutcome,
+      'Resume and delegate without reconstructing context.',
+    );
+    expect(await state.getProjectCapsuleRevisions('atlas'), hasLength(3));
+
+    await tester.tap(find.text('Understand'));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('capsule-truth-history')));
+    await _pumpFrames(tester);
+    expect(find.text('Accepted truth history'), findsOneWidget);
+    expect(find.text('Truth revision 3'), findsOneWidget);
+    expect(find.text('Current head'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 1));
+  });
+
+  testWidgets('saving one truth field preserves hidden legacy path metadata', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+    await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+    await db.updateProjectMeta('atlas', {
+      'description': 'Human-authored context.\nLocal path: C:\\private\\atlas',
+      'desiredOutcome': 'Resume the existing project.',
+      'scopeIncluded': 'Local project root: C:\\private\\atlas',
+    });
+
+    await tester.pumpWidget(_harness(state));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('Understand'));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('capsule-edit-truth')));
+    await _pumpFrames(tester);
+
+    final outcomeField = find.byKey(const Key('capsule-edit-desired-outcome'));
+    await tester.ensureVisible(outcomeField);
+    await tester.enterText(
+      outcomeField,
+      'Resume without reconstructing context.',
+    );
+    await tester.tap(find.byKey(const Key('capsule-review-changes')));
+    await _pumpFrames(tester);
+    expect(find.textContaining('Local path:'), findsNothing);
+    expect(find.textContaining('Local project root:'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('capsule-save-accepted')));
+    await _pumpFrames(tester);
+
+    final project = await db.getProjectFull('atlas');
+    expect(project!.description, contains('Local path: C:\\private\\atlas'));
+    expect(
+      project.scopeIncluded,
+      contains('Local project root: C:\\private\\atlas'),
+    );
+    expect(project.desiredOutcome, 'Resume without reconstructing context.');
+    final revisions = await state.getProjectCapsuleRevisions('atlas');
+    expect(revisions.first.changedFields.keys, ['desiredOutcome']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 1));
+  });
+
+  testWidgets('history distinguishes an unrecorded current truth', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+    await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+    await db.updateProjectMeta('atlas', {
+      'desiredOutcome': 'A low-level unrecorded fixture change.',
+    });
+
+    await tester.pumpWidget(_harness(state));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('Understand'));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('capsule-truth-history')));
+    await _pumpFrames(tester);
+
+    expect(find.text('Latest recorded'), findsOneWidget);
+    expect(find.text('Current head'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 1));
+  });
+
+  testWidgets('stale edit keeps typed input and leaves newer truth intact', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+    await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+    await state.updateProjectMeta('atlas', {
+      'desiredOutcome': 'Initial accepted outcome.',
+    });
+
+    await tester.pumpWidget(_harness(state));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('Understand'));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('capsule-edit-truth')));
+    await _pumpFrames(tester);
+    final outcomeField = find.byKey(const Key('capsule-edit-desired-outcome'));
+    await tester.ensureVisible(outcomeField);
+    await tester.enterText(outcomeField, 'Keep my unsaved edit.');
+
+    await state.updateProjectMeta('atlas', {
+      'desiredOutcome': 'A newer accepted outcome.',
+    });
+    await tester.tap(find.byKey(const Key('capsule-review-changes')));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('capsule-save-accepted')));
+    await _pumpFrames(tester);
+
+    expect(
+      find.textContaining('Accepted truth changed while this editor was open'),
+      findsOneWidget,
+    );
+    expect(
+      (await db.getProjectFull('atlas'))!.desiredOutcome,
+      'A newer accepted outcome.',
+    );
+    await tester.tap(find.text('Back to edit'));
+    await _pumpFrames(tester);
+    expect(
+      tester.widget<TextField>(outcomeField).controller!.text,
+      'Keep my unsaved edit.',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 1));
+  });
+
   testWidgets('shows an explicit empty state', (tester) async {
     final db = AppDb.withExecutor(NativeDatabase.memory());
     final state = AppState(db, enableBackgroundSummaryRefresh: false);

@@ -7,10 +7,10 @@ import 'package:project_atlas/db/app_db.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 
 /// Simulates a real schema-22 database (documents table without deleted_at)
-/// and verifies the v23 upgrade adds the column while preserving rows.
+/// and verifies the current upgrade applies v23 soft delete while preserving rows.
 /// Follows the on-disk rewrite pattern from timestamp_unit_contract_test.
 void main() {
-  test('v22 database gains documents.deleted_at on upgrade to v23', () async {
+  test('v22 database gains documents.deleted_at on upgrade to v24', () async {
     final temp = await Directory.systemTemp.createTemp('atlas_schema23_');
     final path = p.join(temp.path, 'migration.sqlite');
     try {
@@ -82,7 +82,7 @@ void main() {
             .map((row) => row['name'] as String)
             .toList();
         expect(columns, contains('deleted_at'));
-        expect(after.userVersion, 23);
+        expect(after.userVersion, 24);
         expect(after.select('PRAGMA quick_check').first.values.first, 'ok');
       } finally {
         after.dispose();

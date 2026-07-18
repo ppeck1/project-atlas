@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/services/atlas_agent_service.dart';
 import 'package:project_atlas/services/project_capsule_service.dart';
+import 'package:project_atlas/services/project_capsule_truth_service.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
 
 void main() {
@@ -20,6 +21,7 @@ void main() {
       state = AppState(db, enableBackgroundSummaryRefresh: false);
       service = ProjectCapsuleService(
         AtlasAgentProjectCapsuleSource(AtlasAgentService(state)),
+        truthService: ProjectCapsuleTruthService(db),
         now: () => DateTime.utc(2026, 7, 17, 12),
       );
     });
@@ -38,6 +40,8 @@ void main() {
         expect(snapshot.schema, ProjectCapsuleSnapshot.schemaName);
         expect(snapshot.revisionId, startsWith('derived-'));
         expect(snapshot.contentHash, hasLength(64));
+        expect(snapshot.truthRevisionId, isNotEmpty);
+        expect(snapshot.truthRevisionCount, 1);
         expect(
           snapshot.intent['desiredOutcome'],
           'Resume without reconstruction.',
@@ -62,6 +66,7 @@ void main() {
           expect(view['revisionId'], snapshot.revisionId);
           expect(view['contentHash'], snapshot.contentHash);
           expect(view, contains('acceptanceBoundary'));
+          expect(view, contains('truthRevision'));
         }
         expect(act, contains('readyItems'));
         expect(act, isNot(contains('intent')));
@@ -132,6 +137,28 @@ void main() {
       final changed = (await service.buildSnapshot('atlas'))!;
       expect(changed.revisionId, isNot(first.revisionId));
     });
+
+    test(
+      'work changes snapshot revision without changing truth revision',
+      () async {
+        await _seed(state, db);
+        final first = (await service.buildSnapshot('atlas'))!;
+
+        await state.addWorkItemToProject(
+          'atlas',
+          'A new derived work item',
+          readiness: 'needs_decision',
+        );
+        final second = (await service.buildSnapshot('atlas'))!;
+
+        expect(second.revisionId, isNot(first.revisionId));
+        expect(second.truthRevisionId, first.truthRevisionId);
+        expect(
+          second.authoredTruth.contentHash,
+          first.authoredTruth.contentHash,
+        );
+      },
+    );
 
     test('freshness preflight takes precedence over execution', () async {
       await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));

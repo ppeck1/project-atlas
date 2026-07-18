@@ -32,6 +32,37 @@ class Projects extends Table {
   Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
 }
 
+// ---------------------------------------------------------------------------
+// Project Capsule accepted-truth history (v24)
+//
+// Projects remains the materialized current state. These rows are immutable
+// accepted revisions used for comparison, concurrency, and audit. Proposed
+// changes continue to use Drafts and never appear here before acceptance.
+// ---------------------------------------------------------------------------
+
+@DataClassName('ProjectCapsuleRevisionRow')
+class ProjectCapsuleRevisions extends Table {
+  TextColumn get id => text()();
+  TextColumn get projectId => text().references(Projects, #id)();
+  IntColumn get revisionNumber => integer()();
+  TextColumn get parentRevisionId => text().nullable()();
+  TextColumn get contentHash => text()();
+  TextColumn get truthJson => text()();
+  TextColumn get changedFieldsJson => text()();
+  TextColumn get actorType => text()();
+  TextColumn get actorLabel => text()();
+  TextColumn get sourceKind => text()();
+  TextColumn get sourceId => text().nullable()();
+  TextColumn get reason => text().nullable()();
+  DateTimeColumn get acceptedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id}; // ignore: override_on_non_overriding_member
+
+  @override
+  List<String> get customConstraints => ['UNIQUE(project_id, revision_number)'];
+}
+
 class AppMeta extends Table {
   TextColumn get key => text()();
   TextColumn get value => text()();

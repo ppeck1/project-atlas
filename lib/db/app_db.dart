@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../shared/models/project_metadata.dart';
+import '../shared/models/project_capsule_truth.dart';
 import 'document_extractor.dart';
 
 import 'db_open.dart';
@@ -752,6 +753,7 @@ String _normalizedProjectSourceIdentity({
 @DriftDatabase(
   tables: [
     Projects,
+    ProjectCapsuleRevisions,
     AppMeta,
     Stages,
     WorkItems,
@@ -815,7 +817,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 23;
+  int get schemaVersion => 24;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1031,6 +1033,24 @@ class AppDb extends _$AppDb {
           );
         }
       }
+      if (from < 24) {
+        try {
+          await m.createTable(projectCapsuleRevisions);
+        } catch (e) {
+          _logToleratedSchemaError(
+            'migration v24 createTable projectCapsuleRevisions',
+            e,
+          );
+        }
+        try {
+          await _backfillProjectCapsuleRevisionBaselines();
+        } catch (e) {
+          _logToleratedSchemaError(
+            'migration v24 backfill projectCapsuleRevisions',
+            e,
+          );
+        }
+      }
     },
     beforeOpen: (_) async {
       await _ensureProjectCompatibilityColumns();
@@ -1041,10 +1061,60 @@ class AppDb extends _$AppDb {
       await _ensureProjectGitRemotesTable();
       await _ensureProjectEnrichmentTables();
       await _ensureLlmTaskQueueTable();
+      await _ensureProjectCapsuleRevisionIndex();
       await _ensureTimestampUnitTriggers();
       await recoverStaleProjectEnrichmentRuns();
     },
   );
+
+  Future<void> _ensureProjectCapsuleRevisionIndex() async {
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_project_capsule_revisions_head '
+      'ON project_capsule_revisions(project_id, revision_number DESC)',
+    );
+  }
+
+  Future<void> _backfillProjectCapsuleRevisionBaselines() async {
+    final existingProjects = await select(projects).get();
+    for (final project in existingProjects) {
+      await _ensureProjectCapsuleBaseline(
+        project,
+        sourceKind: 'migration_baseline',
+        acceptedAt: DateTime.now(),
+      );
+    }
+  }
+
+  Future<void> _ensureProjectCapsuleBaseline(
+    Project project, {
+    required String sourceKind,
+    required DateTime acceptedAt,
+  }) async {
+    final existing =
+        await (select(projectCapsuleRevisions)
+              ..where((table) => table.projectId.equals(project.id))
+              ..limit(1))
+            .getSingleOrNull();
+    if (existing != null) return;
+    final truth = ProjectCapsuleTruth.fromProjectMap(project.toJson());
+    await into(projectCapsuleRevisions).insert(
+      ProjectCapsuleRevisionsCompanion.insert(
+        id: _newMicrosId('capsule_revision'),
+        projectId: project.id,
+        revisionNumber: 1,
+        parentRevisionId: const Value(null),
+        contentHash: truth.contentHash,
+        truthJson: jsonEncode(truth.toJson()),
+        changedFieldsJson: '{}',
+        actorType: 'system',
+        actorLabel: 'Atlas',
+        sourceKind: sourceKind,
+        sourceId: const Value(null),
+        reason: const Value(null),
+        acceptedAt: acceptedAt,
+      ),
+    );
+  }
 
   /// Repairs only values that are unambiguously millisecond-scale dates in
   /// the supported 2000-2100 window. The explicit manifest excludes custom
@@ -1569,6 +1639,14 @@ class AppDb extends _$AppDb {
         status: const Value('active'),
       ),
     );
+    final project = await getProjectFull(id);
+    if (project != null) {
+      await _ensureProjectCapsuleBaseline(
+        project,
+        sourceKind: 'project_created',
+        acceptedAt: createdAt,
+      );
+    }
 
     // Auto-create a default stage so the Work screen is immediately usable
     final stageId = _newMicrosId('stage');
@@ -1664,7 +1742,11 @@ class AppDb extends _$AppDb {
           : const Value.absent(),
       owner: _v<String>('owner'),
       status: fields.containsKey('status')
-          ? Value(normalizeProjectStatusValue(fields['status'] as String?))
+          ? Value(
+              (fields['status'] as String?)?.trim().toLowerCase() == 'deleted'
+                  ? 'deleted'
+                  : normalizeProjectStatusValue(fields['status'] as String?),
+            )
           : const Value.absent(),
       category: _v<String>('category'),
       description: _v<String>('description'),

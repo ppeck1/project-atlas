@@ -23,7 +23,23 @@ source rows separate from canonical projects, stores source topology in
 authority is unresolved. Reconcile previews can update Atlas bookkeeping after
 operator review, but they do not mutate the linked source repositories.
 
-## Project Capsule projection
+## Project Capsule truth and projection
+
+`ProjectCapsuleTruthService` owns the accepted authored contract boundary.
+Existing project columns remain the one mutable source of accepted truth. A
+human save applies those fields and appends an immutable
+`project_capsule_revisions` row in one transaction; the row records the
+canonical content hash, field diff, actor, source, reason, parent, and
+acceptance time. The editor supplies its expected truth revision, so a newer
+accepted change causes the stale save to fail instead of overwriting it.
+Registry-derived filesystem locations remain source posture rather than
+authored truth; Operations does not copy those paths into new revisions, and
+the v24 baseline projection removes the known legacy registry path markers.
+
+Agent-originated metadata changes still enter the existing draft review
+boundary. Their base truth revision is checked when the draft is accepted.
+Accepted revision history is therefore evidence of explicit acceptance, not a
+second mutable copy of project state.
 
 `ProjectCapsuleService` derives one read-only collaboration contract from the
 existing project bootstrap and workload models. Its source port keeps the
@@ -38,9 +54,10 @@ The snapshot exposes three progressive-disclosure views:
 - `audit` contains freshness, source/protocol posture, warnings, gaps, and
   verification expectations.
 
-All views carry the same deterministic content hash and derived revision ID.
-The generation time is reported but excluded from the hash, so selecting a
-smaller view saves context without creating a contradictory revision. Agent
+All views carry the same deterministic snapshot content hash and derived
+snapshot revision ID, plus the distinct accepted truth revision. The
+generation time is reported but excluded from the snapshot hash, so selecting
+a smaller view saves context without creating a contradictory revision. Agent
 results remain proposals and the human-acceptance boundary is explicit in the
 relevant views.
 

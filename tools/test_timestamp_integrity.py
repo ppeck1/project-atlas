@@ -76,14 +76,14 @@ class TimestampIntegrityTest(unittest.TestCase):
             for field in repair_drift_timestamps.DRIFT_TIMESTAMP_FIELDS
         }
         self.assertEqual(dart_fields, python_fields)
-        self.assertEqual(len(python_fields), 45)
+        self.assertEqual(len(python_fields), 46)
         self.assertNotIn(("project_git_remotes", "checked_at"), python_fields)
 
     def test_repair_is_dry_run_by_default_and_apply_is_verified(self) -> None:
         dry_run = repair_drift_timestamps.audit_or_repair(self.db_path)
         self.assertEqual(dry_run["mode"], "dry_run")
-        self.assertEqual(dry_run["candidateTotal"], 45)
-        self.assertEqual(dry_run["invalidTotal"], 45)
+        self.assertEqual(dry_run["candidateTotal"], 46)
+        self.assertEqual(dry_run["invalidTotal"], 46)
 
         con = sqlite3.connect(self.db_path)
         try:
@@ -100,7 +100,7 @@ class TimestampIntegrityTest(unittest.TestCase):
             apply=True,
             backup_path=backup_path,
         )
-        self.assertEqual(applied["updatedTotal"], 45)
+        self.assertEqual(applied["updatedTotal"], 46)
         self.assertEqual(applied["secondPassUpdatedTotal"], 0)
         self.assertEqual(applied["remainingInvalidTotal"], 0)
         self.assertTrue(applied["customMillisecondFieldsUnchanged"])

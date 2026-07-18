@@ -16,15 +16,19 @@ Last updated: 2026-07-18.
 - Public authorship: Paul Peck / `ppeck1`
 - README images: captures of the real Windows application using an isolated
   public-safe demo database
-- Current source-topology line: schema `23` (adds `documents.deleted_at`
-  soft delete with undo and deferred purge) with Project Sources,
-  reconciliation preview, local/remote source roles, and Atlas-only source
-  bookkeeping updates
+- Current database line: schema `24`. Version 23 added
+  `documents.deleted_at` soft delete with undo and deferred purge; version 24
+  adds the immutable accepted Project Capsule revision ledger and baseline
+  migration. Project Sources retains reconciliation preview, local/remote
+  source roles, and Atlas-only source bookkeeping updates.
 - Capsule Resume is the fourth primary navigation surface. It derives Act,
   Understand, and Audit views from one versioned project snapshot; Operations
   remains available at `/operations` as Sources & Health.
-- The Capsule projection is read-only and proposal-first. It does not change
-  the schema, acceptance authority, or remote MCP disclosure policy.
+- Capsule-authored project truth is editable by a human through field-level
+  review and explicit acceptance. Existing project columns remain canonical;
+  immutable revisions record accepted history, while derived frontier and
+  evidence stay read-only. Agent changes remain proposals, and the remote MCP
+  disclosure policy is unchanged.
 - Reactive tag and LLM-queue consumers are stream-backed, exact navigation and
   keyboard behavior are covered by tests, project-detail decomposition is in
   progress, and shared design colors use the normalized Atlas token layer.
@@ -105,6 +109,9 @@ For public changes, also verify:
   and action bundles.
 - Capsule product sequence: `docs/CAPSULE_PRODUCT_PLAN.md`
 - Capsule contract and projection: `lib/services/project_capsule_service.dart`
+- Capsule accepted-truth boundary: `lib/services/project_capsule_truth_service.dart`
+- Capsule truth and revision models: `lib/shared/models/project_capsule_truth.dart`
+- Capsule revision persistence: `project_capsule_revisions` in `lib/db/`
 - Design tokens: `lib/shared/theme/atlas_colors.dart`
   (`ThemeExtension<AtlasColors>`, registered in `lib/app/theme.dart`)
 - App-level keyboard shortcuts: `lib/shared/widgets/atlas_shortcuts.dart`
@@ -124,9 +131,10 @@ For public changes, also verify:
   profile switch.
 - Historical Git objects are not rewritten by normal public-tree cleanup.
 - Compatibility reads do not rename or modify linked project files.
-- Capsule Resume is currently a derived, read-only resumption surface. Editable
-  accepted/proposed fields, workflow templates, and outcome instrumentation are
-  future product slices rather than implied current behavior.
+- Capsule's derived frontier, evidence, decisions, risks, and collaboration
+  constraints are currently read-only. Workflow templates, attention-lane
+  redesign, and outcome instrumentation remain future product slices rather
+  than implied current behavior.
 - The Today screen's midnight rollover uses a wall-clock `Timer`; wall-clock
   timers do not reliably survive OS sleep/resume, so the date header may lag
   until the next rebuild after a resume.

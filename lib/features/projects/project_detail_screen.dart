@@ -2071,11 +2071,28 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     Project project,
   ) async {
     final state = AppStateScope.of(context);
-    final desc = TextEditingController(text: project.description ?? '');
-    final outcome = TextEditingController(text: project.desiredOutcome ?? '');
-    final criteria = TextEditingController(text: project.successCriteria ?? '');
-    final included = TextEditingController(text: project.scopeIncluded ?? '');
-    final excluded = TextEditingController(text: project.scopeExcluded ?? '');
+    final truthState = await state.getProjectCapsuleTruth(widget.projectId);
+    if (!context.mounted) return;
+    if (truthState == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Project truth could not be loaded.')),
+      );
+      return;
+    }
+    final currentProject = truthState.project;
+    final desc = TextEditingController(text: currentProject.description ?? '');
+    final outcome = TextEditingController(
+      text: currentProject.desiredOutcome ?? '',
+    );
+    final criteria = TextEditingController(
+      text: currentProject.successCriteria ?? '',
+    );
+    final included = TextEditingController(
+      text: currentProject.scopeIncluded ?? '',
+    );
+    final excluded = TextEditingController(
+      text: currentProject.scopeExcluded ?? '',
+    );
 
     await showDialog<void>(
       context: context,
@@ -2114,7 +2131,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 'successCriteria': _nt(criteria.text),
                 'scopeIncluded': _nt(included.text),
                 'scopeExcluded': _nt(excluded.text),
-              });
+              }, expectedTruthRevisionId: truthState.revisionId);
               if (ctx.mounted) Navigator.of(ctx).pop();
             },
             child: const Text('Save'),
@@ -2648,8 +2665,21 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
 
   Future<void> _showClosureDialog(BuildContext context, Project project) async {
     final state = AppStateScope.of(context);
-    final outcome = TextEditingController(text: project.outcomeSummary ?? '');
-    final lessons = TextEditingController(text: project.lessonsLearned ?? '');
+    final truthState = await state.getProjectCapsuleTruth(widget.projectId);
+    if (!context.mounted) return;
+    if (truthState == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Project truth could not be loaded.')),
+      );
+      return;
+    }
+    final currentProject = truthState.project;
+    final outcome = TextEditingController(
+      text: currentProject.outcomeSummary ?? '',
+    );
+    final lessons = TextEditingController(
+      text: currentProject.lessonsLearned ?? '',
+    );
 
     await showDialog<void>(
       context: context,
@@ -2680,7 +2710,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
               await state.updateProjectMeta(widget.projectId, {
                 'outcomeSummary': _nt(outcome.text),
                 'lessonsLearned': _nt(lessons.text),
-              });
+              }, expectedTruthRevisionId: truthState.revisionId);
               if (ctx.mounted) Navigator.of(ctx).pop();
             },
             child: const Text('Save'),

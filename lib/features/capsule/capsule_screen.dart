@@ -6,10 +6,12 @@ import 'package:go_router/go_router.dart';
 import '../../db/app_db.dart';
 import '../../services/atlas_agent_service.dart';
 import '../../services/project_capsule_service.dart';
+import '../../services/project_capsule_truth_service.dart';
 import '../../services/workload_planning_service.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/theme/atlas_colors.dart';
 import '../../shared/widgets/atlas_command_palette.dart';
+import 'capsule_truth_editor.dart';
 
 typedef ProjectCapsuleLoader =
     Future<ProjectCapsuleSnapshot?> Function(String projectId);
@@ -172,7 +174,55 @@ class _ProjectCapsuleBodyState extends State<_ProjectCapsuleBody> {
     final state = AppStateScope.read(context);
     return ProjectCapsuleService(
       AtlasAgentProjectCapsuleSource(AtlasAgentService(state)),
+      truthService: ProjectCapsuleTruthService(state.db),
     ).buildSnapshot(widget.projectId);
+  }
+
+  Future<void> _editTruth(ProjectCapsuleSnapshot capsule) async {
+    if (widget.loader != null) return;
+    final state = AppStateScope.read(context);
+    final saved = await showCapsuleTruthEditor(
+      context: context,
+      truth: capsule.authoredTruth,
+      revisionId: capsule.truthRevisionId,
+      onAccept: (fields, expectedRevisionId, reason) => state.updateProjectMeta(
+        widget.projectId,
+        fields,
+        actor: 'Operator',
+        sourceKind: 'capsule_editor',
+        expectedTruthRevisionId: expectedRevisionId,
+        reason: reason,
+      ),
+    );
+    if (!mounted || !saved) return;
+    setState(() {
+      _snapshot = _load();
+    });
+  }
+
+  Future<void> _showTruthHistory(ProjectCapsuleSnapshot capsule) async {
+    if (widget.loader != null) return;
+    final state = AppStateScope.read(context);
+    try {
+      final revisions = await state.getProjectCapsuleRevisions(
+        widget.projectId,
+      );
+      if (!mounted) return;
+      await showCapsuleTruthHistory(
+        context: context,
+        revisions: revisions,
+        currentRevisionId: capsule.truthRevisionRecorded
+            ? capsule.truthRevisionId
+            : null,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Accepted truth history could not load: $error'),
+        ),
+      );
+    }
   }
 
   @override
@@ -190,7 +240,9 @@ class _ProjectCapsuleBodyState extends State<_ProjectCapsuleBody> {
             message: '${snapshot.error}',
             icon: Icons.error_outline,
             actionLabel: 'Try again',
-            onAction: () => setState(() => _snapshot = _load()),
+            onAction: () => setState(() {
+              _snapshot = _load();
+            }),
           );
         }
         final capsule = snapshot.data;
@@ -204,6 +256,10 @@ class _ProjectCapsuleBodyState extends State<_ProjectCapsuleBody> {
         return _CapsuleTabs(
           capsule: capsule,
           onChooseProject: widget.onChooseProject,
+          onEditTruth: widget.loader == null ? () => _editTruth(capsule) : null,
+          onShowTruthHistory: widget.loader == null
+              ? () => _showTruthHistory(capsule)
+              : null,
         );
       },
     );
@@ -213,8 +269,15 @@ class _ProjectCapsuleBodyState extends State<_ProjectCapsuleBody> {
 class _CapsuleTabs extends StatelessWidget {
   final ProjectCapsuleSnapshot capsule;
   final VoidCallback onChooseProject;
+  final VoidCallback? onEditTruth;
+  final VoidCallback? onShowTruthHistory;
 
-  const _CapsuleTabs({required this.capsule, required this.onChooseProject});
+  const _CapsuleTabs({
+    required this.capsule,
+    required this.onChooseProject,
+    required this.onEditTruth,
+    required this.onShowTruthHistory,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -243,7 +306,16 @@ class _CapsuleTabs extends StatelessWidget {
                 _Pill('Confidence', capsule.confidence),
                 Tooltip(
                   message: capsule.contentHash,
-                  child: _Pill('Revision', capsule.revisionId),
+                  child: _Pill('Snapshot', capsule.revisionId),
+                ),
+                Tooltip(
+                  message: capsule.authoredTruth.contentHash,
+                  child: _Pill(
+                    'Truth',
+                    capsule.truthRevisionNumber == null
+                        ? 'unrecorded'
+                        : 'v${capsule.truthRevisionNumber}',
+                  ),
                 ),
               ],
             ),
@@ -262,7 +334,11 @@ class _CapsuleTabs extends StatelessWidget {
             child: TabBarView(
               children: [
                 _ActTab(capsule),
-                _UnderstandTab(capsule),
+                _UnderstandTab(
+                  capsule,
+                  onEditTruth: onEditTruth,
+                  onShowTruthHistory: onShowTruthHistory,
+                ),
                 _AuditTab(capsule),
               ],
             ),
@@ -352,8 +428,14 @@ class _ActTab extends StatelessWidget {
 
 class _UnderstandTab extends StatelessWidget {
   final ProjectCapsuleSnapshot capsule;
+  final VoidCallback? onEditTruth;
+  final VoidCallback? onShowTruthHistory;
 
-  const _UnderstandTab(this.capsule);
+  const _UnderstandTab(
+    this.capsule, {
+    required this.onEditTruth,
+    required this.onShowTruthHistory,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -361,6 +443,30 @@ class _UnderstandTab extends StatelessWidget {
       key: const Key('capsule-understand-list'),
       padding: const EdgeInsets.all(16),
       children: [
+        if (onEditTruth != null || onShowTruthHistory != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (onEditTruth != null)
+                  FilledButton.icon(
+                    key: const Key('capsule-edit-truth'),
+                    onPressed: onEditTruth,
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('Edit accepted truth'),
+                  ),
+                if (onShowTruthHistory != null)
+                  OutlinedButton.icon(
+                    key: const Key('capsule-truth-history'),
+                    onPressed: onShowTruthHistory,
+                    icon: const Icon(Icons.history, size: 18),
+                    label: const Text('Accepted history'),
+                  ),
+              ],
+            ),
+          ),
         _MapSection('Intent', Icons.flag_outlined, capsule.intent),
         _MapSection(
           'Accepted project state',
@@ -380,6 +486,23 @@ class _UnderstandTab extends StatelessWidget {
           emptyMessage: 'No project risks are recorded.',
         ),
         _MapSection('Scope', Icons.filter_center_focus, capsule.scope),
+        if (capsule.pendingAgentProposals > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _Section(
+              title: 'Proposed changes',
+              icon: Icons.rate_review_outlined,
+              trailing: TextButton(
+                onPressed: () => context.go(
+                  '/library?projectId=${Uri.encodeQueryComponent(_text(capsule.project['projectId'], ''))}',
+                ),
+                child: const Text('Open review queue'),
+              ),
+              child: Text(
+                '${capsule.pendingAgentProposals} agent proposal${capsule.pendingAgentProposals == 1 ? '' : 's'} remain outside accepted truth until human review.',
+              ),
+            ),
+          ),
         _MapSection(
           'Collaboration constraints',
           Icons.shield_outlined,

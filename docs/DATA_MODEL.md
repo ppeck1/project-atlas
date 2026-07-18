@@ -1,6 +1,6 @@
 # Data model
 
-Project Atlas uses SQLite through Drift. The current schema version is `23`.
+Project Atlas uses SQLite through Drift. The current schema version is `24`.
 
 ## Core records
 
@@ -12,6 +12,11 @@ Project Atlas uses SQLite through Drift. The current schema version is `23`.
   documents are hidden from queries and undoable; a startup purge removes the
   app-owned file and row after a retention window.
 - Activity events: operator-visible history for important actions.
+- Project Capsule revisions: immutable accepted-history rows containing a
+  project-scoped revision number and parent, canonical truth hash, accepted
+  truth JSON, field diff, actor/source/reason attribution, and acceptance time.
+  Existing project columns remain the mutable accepted truth; the ledger is
+  not a competing project record.
 
 ## Operational records
 
@@ -40,6 +45,13 @@ Project Atlas uses SQLite through Drift. The current schema version is `23`.
 Database timestamps use one explicit unit contract and are covered by migration
 and regression tests. Schema changes are implemented in `lib/db/app_db.dart`;
 generated Drift code must be refreshed and committed with table changes.
+
+The v23-to-v24 migration creates `project_capsule_revisions` and records one
+baseline revision for each existing project without changing its project
+fields. Newly created projects receive the same baseline. Later accepted
+Capsule edits update the project fields and append the next revision in one
+transaction. Known registry-generated local-path markers are excluded from the
+authored baseline; source locations remain in the operational registry.
 
 The database is local and currently plaintext. Backup and OS access controls
 remain the operator's responsibility.

@@ -22,6 +22,7 @@ const legacyRepairMaxEpochSeconds = 4133980800; // 2101-01-01 UTC
 const driftTimestampFields = <DriftTimestampField>[
   DriftTimestampField('projects', 'created_at'),
   DriftTimestampField('projects', 'deleted_at'),
+  DriftTimestampField('project_capsule_revisions', 'accepted_at'),
   DriftTimestampField('stages', 'created_at'),
   DriftTimestampField('work_items', 'due_at'),
   DriftTimestampField('work_items', 'updated_at'),

@@ -48,9 +48,9 @@ void main() {
   });
 
   test(
-    'schema v23 creates local operations, source topology, runtime, git remote, enrichment, and queue tables',
+    'schema v24 creates local operations, source topology, runtime, git remote, enrichment, queue, and Capsule revision tables',
     () async {
-      expect(db.schemaVersion, 23);
+      expect(db.schemaVersion, 24);
 
       final tables = await db
           .customSelect(
@@ -143,7 +143,7 @@ void main() {
         final rows = await migrated.getProjectRegistry();
         final row = rows.single;
 
-        expect(migrated.schemaVersion, 23);
+        expect(migrated.schemaVersion, 24);
         expect(row.id, 'legacy-source-1');
         expect(row.localPath, 'https://github.com/example/repo.git');
         expect(row.atlasProjectId, 'atlas-project-1');
@@ -364,7 +364,9 @@ void main() {
 
       expect(project, isNotNull);
       expect(project!.title, 'imported_project');
-      expect(project.description, contains('Local path:'));
+      expect(project.description, contains('Classification:'));
+      expect(project.description, isNot(contains('Local path:')));
+      expect(project.scopeIncluded, isNull);
       expect(linkedRegistry.reviewState, 'linked');
       expect(linkedRegistry.atlasProjectId, projectId);
       expect(stages, hasLength(1));
@@ -2058,7 +2060,7 @@ Pressure flakes a useful edge.
       expect(updatedRegistry.reviewState, 'linked');
       expect(updatedFinding?.status, 'dismissed');
       expect(updatedRun?.openFindings, result.run.openFindings - 1);
-      expect(project?.scopeIncluded, contains(replacementPath));
+      expect(project?.scopeIncluded, isNull);
       expect(updatedRegistry.notes, contains('Project Owner'));
       expect(
         events.map((event) => event.action),

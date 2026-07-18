@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import 'atlas_agent_service.dart';
+import 'project_capsule_truth_service.dart';
 import 'workload_planning_service.dart';
+import '../shared/models/project_capsule_truth.dart';
 
 enum ProjectCapsuleView { act, understand, audit, full }
 
@@ -191,6 +193,11 @@ class ProjectCapsuleSnapshot {
   final Map<String, Object?> safeConstraints;
   final Map<String, Object?> verification;
   final Map<String, Object?> audit;
+  final ProjectCapsuleTruth authoredTruth;
+  final String truthRevisionId;
+  final int? truthRevisionNumber;
+  final int truthRevisionCount;
+  final bool truthRevisionRecorded;
   final ProjectCapsuleRecommendation recommendation;
   final List<ProjectCapsuleAction> readyItems;
   final List<ProjectCapsuleAction> decisionItems;
@@ -218,6 +225,11 @@ class ProjectCapsuleSnapshot {
     required this.safeConstraints,
     required this.verification,
     required this.audit,
+    required this.authoredTruth,
+    required this.truthRevisionId,
+    required this.truthRevisionNumber,
+    required this.truthRevisionCount,
+    required this.truthRevisionRecorded,
     required this.recommendation,
     required this.readyItems,
     required this.decisionItems,
@@ -243,6 +255,11 @@ class ProjectCapsuleSnapshot {
     required Map<String, Object?> safeConstraints,
     required Map<String, Object?> verification,
     required Map<String, Object?> audit,
+    required ProjectCapsuleTruth authoredTruth,
+    required String truthRevisionId,
+    required int? truthRevisionNumber,
+    required int truthRevisionCount,
+    required bool truthRevisionRecorded,
     required ProjectCapsuleRecommendation recommendation,
     required List<ProjectCapsuleAction> readyItems,
     required List<ProjectCapsuleAction> decisionItems,
@@ -298,6 +315,13 @@ class ProjectCapsuleSnapshot {
       'safeConstraints': frozenSafeConstraints,
       'verification': frozenVerification,
       'audit': frozenAudit,
+      'truthRevision': {
+        'revisionId': truthRevisionId,
+        'revisionNumber': truthRevisionNumber,
+        'revisionCount': truthRevisionCount,
+        'contentHash': authoredTruth.contentHash,
+        'recorded': truthRevisionRecorded,
+      },
       'recommendation': recommendation.toJson(),
       'readyItems': frozenReadyItems.map((item) => item.toJson()).toList(),
       'decisionItems': frozenDecisionItems
@@ -332,6 +356,11 @@ class ProjectCapsuleSnapshot {
       safeConstraints: frozenSafeConstraints,
       verification: frozenVerification,
       audit: frozenAudit,
+      authoredTruth: authoredTruth,
+      truthRevisionId: truthRevisionId,
+      truthRevisionNumber: truthRevisionNumber,
+      truthRevisionCount: truthRevisionCount,
+      truthRevisionRecorded: truthRevisionRecorded,
       recommendation: recommendation,
       readyItems: frozenReadyItems,
       decisionItems: frozenDecisionItems,
@@ -364,6 +393,13 @@ class ProjectCapsuleSnapshot {
       'contentHash': contentHash,
       'project': project,
       'confidence': confidence,
+      'truthRevision': {
+        'revisionId': truthRevisionId,
+        'revisionNumber': truthRevisionNumber,
+        'revisionCount': truthRevisionCount,
+        'contentHash': authoredTruth.contentHash,
+        'recorded': truthRevisionRecorded,
+      },
     };
     final act = <String, Object?>{
       'recommendation': recommendation.toJson(),
@@ -413,10 +449,14 @@ class ProjectCapsuleSnapshot {
 
 class ProjectCapsuleService {
   final ProjectCapsuleSource source;
+  final ProjectCapsuleTruthService? truthService;
   final DateTime Function() _now;
 
-  ProjectCapsuleService(this.source, {DateTime Function()? now})
-    : _now = now ?? DateTime.now;
+  ProjectCapsuleService(
+    this.source, {
+    this.truthService,
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
 
   Future<ProjectCapsuleSnapshot?> buildSnapshot(String projectId) async {
     final sourceData = await source.load(projectId);
@@ -428,6 +468,26 @@ class ProjectCapsuleService {
     final status = brief.status;
     final capsule = bootstrap.capsule;
     final freshness = bootstrap.freshness;
+    final truthState = await truthService?.load(projectId);
+    final truth =
+        truthState?.truth ??
+        ProjectCapsuleTruth.fromJson({
+          'title': status.title,
+          'owner': status.owner,
+          'status': status.status,
+          'category': status.category,
+          'phase': status.phase,
+          'priority': status.priority,
+          'description': brief.description,
+          'desiredOutcome': brief.desiredOutcome,
+          'successCriteria': brief.successCriteria,
+          'scopeIncluded': brief.scopeIncluded,
+          'scopeExcluded': brief.scopeExcluded,
+          'outcomeSummary': brief.outcomeSummary,
+        });
+    final truthRevisionId =
+        truthState?.revisionId ??
+        'derived-${truth.contentHash.substring(0, 12)}';
 
     List<ProjectCapsuleAction> actionsFor(String boardGroup) => workload.cards
         .where((card) => card.boardGroup == boardGroup)
@@ -450,9 +510,9 @@ class ProjectCapsuleService {
         .toList(growable: false);
 
     final gaps = _safeDiagnostics([
-      if (_clean(brief.desiredOutcome) == null)
+      if (_clean(truth.desiredOutcome) == null)
         'Desired outcome is not defined.',
-      if (_clean(brief.successCriteria) == null)
+      if (_clean(truth.successCriteria) == null)
         'Success criteria are not defined.',
       ...bootstrap.gaps.where(
         (gap) => !gap.startsWith('No pending LLM task is queued'),
@@ -466,26 +526,26 @@ class ProjectCapsuleService {
 
     final project = <String, Object?>{
       'projectId': status.id,
-      'title': status.title,
-      'status': status.status,
-      'category': status.category,
-      'owner': status.owner,
-      'phase': status.phase,
-      'priority': status.priority,
+      'title': truth.title,
+      'status': truth.status,
+      'category': truth.category,
+      'owner': truth.owner,
+      'phase': truth.phase,
+      'priority': truth.priority,
       'needsAttention': status.needsAttention,
     };
     final intent = <String, Object?>{
-      'description': brief.description,
-      'desiredOutcome': brief.desiredOutcome,
-      'successCriteria': brief.successCriteria,
+      'description': truth.description,
+      'desiredOutcome': truth.desiredOutcome,
+      'successCriteria': truth.successCriteria,
     };
     final currentActive = inProgressItems.isEmpty
         ? null
         : inProgressItems.first.title;
     final acceptedState = <String, Object?>{
-      'status': status.status,
-      'phase': status.phase,
-      'outcomeSummary': brief.outcomeSummary,
+      'status': truth.status,
+      'phase': truth.phase,
+      'outcomeSummary': truth.outcomeSummary,
       'currentActiveTask': currentActive,
       'latestAcceptedCheckpoint': _firstClean([
         capsule.projectManifest?['accepted_version'],
@@ -495,8 +555,8 @@ class ProjectCapsuleService {
       'freshnessStatus': freshness.status,
     };
     final scope = <String, Object?>{
-      'included': brief.scopeIncluded,
-      'excluded': brief.scopeExcluded,
+      'included': truth.scopeIncluded,
+      'excluded': truth.scopeExcluded,
     };
     final verification = AtlasAgentService.planningVerification(
       validation,
@@ -524,6 +584,12 @@ class ProjectCapsuleService {
         'profiles': bootstrap.identity.capsuleProfiles,
         'counts': capsule.counts,
       },
+      'acceptedTruthHistory': {
+        'revisionId': truthRevisionId,
+        'revisionNumber': truthState?.revisionNumber,
+        'revisionCount': truthState?.revisionCount ?? 0,
+        'recorded': truthState?.headMatchesCurrent ?? false,
+      },
     };
 
     return ProjectCapsuleSnapshot.derived(
@@ -535,6 +601,11 @@ class ProjectCapsuleService {
       safeConstraints: AtlasAgentService.safePlanningConstraints(),
       verification: verification,
       audit: audit,
+      authoredTruth: truth,
+      truthRevisionId: truthRevisionId,
+      truthRevisionNumber: truthState?.revisionNumber,
+      truthRevisionCount: truthState?.revisionCount ?? 0,
+      truthRevisionRecorded: truthState?.headMatchesCurrent ?? false,
       recommendation: _recommend(
         bootstrap: bootstrap,
         readyItems: readyItems,

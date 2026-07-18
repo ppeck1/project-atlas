@@ -25,7 +25,7 @@ meaningful work after the project has been untouched for 30 days.
 | Phase | Outcome | Delivery boundary |
 | --- | --- | --- |
 | 0. Resume | Establish intent, accepted state, the frontier, and evidence in one read-only snapshot. | Complete in Capsule Resume v0. |
-| 1. Edit truth | Edit structured Capsule fields, review proposed values, and inspect version-to-version changes. | Requires an explicit persistence/schema work order. |
+| 1. Edit truth | Edit structured Capsule fields, review proposed values, and inspect version-to-version changes. | Implemented in Capsule Edit Truth v1 (schema 24); operator acceptance pending. |
 | 2. Orchestrate attention | Derive human decision, human action, agent action, acceptance, evidence, and defer lanes from the same contract. | Replace fixed Workboard categories only after user testing. |
 | 3. Template loops | Create, copy, reorder, disable, and customize stages such as Observe, Reconcile, Decide, Delegate, Execute, Verify, Accept, and Update Truth. | Templates describe transitions and gates, not autonomous execution. |
 | 4. Close one agent loop | Produce a Capsule-scoped handoff, ingest the result as a proposal, attach verification, and accept or revise it. | One polished Codex workflow before adding more agent types. |
