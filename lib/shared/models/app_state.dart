@@ -8618,6 +8618,30 @@ class AppState extends ChangeNotifier {
     return result;
   }
 
+  /// Runs the canonical recovery acceptance check in a separate staging root.
+  /// This cannot replace the active Atlas instance.
+  Future<AtlasFullBackupRoundTripReport> verifyFullBackupRoundTrip(
+    Directory bundle,
+    Directory destinationRoot,
+  ) => _trackOperation(
+    title: 'Recovery round-trip verification',
+    startingMessage: 'Restoring and comparing the completed backup…',
+    run: () async {
+      final service = await AtlasFullBackupService.forCurrentAtlasApp();
+      final result = await service.verifyRoundTrip(bundle, destinationRoot);
+      await db.logEvent(
+        area: 'recovery',
+        action: 'full_backup_round_trip_verified',
+        outputJson: jsonEncode({
+          'sourceBundle': result.sourceBundle.path,
+          'stagedBundle': result.stagedBundle.path,
+          'fingerprint': result.sourceFingerprint,
+        }),
+      );
+      return result;
+    },
+  );
+
   /// Writes a portable archive for inspection and selective transfer. It does
   /// not include every Atlas table and cannot restore an Atlas instance.
   Future<int> exportPortableDataArchive(String path) => _trackOperation(

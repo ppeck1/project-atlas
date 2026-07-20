@@ -108,6 +108,28 @@ class AtlasFullBackupStagingRestore {
   });
 }
 
+/// Evidence that a completed bundle can be restored byte-for-byte into an
+/// isolated staging location. It never authorizes live-instance replacement.
+class AtlasFullBackupRoundTripReport {
+  final Directory sourceBundle;
+  final Directory stagedBundle;
+  final String sourceFingerprint;
+  final String stagedFingerprint;
+  final AtlasFullBackupValidationReport sourceValidation;
+  final AtlasFullBackupValidationReport stagedValidation;
+
+  const AtlasFullBackupRoundTripReport({
+    required this.sourceBundle,
+    required this.stagedBundle,
+    required this.sourceFingerprint,
+    required this.stagedFingerprint,
+    required this.sourceValidation,
+    required this.stagedValidation,
+  });
+
+  bool get isCanonical => sourceFingerprint == stagedFingerprint;
+}
+
 /// Creates and validates self-describing Atlas recovery bundles.
 ///
 /// The SQLite database is copied through SQLite's online-backup API, never by
@@ -473,6 +495,83 @@ class AtlasFullBackupService {
       bundle: restored,
       validation: completedValidation,
     );
+  }
+
+  /// Performs a non-destructive recovery acceptance check.
+  ///
+  /// Every manifest-declared file is re-hashed in both the completed backup
+  /// and its staged restore. The fingerprint also includes the actual SQLite
+  /// inventory, so this is stronger than merely checking that a directory was
+  /// copied. The active Atlas database and owned files are never touched.
+  Future<AtlasFullBackupRoundTripReport> verifyRoundTrip(
+    Directory bundle,
+    Directory destinationRoot,
+  ) async {
+    final sourceValidation = await validateBundle(bundle);
+    if (!sourceValidation.isValid) {
+      throw AtlasFullBackupException(
+        'Refusing canonical round-trip verification of an invalid backup: '
+        '${sourceValidation.errors.join('; ')}',
+      );
+    }
+    final sourceFingerprint = await _canonicalFingerprint(
+      bundle,
+      sourceValidation.manifest!,
+    );
+    final restored = await restoreToStaging(bundle, destinationRoot);
+    if (!restored.validation.isValid) {
+      throw AtlasFullBackupException(
+        'The staged round-trip restore failed validation: '
+        '${restored.validation.errors.join('; ')}',
+      );
+    }
+    final stagedFingerprint = await _canonicalFingerprint(
+      restored.bundle,
+      restored.validation.manifest!,
+    );
+    if (sourceFingerprint != stagedFingerprint) {
+      throw const AtlasFullBackupException(
+        'Canonical round-trip verification failed: staged content differs '
+        'from the completed backup.',
+      );
+    }
+    return AtlasFullBackupRoundTripReport(
+      sourceBundle: bundle,
+      stagedBundle: restored.bundle,
+      sourceFingerprint: sourceFingerprint,
+      stagedFingerprint: stagedFingerprint,
+      sourceValidation: sourceValidation,
+      stagedValidation: restored.validation,
+    );
+  }
+
+  Future<String> _canonicalFingerprint(
+    Directory bundle,
+    Map<String, Object?> manifest,
+  ) async {
+    final entries = manifest['files'] as List;
+    final files = <Map<String, Object?>>[];
+    for (final rawEntry in entries) {
+      final entry = (rawEntry as Map).map(
+        (key, value) => MapEntry('$key', value),
+      );
+      final path = entry['path'] as String;
+      final file = File(p.joinAll([bundle.path, ...p.split(path)]));
+      files.add({
+        'path': path,
+        'bytes': await file.length(),
+        'sha256': await _sha256File(file),
+      });
+    }
+    files.sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+    final databasePath = manifest['databaseSnapshot'] as String;
+    final database = File(p.joinAll([bundle.path, ...p.split(databasePath)]));
+    final canonical = <String, Object?>{
+      'schema': manifest['schema'],
+      'files': files,
+      'databaseInventory': _readDatabaseInventory(database),
+    };
+    return sha256.convert(utf8.encode(jsonEncode(canonical))).toString();
   }
 
   Future<void> _writeCompletionMarker(Directory bundle, File manifest) async {

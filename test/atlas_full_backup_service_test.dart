@@ -208,6 +208,26 @@ void main() {
     },
   );
 
+  test(
+    'canonical round trip matches the completed backup in staging',
+    () async {
+      final backup = await service().createBundle(
+        Directory(p.join(tempDir.path, 'backups')),
+      );
+
+      final report = await service().verifyRoundTrip(
+        backup.bundle,
+        Directory(p.join(tempDir.path, 'round-trip')),
+      );
+
+      expect(report.isCanonical, isTrue);
+      expect(report.sourceFingerprint, report.stagedFingerprint);
+      expect(report.sourceValidation.isValid, isTrue);
+      expect(report.stagedValidation.isValid, isTrue);
+      expect(await report.stagedBundle.exists(), isTrue);
+    },
+  );
+
   test('refuses to restore a corrupted bundle', () async {
     final backup = await service().createBundle(
       Directory(p.join(tempDir.path, 'backups')),

@@ -2671,33 +2671,35 @@ class _AdminTabState extends State<_AdminTab> {
                 final manifestPath = selected?.files.singleOrNull?.path;
                 if (manifestPath == null || manifestPath.trim().isEmpty) return;
                 final destination = await FilePicker.platform.getDirectoryPath(
-                  dialogTitle: 'Choose a separate staging-restore folder',
+                  dialogTitle: 'Choose a separate round-trip staging folder',
                 );
                 if (destination == null || destination.trim().isEmpty) return;
                 try {
-                  final result = await state.restoreFullBackupToStaging(
+                  final result = await state.verifyFullBackupRoundTrip(
                     File(manifestPath).parent,
                     Directory(destination),
                   );
                   if (mounted) {
                     setState(
                       () => _status =
-                          'Staging restore validated: ${result.bundle.path}',
+                          'Canonical round trip verified: ${result.stagedBundle.path}',
                     );
                   }
                 } catch (e) {
                   if (mounted)
-                    setState(() => _status = 'Staging restore failed: $e');
+                    setState(
+                      () => _status = 'Round-trip verification failed: $e',
+                    );
                 }
               },
               icon: const Icon(Icons.restore_page_outlined, size: 16),
-              label: const Text('Validate & stage restore'),
+              label: const Text('Verify round trip & stage restore'),
             ),
           ],
         ),
         const SizedBox(height: 10),
         const Text(
-          'A staging restore verifies a separate copy only. It never replaces the active Atlas database or files.',
+          'Round-trip verification restores and re-hashes a separate copy only. It never replaces the active Atlas database or files.',
           style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
         ),
         if (state.fullBackupProgress case final progress?) ...[
