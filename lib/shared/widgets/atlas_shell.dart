@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../theme/atlas_colors.dart';
 import '../models/app_state_scope.dart';
-import '../../services/atlas_full_backup_service.dart';
+import '../models/atlas_operation_status.dart';
 import 'atlas_shortcuts.dart';
 
 /// Derives a human-readable display label from a route [path].
@@ -113,7 +113,7 @@ class AtlasShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).uri.toString();
-    final backupProgress = AppStateScope.of(context).fullBackupProgress;
+    final activeOperation = AppStateScope.of(context).activeOperation;
 
     final destinations = <_NavDest>[
       _NavDest('Today', Icons.today_outlined, Icons.today, '/today'),
@@ -173,8 +173,8 @@ class AtlasShell extends StatelessWidget {
                       if (selectedIndex == -1 && !settingsSelected)
                         AtlasLegacyRouteBar(path: location),
                       Expanded(child: child),
-                      if (backupProgress != null)
-                        _RecoveryBackupStatusStrip(progress: backupProgress),
+                      if (activeOperation != null)
+                        _AtlasOperationStatusStrip(operation: activeOperation),
                     ],
                   ),
                 ),
@@ -187,17 +187,17 @@ class AtlasShell extends StatelessWidget {
   }
 }
 
-/// Persistent operation feedback for a backup that continues across routes.
-class _RecoveryBackupStatusStrip extends StatelessWidget {
-  final AtlasFullBackupProgress progress;
+/// Persistent route-independent feedback for long-running Atlas operations.
+class _AtlasOperationStatusStrip extends StatelessWidget {
+  final AtlasOperationStatus operation;
 
-  const _RecoveryBackupStatusStrip({required this.progress});
+  const _AtlasOperationStatusStrip({required this.operation});
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).extension<AtlasColors>()!;
-    final isFailed = progress.phase == AtlasFullBackupPhase.failed;
-    final isComplete = progress.phase == AtlasFullBackupPhase.complete;
+    final isFailed = operation.state == AtlasOperationState.failed;
+    final isComplete = operation.state == AtlasOperationState.complete;
     final accent = isFailed
         ? Colors.redAccent
         : isComplete
@@ -227,7 +227,7 @@ class _RecoveryBackupStatusStrip extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  progress.message,
+                  '${operation.title}: ${operation.message}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -236,7 +236,7 @@ class _RecoveryBackupStatusStrip extends StatelessWidget {
                     color: accent,
                   ),
                 ),
-                if (progress.fileProgressLabel case final label?)
+                if (operation.progressLabel case final label?)
                   Text(
                     label,
                     style: TextStyle(fontSize: 11, color: colors.inactive),
@@ -248,7 +248,7 @@ class _RecoveryBackupStatusStrip extends StatelessWidget {
           SizedBox(
             width: 180,
             child: LinearProgressIndicator(
-              value: progress.fraction,
+              value: operation.fraction,
               minHeight: 5,
               backgroundColor: colors.bg,
               valueColor: AlwaysStoppedAnimation<Color>(accent),
