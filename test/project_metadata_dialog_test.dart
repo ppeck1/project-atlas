@@ -31,6 +31,9 @@ void main() {
     final project = await db
         .getProjectFull('reference-project')
         .timeout(const Duration(seconds: 5));
+    final truthState = await state
+        .getProjectCapsuleTruth('reference-project')
+        .timeout(const Duration(seconds: 5));
 
     await tester.pumpWidget(
       AppStateScope(
@@ -40,6 +43,7 @@ void main() {
             body: ProjectMetadataDialog(
               project: project!,
               categories: const [],
+              expectedTruthRevisionId: truthState!.revisionId,
               includeOwnerField: false,
             ),
           ),

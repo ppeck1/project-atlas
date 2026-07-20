@@ -2,6 +2,7 @@ import 'dart:io';
 
 import '../db/app_db.dart';
 import 'local_project_refresh_service.dart';
+import 'project_capsule_truth_service.dart';
 import 'project_enrichment_service.dart';
 
 /// Applies deterministic, local project identity updates produced by a refresh
@@ -134,7 +135,13 @@ class ProjectIdentityEnrichmentService {
 
     var changed = false;
     if (fields.isNotEmpty) {
-      await db.updateProjectMeta(projectId, fields);
+      await ProjectCapsuleTruthService(db).acceptPatch(
+        projectId: projectId,
+        fields: fields,
+        actorLabel: 'Atlas',
+        sourceKind: 'local_project_identity_refresh',
+        sourceId: entry.id,
+      );
       changed = true;
     }
     return await _applyProjectIdentityTags(

@@ -17,6 +17,7 @@ import '../../services/local_project_refresh_service.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../services/ollama_service.dart';
 import '../../services/project_enrichment_service.dart';
+import '../../services/project_capsule_truth_service.dart';
 import '../../services/project_identity_enrichment_service.dart';
 import '../../services/project_runtime_service.dart';
 import '../../services/project_summary_models.dart';
@@ -864,10 +865,21 @@ class AppState extends ChangeNotifier {
     required String sourceProjectId,
     required String targetProjectId,
   }) async {
-    final result = await db.mergeProjects(
-      sourceProjectId: sourceProjectId,
-      targetProjectId: targetProjectId,
-    );
+    final result = await db.transaction(() async {
+      await ProjectCapsuleTruthService(db).acceptPatch(
+        projectId: sourceProjectId,
+        fields: const {'status': 'deleted'},
+        actorLabel: 'Operator',
+        sourceKind: 'project_merge',
+        sourceId: targetProjectId,
+        reason: 'Merged into project $targetProjectId.',
+        recordProjectMetadataAudit: true,
+      );
+      return db.mergeProjects(
+        sourceProjectId: sourceProjectId,
+        targetProjectId: targetProjectId,
+      );
+    });
     notifyListeners();
     return result;
   }
@@ -1064,7 +1076,7 @@ class AppState extends ChangeNotifier {
     String? planningNotes,
     DateTime? lastReviewedAt,
   }) async {
-    final stageId = await db.ensureGeneralTaskStage();
+    final stageId = await _ensureGeneralTaskStage();
     await db.logEvent(
       area: 'ui',
       action: 'create_general_task_request',
@@ -1101,6 +1113,22 @@ class AppState extends ChangeNotifier {
     );
     notifyListeners();
     return workItemId;
+  }
+
+  Future<String> _ensureGeneralTaskStage() async {
+    final project = await db.getGeneralTasksProject();
+    if (project != null &&
+        project.description != AppDb.kGeneralTasksProjectDescription) {
+      await ProjectCapsuleTruthService(db).acceptPatch(
+        projectId: project.id,
+        fields: const {'description': AppDb.kGeneralTasksProjectDescription},
+        actorLabel: 'Atlas',
+        sourceKind: 'general_tasks_repair',
+        reason: 'Restored the hidden General Tasks project marker.',
+        recordReconciliation: true,
+      );
+    }
+    return db.ensureGeneralTaskStage();
   }
 
   Future<void> updateWorkItem({
@@ -1573,6 +1601,7 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Stream<List<Draft>> watchDrafts() => db.watchDrafts();
+  Future<List<Draft>> getDrafts() => db.getDrafts();
   Future<Draft?> getDraft(String id) => db.getDraft(id);
 
   Future<String> saveDraft({
@@ -1862,46 +1891,34 @@ class AppState extends ChangeNotifier {
     String id,
     Map<String, Object?> fields, {
     String actor = 'Operator',
+    String sourceKind = 'project_detail',
+    String? sourceId,
+    String? expectedTruthRevisionId,
+    String? reason,
   }) async {
-    final before = await db.getProjectFull(id);
-    await db.updateProjectMeta(id, fields);
-    final after = await db.getProjectFull(id);
-    final changes = _projectMetaChanges(before, after, fields.keys);
-    if (changes.isNotEmpty) {
-      await db.logEvent(
-        area: 'projects',
-        action: 'project_metadata_updated',
-        entityType: 'project',
-        entityId: id,
-        inputJson: jsonEncode({'requestedFields': fields.keys.toList()}),
-        outputJson: jsonEncode({
-          'agent': actor,
-          'actor': {'type': _actorTypeForLabel(actor), 'displayName': actor},
-          'changedFieldCount': changes.length,
-          'changedFields': changes,
-        }),
-      );
-    }
+    await ProjectCapsuleTruthService(db).acceptPatch(
+      projectId: id,
+      fields: fields,
+      expectedRevisionId: expectedTruthRevisionId,
+      actorLabel: actor,
+      sourceKind: sourceKind,
+      sourceId: sourceId,
+      reason: reason,
+      recordProjectMetadataAudit: true,
+    );
     notifyListeners();
   }
 
-  Map<String, Object?> _projectMetaChanges(
-    Project? before,
-    Project? after,
-    Iterable<String> fieldKeys,
-  ) {
-    if (before == null || after == null) return const <String, Object?>{};
-    final beforeJson = before.toJson();
-    final afterJson = after.toJson();
-    final result = <String, Object?>{};
-    for (final key in fieldKeys) {
-      final oldValue = beforeJson[key];
-      final newValue = afterJson[key];
-      if (oldValue == newValue) continue;
-      result[key] = {'from': oldValue, 'to': newValue};
-    }
-    return result;
-  }
+  Future<ProjectCapsuleTruthState?> getProjectCapsuleTruth(String projectId) =>
+      ProjectCapsuleTruthService(db).load(projectId);
+
+  Future<List<ProjectCapsuleAcceptedRevision>> getProjectCapsuleRevisions(
+    String projectId, {
+    int limit = 50,
+    int offset = 0,
+  }) => ProjectCapsuleTruthService(
+    db,
+  ).listRevisions(projectId, limit: limit, offset: offset);
 
   String _actorTypeForLabel(String actor) {
     final normalized = actor.trim().toLowerCase();
@@ -2037,7 +2054,17 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> softDeleteProject(String id, String reason) async {
-    await db.softDeleteProject(id, reason);
+    await db.transaction(() async {
+      await ProjectCapsuleTruthService(db).acceptPatch(
+        projectId: id,
+        fields: const {'status': 'deleted'},
+        actorLabel: 'Operator',
+        sourceKind: 'project_delete',
+        reason: reason,
+        recordProjectMetadataAudit: true,
+      );
+      await db.softDeleteProject(id, reason);
+    });
     if (_activeProject?.id == id) await db.setActiveProjectId(null);
     notifyListeners();
   }
@@ -3526,11 +3553,6 @@ class AppState extends ChangeNotifier {
           : 'linked',
       notes: notes,
     );
-    if (linkedProjectId != null && linkedProjectId.isNotEmpty) {
-      await db.updateProjectMeta(linkedProjectId, {
-        'scopeIncluded': 'Local project root: ${updated.localPath}',
-      });
-    }
     await db.updateProjectEnrichmentFindingStatus(
       id: findingId,
       status: 'dismissed',
@@ -5050,9 +5072,6 @@ class AppState extends ChangeNotifier {
       updated = await db.markProjectRegistryEntryPrimarySource(
         registryId: registry.id,
       );
-      await db.updateProjectMeta(linkedProjectId, {
-        'scopeIncluded': 'Local project root: ${updated.localPath}',
-      });
     }
     await db.logEvent(
       area: 'operations',
@@ -5603,9 +5622,6 @@ class AppState extends ChangeNotifier {
         registryId: registry.id,
         atlasProjectId: projectId,
       );
-      await db.updateProjectMeta(projectId, {
-        'scopeIncluded': 'Local project root: ${registry.localPath}',
-      });
       linkedRegistry = (await db.getProjectRegistryEntry(registry.id))!;
     });
 
@@ -6226,13 +6242,18 @@ class AppState extends ChangeNotifier {
     final projectId = now.microsecondsSinceEpoch.toString();
     await db.transaction(() async {
       await db.createProject(projectId, entry.displayName, now);
-      await db.updateProjectMeta(projectId, {
-        'description': _projectDescriptionFromRegistry(entry),
-        'scopeIncluded': 'Local project root: ${entry.localPath}',
-        'scopeExcluded': refresh
-            ? 'Repo mutation, GitHub import, and AI summarization were not performed during import.'
-            : 'Full source indexing, repo mutation, GitHub import, and AI summarization were not performed during import.',
-      });
+      await ProjectCapsuleTruthService(db).acceptPatch(
+        projectId: projectId,
+        fields: {
+          'description': _projectDescriptionFromRegistry(entry),
+          'scopeExcluded': refresh
+              ? 'Repo mutation, GitHub import, and AI summarization were not performed during import.'
+              : 'Full source indexing, repo mutation, GitHub import, and AI summarization were not performed during import.',
+        },
+        actorLabel: 'Atlas import',
+        sourceKind: 'project_registry_import',
+        sourceId: registryId,
+      );
       await db.linkProjectRegistryEntryToAtlasProject(
         registryId: registryId,
         atlasProjectId: projectId,
@@ -6292,11 +6313,16 @@ class AppState extends ChangeNotifier {
         registryId: registryId,
         atlasProjectId: atlasProjectId,
       );
-      await db.updateProjectMeta(atlasProjectId, {
-        'scopeIncluded': 'Local project root: ${entry.localPath}',
-        'scopeExcluded':
-            'Full source indexing, repo mutation, GitHub import, and AI summarization were not performed during local update.',
-      });
+      await ProjectCapsuleTruthService(db).acceptPatch(
+        projectId: atlasProjectId,
+        fields: {
+          'scopeExcluded':
+              'Full source indexing, repo mutation, GitHub import, and AI summarization were not performed during local update.',
+        },
+        actorLabel: 'Atlas import',
+        sourceKind: 'project_registry_update',
+        sourceId: registryId,
+      );
       await db.setActiveProjectId(atlasProjectId);
     });
 
@@ -6900,12 +6926,8 @@ class AppState extends ChangeNotifier {
   String _projectDescriptionFromRegistry(ProjectRegistryEntry entry) {
     final lines = <String>[
       'Imported from the Local Operations Registry.',
-      'Local path: ${entry.localPath}',
       'Classification: ${entry.classification}',
     ];
-    if ((entry.gitRoot ?? '').trim().isNotEmpty) {
-      lines.add('Git root: ${entry.gitRoot}');
-    }
     return lines.join('\n');
   }
 
@@ -8364,12 +8386,14 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<int> exportOperationalBackupToJson(String path) async {
+  /// Writes a portable archive for inspection and selective transfer. It does
+  /// not include every Atlas table and cannot restore an Atlas instance.
+  Future<int> exportPortableDataArchive(String path) async {
     final allDocs = await db.select(db.documents).get();
     final allMedia = await db.getAllProjectMedia();
 
     final payload = {
-      'schema': 'project_atlas_operational_backup_v1',
+      'schema': 'project_atlas_portable_export_v1',
       'exportedAt': DateTime.now().toIso8601String(),
       'projects': (await db.select(db.projects).get())
           .map((row) => row.toJson())
@@ -8424,11 +8448,13 @@ class AppState extends ChangeNotifier {
 
     final archive = Archive();
 
-    // Add backup.json
+    // Add the portable export manifest.
     final jsonBytes = utf8.encode(
       const JsonEncoder.withIndent('  ').convert(payload),
     );
-    archive.addFile(ArchiveFile('backup.json', jsonBytes.length, jsonBytes));
+    archive.addFile(
+      ArchiveFile('portable_export.json', jsonBytes.length, jsonBytes),
+    );
 
     // Add document files
     for (final doc in allDocs) {
@@ -8457,8 +8483,8 @@ class AppState extends ChangeNotifier {
     await File(path).writeAsBytes(zipBytes);
 
     await db.logEvent(
-      area: 'backup',
-      action: 'operational_backup_exported',
+      area: 'export',
+      action: 'portable_data_exported',
       outputJson: jsonEncode({'path': path}),
     );
     return payload.length;
@@ -9064,7 +9090,7 @@ class AppState extends ChangeNotifier {
       project.id,
       limit: 50,
     )).where((task) => !{'completed', 'cancelled'}.contains(task.status));
-    final proposals = (await db.watchDrafts().first)
+    final proposals = (await db.getDrafts())
         .where(_isPendingAgentProposalDraft)
         .where((draft) => draft.projectId == project.id)
         .take(25)

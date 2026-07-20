@@ -48,9 +48,9 @@ void main() {
   });
 
   test(
-    'schema v23 creates local operations, source topology, runtime, git remote, enrichment, and queue tables',
+    'schema v25 creates local operations, source topology, runtime, git remote, enrichment, queue, and Capsule revision tables',
     () async {
-      expect(db.schemaVersion, 23);
+      expect(db.schemaVersion, 25);
 
       final tables = await db
           .customSelect(
@@ -93,11 +93,14 @@ void main() {
     'schema v21 migration backfills project source topology safely',
     () async {
       final dbPath = p.join(tempDir.path, 'schema21_source_topology.sqlite');
+      await _initializeCurrentSchema(dbPath);
       final legacy = sqlite3.sqlite3.open(dbPath);
       final now =
           DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
           Duration.millisecondsPerSecond;
       try {
+        legacy.execute('DROP TABLE project_capsule_revisions');
+        legacy.execute('DROP TABLE project_registry');
         legacy.execute('PRAGMA user_version = 21');
         legacy.execute('''
         CREATE TABLE project_registry (
@@ -143,7 +146,7 @@ void main() {
         final rows = await migrated.getProjectRegistry();
         final row = rows.single;
 
-        expect(migrated.schemaVersion, 23);
+        expect(migrated.schemaVersion, 25);
         expect(row.id, 'legacy-source-1');
         expect(row.localPath, 'https://github.com/example/repo.git');
         expect(row.atlasProjectId, 'atlas-project-1');
@@ -163,8 +166,28 @@ void main() {
     'schema v10 migration creates local operations tables and supports writes',
     () async {
       final dbPath = p.join(tempDir.path, 'schema10.sqlite');
+      await _initializeCurrentSchema(dbPath);
       final legacy = sqlite3.sqlite3.open(dbPath);
       try {
+        for (final table in [
+          'project_registry',
+          'project_observations',
+          'project_scan_runs',
+          'local_project_refresh_items',
+          'work_item_tags',
+          'project_git_remotes',
+          'project_enrichment_runs',
+          'project_enrichment_findings',
+          'project_enrichment_steps',
+          'project_enrichment_proposals',
+          'llm_task_queue',
+          'media_links',
+          'project_runtime_profiles',
+          'project_runtime_runs',
+          'project_capsule_revisions',
+        ]) {
+          legacy.execute('DROP TABLE $table');
+        }
         legacy.execute('PRAGMA user_version = 10');
       } finally {
         legacy.dispose();
@@ -364,7 +387,9 @@ void main() {
 
       expect(project, isNotNull);
       expect(project!.title, 'imported_project');
-      expect(project.description, contains('Local path:'));
+      expect(project.description, contains('Classification:'));
+      expect(project.description, isNot(contains('Local path:')));
+      expect(project.scopeIncluded, isNull);
       expect(linkedRegistry.reviewState, 'linked');
       expect(linkedRegistry.atlasProjectId, projectId);
       expect(stages, hasLength(1));
@@ -2058,7 +2083,7 @@ Pressure flakes a useful edge.
       expect(updatedRegistry.reviewState, 'linked');
       expect(updatedFinding?.status, 'dismissed');
       expect(updatedRun?.openFindings, result.run.openFindings - 1);
-      expect(project?.scopeIncluded, contains(replacementPath));
+      expect(project?.scopeIncluded, isNull);
       expect(updatedRegistry.notes, contains('Project Owner'));
       expect(
         events.map((event) => event.action),
@@ -3241,6 +3266,15 @@ Pressure flakes a useful edge.
       expect(cleanGit['ref'], 'abc123');
     },
   );
+}
+
+Future<void> _initializeCurrentSchema(String path) async {
+  final initialized = AppDb.withExecutor(NativeDatabase(File(path)));
+  try {
+    await initialized.customSelect('SELECT 1').get();
+  } finally {
+    await initialized.close();
+  }
 }
 
 void _makeCandidate(Directory tempDir, String name) {

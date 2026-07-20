@@ -119,7 +119,7 @@ class AtlasShell extends StatelessWidget {
         '/projects',
       ),
       _NavDest('Work', Icons.view_kanban_outlined, Icons.view_kanban, '/work'),
-      _NavDest('Ops', Icons.radar_outlined, Icons.radar, '/operations'),
+      _NavDest('Resume', Icons.hub_outlined, Icons.hub, '/capsule'),
       _NavDest(
         'Library',
         Icons.library_books_outlined,

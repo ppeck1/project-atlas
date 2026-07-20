@@ -7,6 +7,7 @@ import 'local_git_visibility_service.dart';
 import 'local_project_refresh_service.dart';
 import 'project_freshness_service.dart';
 import 'project_identity_resolver.dart';
+import 'project_capsule_truth_service.dart';
 import 'workload_planning_service.dart';
 
 class AtlasProjectStatus {
@@ -707,8 +708,8 @@ class AtlasAgentService {
             .map(_planningCardDigest)
             .toList(growable: false),
       },
-      safeConstraints: _safePlanningConstraints(),
-      verification: _planningVerification(validation, workload),
+      safeConstraints: safePlanningConstraints(),
+      verification: planningVerification(validation, workload),
       recentEvidence: _planningRecentEvidence(
         status: status,
         capsule: capsule,
@@ -1090,7 +1091,7 @@ class AtlasAgentService {
   }
 
   Future<List<Draft>> listRecentAgentProposals({int limit = 50}) async {
-    final drafts = await state.watchDrafts().first;
+    final drafts = await state.getDrafts();
     return drafts
         .where((draft) => draft.kind == proposalDraftKind)
         .take(limit)
@@ -1170,6 +1171,16 @@ class AtlasAgentService {
         entityId: proposal.projectId,
       );
     }
+    final acceptedTruthRevision = await _acceptedTruthRevisionForProposal(
+      proposal,
+    );
+    if (acceptedTruthRevision != null) {
+      throw StateError(
+        'This proposal already changed accepted project truth in revision '
+        '${acceptedTruthRevision.revisionNumber}. Approve it to recover the '
+        'review record; it can no longer be rejected.',
+      );
+    }
     final message = _clean(reason) ?? 'Rejected by reviewer.';
     await _markProposalReviewed(
       draft: draft,
@@ -1200,13 +1211,23 @@ class AtlasAgentService {
     if (cleanStatus == null || !projectStatuses.contains(cleanStatus)) {
       errors.add('Unsupported project status: $status.');
     }
+    final truthRevisionId = project == null
+        ? null
+        : (await state.getProjectCapsuleTruth(project.id))?.revisionId;
+    if (project != null && truthRevisionId == null) {
+      errors.add('Accepted project truth could not be loaded.');
+    }
     return _saveProposal(
       type: 'status_change',
       project: project,
       title: project == null
           ? 'Project status change'
           : 'Set ${project.title} to $cleanStatus',
-      payload: {'status': cleanStatus, 'reason': _clean(reason)},
+      payload: {
+        'status': cleanStatus,
+        'reason': _clean(reason),
+        'baseTruthRevisionId': truthRevisionId,
+      },
       validationErrors: errors,
     );
   }
@@ -1308,6 +1329,12 @@ class AtlasAgentService {
     if (priority != null && !priorities.contains(priority)) {
       errors.add('Unsupported priority: $priority.');
     }
+    final truthRevisionId = project == null
+        ? null
+        : (await state.getProjectCapsuleTruth(project.id))?.revisionId;
+    if (project != null && truthRevisionId == null) {
+      errors.add('Accepted project truth could not be loaded.');
+    }
 
     return _saveProposal(
       type: 'manifest_update',
@@ -1315,7 +1342,11 @@ class AtlasAgentService {
       title: project == null
           ? 'Project manifest update'
           : 'Update manifest for ${project.title}',
-      payload: {'fields': cleanFields, 'reason': _clean(reason)},
+      payload: {
+        'fields': cleanFields,
+        'reason': _clean(reason),
+        'baseTruthRevisionId': truthRevisionId,
+      },
       validationErrors: errors,
     );
   }
@@ -1466,9 +1497,24 @@ class AtlasAgentService {
         if (status == null || !projectStatuses.contains(status)) {
           throw StateError('Unsupported project status: $status');
         }
-        await state.updateProjectMeta(projectId, {
-          'status': status,
-        }, actor: 'Atlas Agent');
+        final baseTruthRevisionId = _payloadString(
+          proposal.payload,
+          'baseTruthRevisionId',
+        );
+        if (baseTruthRevisionId == null) {
+          throw StateError(
+            'This proposal predates accepted-truth versioning and must be recreated.',
+          );
+        }
+        await state.updateProjectMeta(
+          projectId,
+          {'status': status},
+          actor: 'Atlas Agent',
+          sourceKind: 'agent_proposal',
+          sourceId: proposal.draft.id,
+          expectedTruthRevisionId: baseTruthRevisionId,
+          reason: _payloadString(proposal.payload, 'reason'),
+        );
         return projectId;
       case 'task_update':
         return _applyTaskProposal(proposal);
@@ -1559,7 +1605,24 @@ class AtlasAgentService {
       }
     }
     if (meta.isNotEmpty) {
-      await state.updateProjectMeta(projectId, meta, actor: 'Atlas Agent');
+      final baseTruthRevisionId = _payloadString(
+        proposal.payload,
+        'baseTruthRevisionId',
+      );
+      if (baseTruthRevisionId == null) {
+        throw StateError(
+          'This proposal predates accepted-truth versioning and must be recreated.',
+        );
+      }
+      await state.updateProjectMeta(
+        projectId,
+        meta,
+        actor: 'Atlas Agent',
+        sourceKind: 'agent_proposal',
+        sourceId: proposal.draft.id,
+        expectedTruthRevisionId: baseTruthRevisionId,
+        reason: _payloadString(proposal.payload, 'reason'),
+      );
     }
     if (fields.containsKey('tags')) {
       final tagIds = await _ensureTagIds(_valueStringList(fields['tags']));
@@ -1641,23 +1704,40 @@ class AtlasAgentService {
       ..['reviewEntityId'] = entityId;
     final updatedBody =
         '${draft.body.trimRight()}\n\n---\nReview: $status\n$message\n';
-    await state.updateDraftReview(
-      id: draft.id,
-      accepted: accepted,
-      inputJson: jsonEncode(envelope),
-      body: updatedBody,
-    );
-    await state.db.logEvent(
-      area: 'agent',
-      action: 'proposal_$status',
-      entityType: proposal.projectId == null ? 'draft' : 'project',
-      entityId: proposal.projectId ?? draft.id,
-      inputJson: jsonEncode(proposal.toJson()),
-      outputJson: jsonEncode({
-        'draftId': draft.id,
-        'message': message,
-        'entityId': entityId,
-      }),
+    await state.db.transaction(() async {
+      await state.updateDraftReview(
+        id: draft.id,
+        accepted: accepted,
+        inputJson: jsonEncode(envelope),
+        body: updatedBody,
+      );
+      await state.db.logEvent(
+        area: 'agent',
+        action: 'proposal_$status',
+        entityType: proposal.projectId == null ? 'draft' : 'project',
+        entityId: proposal.projectId ?? draft.id,
+        inputJson: jsonEncode(proposal.toJson()),
+        outputJson: jsonEncode({
+          'draftId': draft.id,
+          'message': message,
+          'entityId': entityId,
+        }),
+      );
+    });
+  }
+
+  Future<ProjectCapsuleAcceptedRevision?> _acceptedTruthRevisionForProposal(
+    AtlasProposalDraft proposal,
+  ) {
+    final projectId = proposal.projectId;
+    if (projectId == null ||
+        !{'status_change', 'manifest_update'}.contains(proposal.type)) {
+      return Future.value(null);
+    }
+    return ProjectCapsuleTruthService(state.db).findAcceptedRevisionBySource(
+      projectId: projectId,
+      sourceKind: 'agent_proposal',
+      sourceId: proposal.draft.id,
     );
   }
 
@@ -2007,7 +2087,7 @@ class AtlasAgentService {
     };
   }
 
-  static Map<String, Object?> _safePlanningConstraints() => {
+  static Map<String, Object?> safePlanningConstraints() => {
     'humanFinal': true,
     'noDirectFileMutationByChatGPT': true,
     'noRemoteWriteTools': true,
@@ -2043,7 +2123,7 @@ class AtlasAgentService {
     'showInMainWorkboard': card.showInMainWorkboard,
   };
 
-  static Map<String, Object?> _planningVerification(
+  static Map<String, Object?> planningVerification(
     Object? validation,
     WorkloadSnapshot workload,
   ) {

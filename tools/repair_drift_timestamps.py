@@ -62,6 +62,7 @@ DRIFT_TIMESTAMP_FIELDS = (
     TimestampField("project_people", "created_at"),
     TimestampField("project_risks", "created_at"),
     TimestampField("project_decisions", "created_at"),
+    TimestampField("project_capsule_revisions", "accepted_at"),
     TimestampField("tags", "created_at"),
     TimestampField("tags", "updated_at"),
     TimestampField("project_tags", "created_at"),

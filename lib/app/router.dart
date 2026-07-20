@@ -4,6 +4,7 @@ import '../shared/widgets/atlas_shell.dart';
 import '../features/today/today_screen.dart';
 import '../features/projects/projects_screen.dart';
 import '../features/projects/project_detail_screen.dart';
+import '../features/capsule/capsule_screen.dart';
 import '../features/operations/operations_screen.dart';
 import '../features/library/library_screen.dart';
 import '../features/settings/settings_screen.dart';
@@ -32,6 +33,7 @@ GoRouter buildRouter() {
             builder: (_, state) =>
                 ProjectDetailScreen(projectId: state.pathParameters['id']!),
           ),
+          GoRoute(path: '/capsule', builder: (_, __) => const CapsuleScreen()),
           GoRoute(
             path: '/operations',
             builder: (_, __) => const OperationsScreen(),

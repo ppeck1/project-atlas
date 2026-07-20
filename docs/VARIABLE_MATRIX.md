@@ -4,7 +4,7 @@ This matrix describes the configuration variables used by the current public
 Project Atlas source. It intentionally contains names, defaults, and handling
 rules only—never live values, credentials, or machine-specific paths.
 
-Last reviewed: 2026-07-17. This is a reconciliation reference: it records
+Last reviewed: 2026-07-20. This is a reconciliation reference: it records
 where each value is read, how precedence works, and whether it is portable
 between installs. It never records a live value.
 
@@ -23,6 +23,12 @@ When unset, Atlas uses `project_atlas.sqlite` in the platform application
 support directory. The override is compile-time, not a normal runtime setting.
 The schema migration values are also Dart defines, not process environment
 variables; `ATLAS_MCP_SMOKE_DB` is the process environment exception.
+
+## System-derived process inputs (not Atlas configuration)
+
+| Input | Used by | Handling | Reconciliation note |
+|---|---|---|---|
+| Windows process `Path` / `PATH` | `lib/services/mcp_connector_autostart_service.dart` | The hidden PowerShell launcher reads either spelling from the inherited process environment and restores the canonical `Path` spelling before it starts a child process. | This is not an Atlas setting and is never persisted. Record it here so a future launcher reconciliation does not mistake this compatibility normalization for user configuration. |
 
 ## MCP gateway environment
 
@@ -58,9 +64,12 @@ server, and exactly one token-validation mechanism: JWKS or introspection.
 
 `tools/seed_portfolio_capture.py` takes an explicit `--db` argument instead of
 an environment variable. It refuses paths that do not contain
-`portfolio-capture`, requires an Atlas-initialized schema, and refuses to seed a
-database that already contains projects, work items, or documents. The fixture
-also seeds public-safe Project Sources rows for Operations screenshots.
+`portfolio-capture`, requires an Atlas-initialized current schema (schema 24 at
+this review), and refuses to seed a database that already contains projects,
+work items, or documents. The fixture also seeds public-safe Project Sources
+rows for Operations screenshots. Treat the schema number as a verification
+target, not a configurable value: update this note whenever a capture is made
+against a newer migration.
 
 ## In-application settings
 

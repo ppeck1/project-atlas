@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/services/atlas_agent_service.dart';
+import 'package:project_atlas/services/project_capsule_truth_service.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
 
 void main() {
@@ -328,6 +329,7 @@ void main() {
       expect(envelope['schema'], 'atlas.agent.proposal.v1');
       expect(envelope['type'], 'status_change');
       expect((envelope['payload'] as Map)['status'], 'needs_review');
+      expect((envelope['payload'] as Map)['baseTruthRevisionId'], isNotEmpty);
     });
 
     test('rejects invalid proposals without saving drafts', () async {
@@ -379,7 +381,119 @@ void main() {
       expect(project!.status, 'blocked');
       expect(review!.isApproved, isTrue);
       expect(review.reviewMessage, 'Project status updated.');
+      expect(
+        await ProjectCapsuleTruthService(db).listRevisions('atlas'),
+        hasLength(2),
+      );
     });
+
+    test(
+      'recovers review after accepted truth applied before draft approval',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final proposed = await service.proposeStatusChange(
+          projectId: 'atlas',
+          status: 'blocked',
+        );
+        final draft = await state.getDraft(proposed.draftId!);
+        final proposal = AtlasProposalDraft.fromDraft(draft!);
+        final baseRevisionId =
+            proposal.payload['baseTruthRevisionId']! as String;
+        await ProjectCapsuleTruthService(db).acceptPatch(
+          projectId: 'atlas',
+          expectedRevisionId: baseRevisionId,
+          fields: const {'status': 'blocked'},
+          actorLabel: 'Atlas Agent',
+          sourceKind: 'agent_proposal',
+          sourceId: draft.id,
+        );
+
+        await expectLater(
+          service.rejectAgentProposal(draft.id),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('already changed accepted project truth'),
+            ),
+          ),
+        );
+        expect(
+          (await service.getAgentProposalReview(draft.id))!.isPending,
+          isTrue,
+        );
+
+        final recovered = await service.approveAgentProposal(draft.id);
+        expect(recovered.reviewStatus, AtlasAgentService.reviewStatusApproved);
+        expect(
+          (await service.getAgentProposalReview(draft.id))!.isApproved,
+          isTrue,
+        );
+        expect(
+          await ProjectCapsuleTruthService(db).listRevisions('atlas'),
+          hasLength(2),
+        );
+      },
+    );
+
+    test('stale truth proposals remain pending and change nothing', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+      final proposal = await service.proposeStatusChange(
+        projectId: 'atlas',
+        status: 'blocked',
+      );
+      await state.updateProjectMeta('atlas', {
+        'desiredOutcome': 'A newer accepted outcome.',
+      });
+
+      await expectLater(
+        service.approveAgentProposal(proposal.draftId!),
+        throwsA(isA<ProjectCapsuleTruthConflict>()),
+      );
+      final project = await db.getProjectFull('atlas');
+      final review = await service.getAgentProposalReview(proposal.draftId!);
+
+      expect(project!.status, 'active');
+      expect(project.desiredOutcome, 'A newer accepted outcome.');
+      expect(review!.isPending, isTrue);
+    });
+
+    test(
+      'legacy truth proposals without a base revision fail closed',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final proposal = await service.proposeStatusChange(
+          projectId: 'atlas',
+          status: 'blocked',
+        );
+        final draft = await state.getDraft(proposal.draftId!);
+        final envelope = jsonDecode(draft!.inputJson!) as Map<String, Object?>;
+        final payload = Map<String, Object?>.from(envelope['payload']! as Map)
+          ..remove('baseTruthRevisionId');
+        envelope['payload'] = payload;
+        await state.updateDraftReview(
+          id: draft.id,
+          accepted: false,
+          inputJson: jsonEncode(envelope),
+        );
+
+        await expectLater(
+          service.approveAgentProposal(draft.id),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('must be recreated'),
+            ),
+          ),
+        );
+        expect((await db.getProjectFull('atlas'))!.status, 'active');
+        expect(
+          (await service.getAgentProposalReview(draft.id))!.isPending,
+          isTrue,
+        );
+      },
+    );
 
     test('approves closeout proposals as handoff drafts', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));

@@ -28,11 +28,12 @@ REQUIRED_DOCS = (
 )
 
 README_SCREENSHOTS = (
-    "docs/screenshots/today.jpg",
-    "docs/screenshots/projects.jpg",
-    "docs/screenshots/workboard.jpg",
-    "docs/screenshots/operations-project-sources.jpg",
-    "docs/screenshots/library.jpg",
+    "docs/screenshots/today.png",
+    "docs/screenshots/projects.png",
+    "docs/screenshots/workboard.png",
+    "docs/screenshots/capsule.png",
+    "docs/screenshots/operations-project-sources.png",
+    "docs/screenshots/library.png",
 )
 
 @dataclass(frozen=True)

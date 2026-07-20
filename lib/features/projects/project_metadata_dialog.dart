@@ -30,7 +30,9 @@ Future<bool?> showProjectMetadataDialog(
 ) async {
   final state = AppStateScope.of(context);
   final projects = await state.getVisibleProjects();
+  final truthState = await state.getProjectCapsuleTruth(project.id);
   if (!context.mounted) return false;
+  if (truthState == null) return false;
 
   final categories = {
     for (final row in projects)
@@ -40,20 +42,25 @@ Future<bool?> showProjectMetadataDialog(
 
   return showDialog<bool>(
     context: context,
-    builder: (ctx) =>
-        ProjectMetadataDialog(project: project, categories: categories),
+    builder: (ctx) => ProjectMetadataDialog(
+      project: truthState.project,
+      categories: categories,
+      expectedTruthRevisionId: truthState.revisionId,
+    ),
   );
 }
 
 class ProjectMetadataDialog extends StatefulWidget {
   final Project project;
   final List<String> categories;
+  final String expectedTruthRevisionId;
   final bool includeOwnerField;
 
   const ProjectMetadataDialog({
     super.key,
     required this.project,
     required this.categories,
+    required this.expectedTruthRevisionId,
     this.includeOwnerField = true,
   });
 
@@ -452,7 +459,7 @@ class _ProjectMetadataDialogState extends State<ProjectMetadataDialog> {
         'phase': _normalizeProjectPhase(_phase),
         'priority': normalizePriorityValue(_priority),
         'owner': _blankToNull(_ownerCtrl.text),
-      });
+      }, expectedTruthRevisionId: widget.expectedTruthRevisionId);
       await state.saveProjectRuntimeProfileDraft(
         widget.project.id,
         ProjectRuntimeProfileDraft(
