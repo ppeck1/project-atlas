@@ -5,7 +5,10 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
+
+import '../db/db_open.dart';
 
 /// The on-disk contract for a full Atlas recovery bundle.
 const atlasFullBackupManifestSchema = 'project_atlas_full_backup_v1';
@@ -81,6 +84,22 @@ class AtlasFullBackupService {
         );
       }
     }
+  }
+
+  /// Builds the production service around every current Atlas-owned file root.
+  ///
+  /// This remains path discovery only: it does not expose or perform a live
+  /// database replacement.
+  static Future<AtlasFullBackupService> forCurrentAtlasApp() async {
+    final support = await getApplicationSupportDirectory();
+    final documents = await getApplicationDocumentsDirectory();
+    return AtlasFullBackupService(
+      sourceDatabase: await resolveAtlasDatabaseFile(),
+      appOwnedRoots: {
+        'atlas_documents': Directory(p.join(documents.path, 'atlas_documents')),
+        'project_media': Directory(p.join(support.path, 'project_media')),
+      },
+    );
   }
 
   /// Produces a completed recovery bundle under [destinationRoot].

@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../db/app_db.dart';
 import '../../services/github_archive_service.dart';
 import '../../services/github_remote_metadata_service.dart';
+import '../../services/atlas_full_backup_service.dart';
 import '../../services/local_git_visibility_service.dart';
 import '../../services/local_git_archive_service.dart';
 import '../../services/local_project_refresh_service.dart';
@@ -8384,6 +8385,38 @@ class AppState extends ChangeNotifier {
     if (docsDir.existsSync()) {
       await Process.start('explorer.exe', [docsDir.path]);
     }
+  }
+
+  /// Creates a complete recovery bundle. This never replaces the live Atlas
+  /// instance; recovery must first restore and validate into staging.
+  Future<AtlasFullBackupCreation> createFullBackup(
+    Directory destinationRoot,
+  ) async {
+    final service = await AtlasFullBackupService.forCurrentAtlasApp();
+    final result = await service.createBundle(destinationRoot);
+    await db.logEvent(
+      area: 'recovery',
+      action: 'full_backup_created',
+      outputJson: jsonEncode({'path': result.bundle.path}),
+    );
+    return result;
+  }
+
+  /// Restores a verified recovery bundle into a new staging location only.
+  ///
+  /// No active database or app-owned file is replaced by this method.
+  Future<AtlasFullBackupStagingRestore> restoreFullBackupToStaging(
+    Directory bundle,
+    Directory destinationRoot,
+  ) async {
+    final service = await AtlasFullBackupService.forCurrentAtlasApp();
+    final result = await service.restoreToStaging(bundle, destinationRoot);
+    await db.logEvent(
+      area: 'recovery',
+      action: 'full_backup_staging_restored',
+      outputJson: jsonEncode({'path': result.bundle.path}),
+    );
+    return result;
   }
 
   /// Writes a portable archive for inspection and selective transfer. It does
