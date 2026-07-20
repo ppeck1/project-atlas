@@ -179,5 +179,9 @@ void main() {
         await temp.delete(recursive: true);
       }
     },
+    // This opens and closes a file-backed SQLite database twice. On constrained
+    // Windows CI runners that can exceed the default 30-second test deadline
+    // while the migration itself is still deterministic and bounded.
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 }
