@@ -41,6 +41,17 @@ class AtlasFullBackupValidationReport {
   bool get isValid => errors.isEmpty;
 }
 
+/// A validated copy of a recovery bundle restored away from the live instance.
+class AtlasFullBackupStagingRestore {
+  final Directory bundle;
+  final AtlasFullBackupValidationReport validation;
+
+  const AtlasFullBackupStagingRestore({
+    required this.bundle,
+    required this.validation,
+  });
+}
+
 /// Creates and validates self-describing Atlas recovery bundles.
 ///
 /// The SQLite database is copied through SQLite's online-backup API, never by
@@ -246,6 +257,61 @@ class AtlasFullBackupService {
     );
   }
 
+  /// Restores [bundle] into a new, validated staging directory.
+  ///
+  /// This method never reads from, writes to, closes, or replaces
+  /// [sourceDatabase]. A later recovery coordinator may decide whether a
+  /// verified staging restore is eligible to replace an inactive Atlas
+  /// instance.
+  Future<AtlasFullBackupStagingRestore> restoreToStaging(
+    Directory bundle,
+    Directory destinationRoot,
+  ) async {
+    final sourceValidation = await validateBundle(bundle);
+    if (!sourceValidation.isValid) {
+      throw AtlasFullBackupException(
+        'Refusing to restore an invalid backup bundle: '
+        '${sourceValidation.errors.join('; ')}',
+      );
+    }
+    final manifest = sourceValidation.manifest!;
+    final entries = manifest['files']! as List;
+    await destinationRoot.create(recursive: true);
+
+    final restored = Directory(p.join(destinationRoot.path, _restoreName()));
+    final staging = Directory('${restored.path}.incomplete');
+    if (await restored.exists() || await staging.exists()) {
+      throw AtlasFullBackupException(
+        'Refusing to overwrite an existing staging restore: ${restored.path}',
+      );
+    }
+    await staging.create(recursive: true);
+    await File(
+      p.join(bundle.path, 'manifest.json'),
+    ).copy(p.join(staging.path, 'manifest.json'));
+    for (final rawEntry in entries) {
+      final entry = rawEntry as Map;
+      final relativePath = entry['path'] as String;
+      final source = File(p.joinAll([bundle.path, ...p.split(relativePath)]));
+      final target = File(p.joinAll([staging.path, ...p.split(relativePath)]));
+      await target.parent.create(recursive: true);
+      await source.copy(target.path);
+    }
+
+    final stagingValidation = await validateBundle(staging);
+    if (!stagingValidation.isValid) {
+      throw AtlasFullBackupException(
+        'The staging restore failed validation: '
+        '${stagingValidation.errors.join('; ')}',
+      );
+    }
+    await staging.rename(restored.path);
+    return AtlasFullBackupStagingRestore(
+      bundle: restored,
+      validation: stagingValidation,
+    );
+  }
+
   Future<void> _createOnlineSnapshot(File destination) async {
     final source = sqlite3.open(sourceDatabase.path, mode: OpenMode.readOnly);
     final target = sqlite3.open(destination.path);
@@ -382,6 +448,11 @@ class AtlasFullBackupService {
   String _bundleName() {
     final timestamp = _clock().toUtc().toIso8601String().replaceAll(':', '-');
     return 'atlas-full-backup-$timestamp-${_random.nextInt(1 << 32).toRadixString(16)}';
+  }
+
+  String _restoreName() {
+    final timestamp = _clock().toUtc().toIso8601String().replaceAll(':', '-');
+    return 'atlas-staging-restore-$timestamp-${_random.nextInt(1 << 32).toRadixString(16)}';
   }
 
   static Future<String> _sha256File(File file) async =>

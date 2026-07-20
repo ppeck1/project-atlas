@@ -126,4 +126,65 @@ void main() {
       contains('Checksum mismatch: database/project_atlas.sqlite.'),
     );
   });
+
+  test(
+    'restores a verified bundle into staging without touching live data',
+    () async {
+      final backup = await service().createBundle(
+        Directory(p.join(tempDir.path, 'backups')),
+      );
+      final liveDatabase = sqlite3.open(sourceDatabase.path);
+      liveDatabase.execute("UPDATE projects SET title = 'Live state changed';");
+      liveDatabase.dispose();
+
+      final restored = await service().restoreToStaging(
+        backup.bundle,
+        Directory(p.join(tempDir.path, 'restores')),
+      );
+
+      expect(restored.validation.isValid, isTrue);
+      expect(await restored.bundle.exists(), isTrue);
+      expect(restored.bundle.path, isNot(endsWith('.incomplete')));
+      expect(
+        await File(
+          p.join(restored.bundle.path, 'files', 'atlas_documents', 'brief.txt'),
+        ).readAsString(),
+        'This is app-owned content.',
+      );
+      final restoredDatabase = sqlite3.open(
+        p.join(restored.bundle.path, 'database', 'project_atlas.sqlite'),
+        mode: OpenMode.readOnly,
+      );
+      expect(
+        restoredDatabase.select('SELECT title FROM projects;').single['title'],
+        'Atlas',
+      );
+      restoredDatabase.dispose();
+      final currentLive = sqlite3.open(
+        sourceDatabase.path,
+        mode: OpenMode.readOnly,
+      );
+      expect(
+        currentLive.select('SELECT title FROM projects;').single['title'],
+        'Live state changed',
+      );
+      currentLive.dispose();
+    },
+  );
+
+  test('refuses to restore a corrupted bundle', () async {
+    final backup = await service().createBundle(
+      Directory(p.join(tempDir.path, 'backups')),
+    );
+    await File(
+      p.join(backup.bundle.path, 'files', 'atlas_documents', 'brief.txt'),
+    ).writeAsString('tampered');
+    final restoreRoot = Directory(p.join(tempDir.path, 'restores'));
+
+    await expectLater(
+      service().restoreToStaging(backup.bundle, restoreRoot),
+      throwsA(isA<AtlasFullBackupException>()),
+    );
+    expect(await restoreRoot.exists(), isFalse);
+  });
 }
