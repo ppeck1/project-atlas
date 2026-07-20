@@ -33,7 +33,7 @@ class Projects extends Table {
 }
 
 // ---------------------------------------------------------------------------
-// Project Capsule accepted-truth history (v24)
+// Project Capsule accepted-truth history (v24, hardened by v25 guards)
 //
 // Projects remains the materialized current state. These rows are immutable
 // accepted revisions used for comparison, concurrency, and audit. Proposed

@@ -53,5 +53,11 @@ Capsule edits update the project fields and append the next revision in one
 transaction. Known registry-generated local-path markers are excluded from the
 authored baseline; source locations remain in the operational registry.
 
-The database is local and currently plaintext. Backup and OS access controls
-remain the operator's responsibility.
+The v24-to-v25 migration installs SQLite triggers that reject ordinary
+`UPDATE` and `DELETE` operations on accepted revisions. Ledger reads strictly
+validate hashes, parent links, contiguous revision numbers, and recorded
+parent-to-child diffs before exposing history.
+
+The database is local and currently plaintext. The Settings portable export is
+not a complete backup and cannot restore an Atlas instance; full backup and
+restore remain separate recovery work.

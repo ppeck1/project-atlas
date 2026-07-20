@@ -16,7 +16,7 @@ void main() {
   });
 
   test(
-    'schema v24 creates project, media-link, runtime, queue, and operations tables',
+    'schema v25 creates project, media-link, runtime, queue, and operations tables',
     () async {
       expect(db.schemaVersion, 25);
 

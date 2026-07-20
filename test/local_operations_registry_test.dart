@@ -48,7 +48,7 @@ void main() {
   });
 
   test(
-    'schema v24 creates local operations, source topology, runtime, git remote, enrichment, queue, and Capsule revision tables',
+    'schema v25 creates local operations, source topology, runtime, git remote, enrichment, queue, and Capsule revision tables',
     () async {
       expect(db.schemaVersion, 25);
 
