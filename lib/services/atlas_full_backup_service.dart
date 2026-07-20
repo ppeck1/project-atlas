@@ -351,9 +351,9 @@ class AtlasFullBackupService {
     final copied = <Map<String, Object?>>[];
     await for (final entity in root.list(recursive: true, followLinks: false)) {
       if (entity is Link) {
-        throw AtlasFullBackupException(
-          'App-owned files may not contain symlinks: ${entity.path}',
-        );
+        // Never follow or copy a link: it can point outside app-owned storage
+        // (including Windows/OneDrive's synthetic `..` reparse point).
+        continue;
       }
       if (entity is! File) continue;
       final relative = p.relative(entity.path, from: root.path);

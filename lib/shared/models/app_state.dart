@@ -8392,14 +8392,23 @@ class AppState extends ChangeNotifier {
   Future<AtlasFullBackupCreation> createFullBackup(
     Directory destinationRoot,
   ) async {
-    final service = await AtlasFullBackupService.forCurrentAtlasApp();
-    final result = await service.createBundle(destinationRoot);
-    await db.logEvent(
-      area: 'recovery',
-      action: 'full_backup_created',
-      outputJson: jsonEncode({'path': result.bundle.path}),
-    );
-    return result;
+    try {
+      final service = await AtlasFullBackupService.forCurrentAtlasApp();
+      final result = await service.createBundle(destinationRoot);
+      await db.logEvent(
+        area: 'recovery',
+        action: 'full_backup_created',
+        outputJson: jsonEncode({'path': result.bundle.path}),
+      );
+      return result;
+    } catch (error) {
+      await db.logEvent(
+        area: 'recovery',
+        action: 'full_backup_failed',
+        error: '$error',
+      );
+      rethrow;
+    }
   }
 
   /// Restores a verified recovery bundle into a new staging location only.
