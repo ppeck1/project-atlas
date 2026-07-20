@@ -10,7 +10,7 @@ state, evidence, and deliberately constrained automation.
 
 Created and maintained by [Paul Peck](https://github.com/ppeck1).
 
-![Project Atlas Projects screen](docs/screenshots/projects.jpg)
+![Project Atlas Projects screen](docs/screenshots/projects.png)
 
 _Actual Project Atlas Windows capture. Every screenshot in this README comes
 from the running application using an isolated, public-safe demo database._
@@ -42,13 +42,15 @@ explicitly save it as accepted truth. Atlas appends immutable revision history
 and rejects stale saves. Agent-originated changes continue through the proposal
 review queue; they cannot silently become accepted state.
 
+![Project Atlas Capsule screen](docs/screenshots/capsule.png)
+
 ### Plan the day without losing project context
 
 The Today view rolls up work that is in progress, overdue, due soon, blocked,
 or high priority. Items remain grouped by project and can be filtered without
 flattening the underlying ownership and evidence.
 
-![Project Atlas Today screen](docs/screenshots/today.jpg)
+![Project Atlas Today screen](docs/screenshots/today.png)
 
 ### Turn project state into an execution queue
 
@@ -56,7 +58,7 @@ The Workboard separates ready work, decisions, blocked items, and work in
 progress. Readiness, actor, risk, size, review state, and verification needs are
 first-class planning fields rather than free-form conventions.
 
-![Project Atlas Workboard screen](docs/screenshots/workboard.jpg)
+![Project Atlas Workboard screen](docs/screenshots/workboard.png)
 
 ### Reconcile sources before refreshing evidence
 
@@ -65,7 +67,7 @@ the source rows that support them. Source topology chips make local working
 folders, legacy remote URLs, ignored rows, and unresolved authority visible
 before a refresh can change Atlas bookkeeping.
 
-![Project Atlas Operations Project Sources screen](docs/screenshots/operations-project-sources.jpg)
+![Project Atlas Operations Project Sources screen](docs/screenshots/operations-project-sources.png)
 
 ### Keep source material beside the work
 
@@ -73,7 +75,7 @@ The Library imports and previews project-linked documents while preserving the
 local-first boundary. Search and project filters make technical evidence
 available without turning a project brief into an untraceable summary.
 
-![Project Atlas Library screen](docs/screenshots/library.jpg)
+![Project Atlas Library screen](docs/screenshots/library.png)
 
 ## What I built
 
