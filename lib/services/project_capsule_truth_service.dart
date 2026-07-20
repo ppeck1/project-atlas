@@ -189,9 +189,13 @@ class ProjectCapsuleTruthService {
   Future<List<ProjectCapsuleAcceptedRevision>> listRevisions(
     String projectId, {
     int limit = 50,
+    int offset = 0,
   }) async {
     final revisions = await _verifiedRevisions(projectId);
-    return List.unmodifiable(revisions.take(limit.clamp(1, 200)));
+    final start = offset.clamp(0, revisions.length);
+    return List.unmodifiable(
+      revisions.skip(start).take(limit.clamp(1, 200)),
+    );
   }
 
   Future<ProjectCapsuleAcceptedRevision?> findAcceptedRevisionBySource({

@@ -211,9 +211,12 @@ class _ProjectCapsuleBodyState extends State<_ProjectCapsuleBody> {
       await showCapsuleTruthHistory(
         context: context,
         revisions: revisions,
+        totalRevisionCount: capsule.truthRevisionCount,
         currentRevisionId: capsule.truthRevisionRecorded
             ? capsule.truthRevisionId
             : null,
+        onLoadMore: (offset) =>
+            state.getProjectCapsuleRevisions(widget.projectId, offset: offset),
       );
     } catch (error) {
       if (!mounted) return;

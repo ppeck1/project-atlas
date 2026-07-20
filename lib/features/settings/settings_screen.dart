@@ -2576,7 +2576,7 @@ class _AdminTabState extends State<_AdminTab> {
           icon: Icons.inventory_2_outlined,
           iconColor: _primary,
           title: 'Local data',
-          subtitle: 'Backup and inspect your local Atlas files.',
+          subtitle: 'Export portable data and inspect your local Atlas files.',
         ),
         const SizedBox(height: 14),
         Wrap(
@@ -2586,21 +2586,21 @@ class _AdminTabState extends State<_AdminTab> {
             OutlinedButton.icon(
               onPressed: () async {
                 final path = await _askPath(
-                  'Export backup',
-                  r'C:\Users\you\Documents\project_atlas_backup.zip',
+                  'Export portable data',
+                  r'C:\Users\you\Documents\project_atlas_portable_export.zip',
                 );
                 if (path == null) return;
                 try {
-                  await state.exportOperationalBackupToJson(path);
+                  await state.exportPortableDataArchive(path);
                   if (mounted) {
-                    setState(() => _status = 'Backup exported: $path');
+                    setState(() => _status = 'Portable export created: $path');
                   }
                 } catch (e) {
-                  if (mounted) setState(() => _status = 'Backup failed: $e');
+                  if (mounted) setState(() => _status = 'Portable export failed: $e');
                 }
               },
               icon: const Icon(Icons.save_alt, size: 16),
-              label: const Text('Export backup'),
+              label: const Text('Export portable data'),
             ),
             OutlinedButton.icon(
               onPressed: () async {
@@ -2616,6 +2616,11 @@ class _AdminTabState extends State<_AdminTab> {
               label: const Text('Open app data folder'),
             ),
           ],
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Portable export is not a complete backup and cannot restore an Atlas instance.',
+          style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
         ),
         if (_status != null) ...[
           const SizedBox(height: 10),

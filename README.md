@@ -132,6 +132,10 @@ The local SQLite database is currently plaintext, and configured integration
 secrets are stored locally; review [SECURITY.md](SECURITY.md) before using real
 sensitive material.
 
+The Settings portable export is useful for inspection and selective transfer,
+but it is not a complete backup and cannot restore an Atlas instance. Full
+backup-and-restore remains a separately scoped recovery feature.
+
 Example data in the public repository is limited to demo fixtures and the real
 application captures shown above. Those captures were made from an isolated
 demo database, not the maintainer's working Atlas data.
@@ -194,6 +198,8 @@ database, and exercises the MCP gateway against the built Windows executable.
 
 - Windows is the supported desktop target.
 - The local database and saved integration secrets are not encrypted at rest.
+- The Settings portable export is not a complete backup and has no restore
+  workflow yet.
 - AI quality depends on the locally selected Ollama model.
 - Runtime actions execute operator-provided commands and require the same care
   as running those commands directly.

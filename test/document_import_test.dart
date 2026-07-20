@@ -578,8 +578,8 @@ This is the email body.''';
     });
   });
 
-  group('exportOperationalBackupToJson', () {
-    test('ZIP contains backup.json and a document entry', () async {
+  group('exportPortableDataArchive', () {
+    test('ZIP contains portable export JSON and a document entry', () async {
       final src = File(p.join(tempDir.path, 'spec.txt'))
         ..writeAsStringSync('Backup test content');
       await db.importDocumentFromPath(src.path);
@@ -588,21 +588,22 @@ This is the email body.''';
       addTearDown(state.dispose);
 
       final zipPath = p.join(tempDir.path, 'backup.zip');
-      await state.exportOperationalBackupToJson(zipPath);
+      await state.exportPortableDataArchive(zipPath);
 
       final zipBytes = await File(zipPath).readAsBytes();
       final archive = ZipDecoder().decodeBytes(zipBytes);
       final entryNames = archive.map((e) => e.name).toSet();
 
-      expect(entryNames, contains('backup.json'));
+      expect(entryNames, contains('portable_export.json'));
       expect(entryNames, anyElement(startsWith('documents/')));
 
-      final jsonEntry = archive.findFile('backup.json')!;
+      final jsonEntry = archive.findFile('portable_export.json')!;
       final payload =
           jsonDecode(utf8.decode(jsonEntry.content as List<int>))
               as Map<String, dynamic>;
       expect(payload.containsKey('documents'), isTrue);
       expect(payload.containsKey('projects'), isTrue);
+      expect(payload['schema'], 'project_atlas_portable_export_v1');
     });
   });
 }

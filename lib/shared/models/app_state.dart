@@ -1921,7 +1921,10 @@ class AppState extends ChangeNotifier {
   Future<List<ProjectCapsuleAcceptedRevision>> getProjectCapsuleRevisions(
     String projectId, {
     int limit = 50,
-  }) => ProjectCapsuleTruthService(db).listRevisions(projectId, limit: limit);
+    int offset = 0,
+  }) => ProjectCapsuleTruthService(
+    db,
+  ).listRevisions(projectId, limit: limit, offset: offset);
 
   String _actorTypeForLabel(String actor) {
     final normalized = actor.trim().toLowerCase();
@@ -8576,12 +8579,14 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<int> exportOperationalBackupToJson(String path) async {
+  /// Writes a portable archive for inspection and selective transfer. It does
+  /// not include every Atlas table and cannot restore an Atlas instance.
+  Future<int> exportPortableDataArchive(String path) async {
     final allDocs = await db.select(db.documents).get();
     final allMedia = await db.getAllProjectMedia();
 
     final payload = {
-      'schema': 'project_atlas_operational_backup_v1',
+      'schema': 'project_atlas_portable_export_v1',
       'exportedAt': DateTime.now().toIso8601String(),
       'projects': (await db.select(db.projects).get())
           .map((row) => row.toJson())
@@ -8636,11 +8641,13 @@ class AppState extends ChangeNotifier {
 
     final archive = Archive();
 
-    // Add backup.json
+    // Add the portable export manifest.
     final jsonBytes = utf8.encode(
       const JsonEncoder.withIndent('  ').convert(payload),
     );
-    archive.addFile(ArchiveFile('backup.json', jsonBytes.length, jsonBytes));
+    archive.addFile(
+      ArchiveFile('portable_export.json', jsonBytes.length, jsonBytes),
+    );
 
     // Add document files
     for (final doc in allDocs) {
@@ -8669,8 +8676,8 @@ class AppState extends ChangeNotifier {
     await File(path).writeAsBytes(zipBytes);
 
     await db.logEvent(
-      area: 'backup',
-      action: 'operational_backup_exported',
+      area: 'export',
+      action: 'portable_data_exported',
       outputJson: jsonEncode({'path': path}),
     );
     return payload.length;

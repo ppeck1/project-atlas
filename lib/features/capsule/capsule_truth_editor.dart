@@ -12,6 +12,9 @@ typedef CapsuleTruthAcceptor =
       String? reason,
     );
 
+typedef CapsuleTruthHistoryLoader =
+    Future<List<ProjectCapsuleAcceptedRevision>> Function(int offset);
+
 Future<bool> showCapsuleTruthEditor({
   required BuildContext context,
   required ProjectCapsuleTruth truth,
@@ -33,11 +36,68 @@ Future<bool> showCapsuleTruthEditor({
 Future<void> showCapsuleTruthHistory({
   required BuildContext context,
   required List<ProjectCapsuleAcceptedRevision> revisions,
+  required int totalRevisionCount,
   required String? currentRevisionId,
+  CapsuleTruthHistoryLoader? onLoadMore,
 }) {
   return showDialog<void>(
     context: context,
-    builder: (_) => Dialog(
+    builder: (_) => _CapsuleTruthHistoryDialog(
+      revisions: revisions,
+      totalRevisionCount: totalRevisionCount,
+      currentRevisionId: currentRevisionId,
+      onLoadMore: onLoadMore,
+    ),
+  );
+}
+
+class _CapsuleTruthHistoryDialog extends StatefulWidget {
+  final List<ProjectCapsuleAcceptedRevision> revisions;
+  final int totalRevisionCount;
+  final String? currentRevisionId;
+  final CapsuleTruthHistoryLoader? onLoadMore;
+
+  const _CapsuleTruthHistoryDialog({
+    required this.revisions,
+    required this.totalRevisionCount,
+    required this.currentRevisionId,
+    required this.onLoadMore,
+  });
+
+  @override
+  State<_CapsuleTruthHistoryDialog> createState() =>
+      _CapsuleTruthHistoryDialogState();
+}
+
+class _CapsuleTruthHistoryDialogState
+    extends State<_CapsuleTruthHistoryDialog> {
+  late final List<ProjectCapsuleAcceptedRevision> _revisions;
+  bool _loadingMore = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _revisions = List<ProjectCapsuleAcceptedRevision>.of(widget.revisions);
+  }
+
+  bool get _hasMore => _revisions.length < widget.totalRevisionCount;
+
+  Future<void> _loadMore() async {
+    final loader = widget.onLoadMore;
+    if (loader == null || _loadingMore || !_hasMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      final next = await loader(_revisions.length);
+      if (!mounted) return;
+      setState(() => _revisions.addAll(next));
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760, maxHeight: 720),
         child: Padding(
@@ -69,18 +129,23 @@ Future<void> showCapsuleTruthHistory({
               const Text(
                 'Immutable accepted revisions. Work, evidence, and freshness remain live derived state.',
               ),
+              const SizedBox(height: 6),
+              Text(
+                '${_revisions.length} of ${widget.totalRevisionCount} accepted revisions shown.',
+                key: const Key('capsule-truth-history-count'),
+              ),
               const SizedBox(height: 16),
               Expanded(
-                child: revisions.isEmpty
+                child: _revisions.isEmpty
                     ? const Center(
                         child: Text('No accepted truth revision is recorded.'),
                       )
                     : ListView.separated(
                         key: const Key('capsule-truth-history-list'),
-                        itemCount: revisions.length,
+                        itemCount: _revisions.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 10),
                         itemBuilder: (context, index) {
-                          final revision = revisions[index];
+                          final revision = _revisions[index];
                           return Card(
                             margin: EdgeInsets.zero,
                             child: ExpansionTile(
@@ -91,9 +156,10 @@ Future<void> showCapsuleTruthHistory({
                               subtitle: Text(
                                 '${revision.actorLabel} · ${_timestamp(revision.acceptedAt)}',
                               ),
-                              trailing: revision.id == currentRevisionId
+                              trailing: revision.id == widget.currentRevisionId
                                   ? const Chip(label: Text('Current head'))
-                                  : index == 0 && currentRevisionId == null
+                                  : index == 0 &&
+                                        widget.currentRevisionId == null
                                   ? const Chip(label: Text('Latest recorded'))
                                   : null,
                               childrenPadding: const EdgeInsets.fromLTRB(
@@ -135,12 +201,34 @@ Future<void> showCapsuleTruthHistory({
                         },
                       ),
               ),
+              if (_hasMore) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const Key('capsule-truth-history-load-more'),
+                    onPressed: _loadingMore ? null : _loadMore,
+                    icon: _loadingMore
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.expand_more),
+                    label: Text(
+                      _loadingMore
+                          ? 'Loading more'
+                          : 'Load more (${widget.totalRevisionCount - _revisions.length} remaining)',
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _CapsuleTruthEditorDialog extends StatefulWidget {

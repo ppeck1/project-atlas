@@ -132,6 +132,29 @@ void main() {
       expect(await service.listRevisions('atlas'), hasLength(1));
     });
 
+    test('history pages disclose their bounded window and ordering', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      var revisionId = (await service.load('atlas'))!.revisionId;
+      for (var index = 1; index <= 75; index++) {
+        final accepted = await service.acceptPatch(
+          projectId: 'atlas',
+          expectedRevisionId: revisionId,
+          fields: {'description': 'Accepted change $index.'},
+        );
+        revisionId = accepted.state.revisionId;
+      }
+
+      final firstPage = await service.listRevisions('atlas');
+      final secondPage = await service.listRevisions('atlas', offset: 50);
+
+      expect(firstPage, hasLength(50));
+      expect(firstPage.first.revisionNumber, 76);
+      expect(firstPage.last.revisionNumber, 27);
+      expect(secondPage, hasLength(26));
+      expect(secondPage.first.revisionNumber, 26);
+      expect(secondPage.last.revisionNumber, 1);
+    });
+
     test('stale edits cannot overwrite newer accepted truth', () async {
       await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
       final staleBase = (await service.load('atlas'))!.revisionId;

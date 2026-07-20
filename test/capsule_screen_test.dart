@@ -4,12 +4,76 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:project_atlas/app/theme.dart';
 import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/features/capsule/capsule_screen.dart';
+import 'package:project_atlas/features/capsule/capsule_truth_editor.dart';
 import 'package:project_atlas/services/atlas_agent_service.dart';
 import 'package:project_atlas/services/project_capsule_service.dart';
+import 'package:project_atlas/services/project_capsule_truth_service.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
 import 'package:project_atlas/shared/models/app_state_scope.dart';
+import 'package:project_atlas/shared/models/project_capsule_truth.dart';
 
 void main() {
+  testWidgets('history discloses its cap and loads the remaining revisions', (
+    tester,
+  ) async {
+    final truth = ProjectCapsuleTruth.fromJson({
+      'title': 'Atlas',
+      'status': 'active',
+    });
+    final revisions = List<ProjectCapsuleAcceptedRevision>.generate(
+      75,
+      (index) => ProjectCapsuleAcceptedRevision(
+        id: 'revision-${75 - index}',
+        projectId: 'atlas',
+        revisionNumber: 75 - index,
+        parentRevisionId: index == 74 ? null : 'revision-${74 - index}',
+        contentHash: truth.contentHash,
+        truth: truth,
+        changedFields: const {},
+        actorType: 'operator',
+        actorLabel: 'Paul',
+        sourceKind: 'capsule_editor',
+        sourceId: null,
+        reason: null,
+        acceptedAt: DateTime.utc(2026),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showCapsuleTruthHistory(
+                context: context,
+                revisions: revisions.take(50).toList(),
+                totalRevisionCount: revisions.length,
+                currentRevisionId: revisions.first.id,
+                onLoadMore: (offset) async => revisions.skip(offset).toList(),
+              ),
+              child: const Text('Show history'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Show history'));
+    await tester.pumpAndSettle();
+    expect(find.text('50 of 75 accepted revisions shown.'), findsOneWidget);
+    expect(
+      find.byKey(const Key('capsule-truth-history-load-more')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('capsule-truth-history-load-more')));
+    await tester.pumpAndSettle();
+    expect(find.text('75 of 75 accepted revisions shown.'), findsOneWidget);
+    expect(
+      find.byKey(const Key('capsule-truth-history-load-more')),
+      findsNothing,
+    );
+  });
+
   testWidgets(
     'renders the resume contract at Act, Understand, and Audit depths',
     (tester) async {
@@ -203,6 +267,7 @@ void main() {
     expect(find.text('Accepted truth history'), findsOneWidget);
     expect(find.text('Truth revision 3'), findsOneWidget);
     expect(find.text('Current head'), findsOneWidget);
+    expect(find.text('3 of 3 accepted revisions shown.'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(minutes: 1));
@@ -255,7 +320,10 @@ void main() {
     );
     expect(project.desiredOutcome, 'Resume without reconstructing context.');
     final revisions = await state.getProjectCapsuleRevisions('atlas');
-    expect(revisions.first.changedFields.keys, ['desiredOutcome']);
+    expect(revisions.first.changedFields.keys, [
+      'description',
+      'desiredOutcome',
+    ]);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(minutes: 1));
