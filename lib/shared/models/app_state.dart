@@ -610,6 +610,8 @@ class AppState extends ChangeNotifier {
   DateTime? _projectEnrichmentStartedAt;
   int? _projectEnrichmentProgressCurrent;
   int? _projectEnrichmentProgressTotal;
+  AtlasFullBackupProgress? _fullBackupProgress;
+  Future<AtlasFullBackupCreation>? _fullBackupOperation;
   final List<StreamSubscription<String?>> _settingsSubscriptions = [];
 
   bool get isProjectSummaryRefreshRunning => _summaryRefreshRunning;
@@ -640,6 +642,12 @@ class AppState extends ChangeNotifier {
     if (total == null || current == null || total <= 0) return null;
     return '$current/$total';
   }
+
+  /// The current or most recent app-wide recovery backup state. This lives in
+  /// [AppState], not a settings widget, so route changes cannot hide or cancel
+  /// an in-progress backup.
+  AtlasFullBackupProgress? get fullBackupProgress => _fullBackupProgress;
+  bool get isFullBackupRunning => _fullBackupOperation != null;
 
   AppState(
     this.db, {
@@ -8392,9 +8400,29 @@ class AppState extends ChangeNotifier {
   Future<AtlasFullBackupCreation> createFullBackup(
     Directory destinationRoot,
   ) async {
+    if (_fullBackupOperation != null) {
+      throw StateError('A full backup is already running.');
+    }
+    _setFullBackupProgress(
+      const AtlasFullBackupProgress(
+        phase: AtlasFullBackupPhase.preparing,
+        message: 'Preparing recovery backup…',
+      ),
+    );
+    final operation = _runFullBackup(destinationRoot);
+    _fullBackupOperation = operation;
+    return operation;
+  }
+
+  Future<AtlasFullBackupCreation> _runFullBackup(
+    Directory destinationRoot,
+  ) async {
     try {
       final service = await AtlasFullBackupService.forCurrentAtlasApp();
-      final result = await service.createBundle(destinationRoot);
+      final result = await service.createBundle(
+        destinationRoot,
+        onProgress: _setFullBackupProgress,
+      );
       await db.logEvent(
         area: 'recovery',
         action: 'full_backup_created',
@@ -8402,13 +8430,27 @@ class AppState extends ChangeNotifier {
       );
       return result;
     } catch (error) {
+      _setFullBackupProgress(
+        AtlasFullBackupProgress(
+          phase: AtlasFullBackupPhase.failed,
+          message: 'Full backup failed: $error',
+        ),
+      );
       await db.logEvent(
         area: 'recovery',
         action: 'full_backup_failed',
         error: '$error',
       );
       rethrow;
+    } finally {
+      _fullBackupOperation = null;
+      notifyListeners();
     }
+  }
+
+  void _setFullBackupProgress(AtlasFullBackupProgress progress) {
+    _fullBackupProgress = progress;
+    notifyListeners();
   }
 
   /// Restores a verified recovery bundle into a new staging location only.

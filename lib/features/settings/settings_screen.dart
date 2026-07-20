@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -2638,26 +2639,27 @@ class _AdminTabState extends State<_AdminTab> {
           runSpacing: 10,
           children: [
             OutlinedButton.icon(
-              onPressed: () async {
-                final path = await FilePicker.platform.getDirectoryPath(
-                  dialogTitle: 'Choose folder for full Atlas backup',
-                );
-                if (path == null || path.trim().isEmpty) return;
-                try {
-                  final result = await state.createFullBackup(Directory(path));
-                  if (mounted) {
-                    setState(
-                      () => _status =
-                          'Full backup validated: ${result.bundle.path}',
-                    );
-                  }
-                } catch (e) {
-                  if (mounted)
-                    setState(() => _status = 'Full backup failed: $e');
-                }
-              },
+              onPressed: state.isFullBackupRunning
+                  ? null
+                  : () async {
+                      final path = await FilePicker.platform.getDirectoryPath(
+                        dialogTitle: 'Choose folder for full Atlas backup',
+                      );
+                      if (path == null || path.trim().isEmpty) return;
+                      // The app-wide status strip owns progress and errors, so
+                      // this work remains visible if this tab is left.
+                      unawaited(
+                        state
+                            .createFullBackup(Directory(path))
+                            .then<void>((_) {}, onError: (_) {}),
+                      );
+                    },
               icon: const Icon(Icons.backup_outlined, size: 16),
-              label: const Text('Create full backup'),
+              label: Text(
+                state.isFullBackupRunning
+                    ? 'Full backup running…'
+                    : 'Create full backup',
+              ),
             ),
             OutlinedButton.icon(
               onPressed: () async {
@@ -2698,6 +2700,15 @@ class _AdminTabState extends State<_AdminTab> {
           'A staging restore verifies a separate copy only. It never replaces the active Atlas database or files.',
           style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
         ),
+        if (state.fullBackupProgress case final progress?) ...[
+          const SizedBox(height: 10),
+          Text(
+            progress.message,
+            style: const TextStyle(fontSize: 12, color: _text54),
+          ),
+          if (progress.fileProgressLabel case final label?)
+            Text(label, style: const TextStyle(fontSize: 12, color: _text54)),
+        ],
         if (_status != null) ...[
           const SizedBox(height: 10),
           SelectableText(

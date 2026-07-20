@@ -16,6 +16,56 @@ const _atlasFullBackupCompletionSchema =
     'project_atlas_full_backup_completion_v1';
 const _atlasFullBackupCompletionFile = 'backup_complete.json';
 
+enum AtlasFullBackupPhase {
+  preparing,
+  snapshotting,
+  copyingFiles,
+  writingManifest,
+  validating,
+  complete,
+  failed,
+}
+
+/// A point-in-time update for the app-owned full-backup operation.
+class AtlasFullBackupProgress {
+  final AtlasFullBackupPhase phase;
+  final String message;
+  final int copiedFiles;
+  final int totalFiles;
+
+  const AtlasFullBackupProgress({
+    required this.phase,
+    required this.message,
+    this.copiedFiles = 0,
+    this.totalFiles = 0,
+  });
+
+  bool get isTerminal =>
+      phase == AtlasFullBackupPhase.complete ||
+      phase == AtlasFullBackupPhase.failed;
+
+  String? get fileProgressLabel =>
+      totalFiles > 0 ? '$copiedFiles/$totalFiles files' : null;
+
+  /// Approximate whole-operation progress. File copying reports exact counts;
+  /// snapshot and integrity work are intentionally shown as named stages.
+  double? get fraction => switch (phase) {
+    AtlasFullBackupPhase.preparing => 0.04,
+    AtlasFullBackupPhase.snapshotting => 0.16,
+    AtlasFullBackupPhase.copyingFiles =>
+      totalFiles == 0
+          ? 0.70
+          : 0.20 + (0.50 * (copiedFiles.clamp(0, totalFiles) / totalFiles)),
+    AtlasFullBackupPhase.writingManifest => 0.72,
+    AtlasFullBackupPhase.validating => 0.84,
+    AtlasFullBackupPhase.complete => 1.0,
+    AtlasFullBackupPhase.failed => null,
+  };
+}
+
+typedef AtlasFullBackupProgressCallback =
+    void Function(AtlasFullBackupProgress progress);
+
 /// Raised when a requested backup or validation operation is unsafe.
 class AtlasFullBackupException implements Exception {
   final String message;
@@ -112,14 +162,22 @@ class AtlasFullBackupService {
   /// indexer, Explorer, antivirus, or sync client has the directory open.
   /// A directory without the marker is intentionally not restorable.
   Future<AtlasFullBackupCreation> createBundle(
-    Directory destinationRoot,
-  ) async {
+    Directory destinationRoot, {
+    AtlasFullBackupProgressCallback? onProgress,
+  }) async {
     if (!await sourceDatabase.exists()) {
       throw AtlasFullBackupException(
         'The Atlas database does not exist: ${sourceDatabase.path}',
       );
     }
     await destinationRoot.create(recursive: true);
+    void emit(AtlasFullBackupProgress progress) => onProgress?.call(progress);
+    emit(
+      const AtlasFullBackupProgress(
+        phase: AtlasFullBackupPhase.preparing,
+        message: 'Preparing recovery backup…',
+      ),
+    );
 
     final name = _bundleName();
     final bundle = Directory(p.join(destinationRoot.path, name));
@@ -130,6 +188,22 @@ class AtlasFullBackupService {
     }
     await bundle.create(recursive: true);
 
+    final filesByRoot = <String, List<File>>{};
+    final roots = <Map<String, Object?>>[];
+    var totalFiles = 0;
+    for (final root in appOwnedRoots.entries) {
+      final files = await _listAppOwnedFiles(root.value);
+      filesByRoot[root.key] = files;
+      totalFiles += files.length;
+      roots.add({'name': root.key, 'sourcePresent': await root.value.exists()});
+    }
+
+    emit(
+      const AtlasFullBackupProgress(
+        phase: AtlasFullBackupPhase.snapshotting,
+        message: 'Creating a consistent SQLite snapshot…',
+      ),
+    );
     final snapshot = File(
       p.join(bundle.path, 'database', 'project_atlas.sqlite'),
     );
@@ -144,14 +218,46 @@ class AtlasFullBackupService {
         kind: 'sqlite_snapshot',
       ),
     ];
-    final roots = <Map<String, Object?>>[];
+    var copiedFileCount = 0;
+    emit(
+      AtlasFullBackupProgress(
+        phase: AtlasFullBackupPhase.copyingFiles,
+        message: totalFiles == 0
+            ? 'No app-owned files to copy.'
+            : 'Copying app-owned files…',
+        totalFiles: totalFiles,
+      ),
+    );
     for (final root in appOwnedRoots.entries) {
-      roots.add({'name': root.key, 'sourcePresent': await root.value.exists()});
       copiedFiles.addAll(
-        await _copyRootIntoBundle(bundle, root.key, root.value),
+        await _copyRootIntoBundle(
+          bundle,
+          root.key,
+          root.value,
+          filesByRoot[root.key]!,
+          onFileCopied: () {
+            copiedFileCount++;
+            emit(
+              AtlasFullBackupProgress(
+                phase: AtlasFullBackupPhase.copyingFiles,
+                message: 'Copying app-owned files…',
+                copiedFiles: copiedFileCount,
+                totalFiles: totalFiles,
+              ),
+            );
+          },
+        ),
       );
     }
 
+    emit(
+      AtlasFullBackupProgress(
+        phase: AtlasFullBackupPhase.writingManifest,
+        message: 'Recording checksums and backup inventory…',
+        copiedFiles: copiedFileCount,
+        totalFiles: totalFiles,
+      ),
+    );
     final inventory = _readDatabaseInventory(snapshot);
     final manifest = <String, Object?>{
       'schema': atlasFullBackupManifestSchema,
@@ -167,6 +273,14 @@ class AtlasFullBackupService {
       flush: true,
     );
 
+    emit(
+      AtlasFullBackupProgress(
+        phase: AtlasFullBackupPhase.validating,
+        message: 'Validating checksums and database integrity…',
+        copiedFiles: copiedFileCount,
+        totalFiles: totalFiles,
+      ),
+    );
     final stagedValidation = await validateBundle(
       bundle,
       requireCompletion: false,
@@ -178,6 +292,14 @@ class AtlasFullBackupService {
       );
     }
     await _writeCompletionMarker(bundle, manifestFile);
+    emit(
+      AtlasFullBackupProgress(
+        phase: AtlasFullBackupPhase.complete,
+        message: 'Full backup validated: ${bundle.path}',
+        copiedFiles: copiedFileCount,
+        totalFiles: totalFiles,
+      ),
+    );
     return AtlasFullBackupCreation(bundle: bundle, manifest: manifest);
   }
 
@@ -410,16 +532,11 @@ class AtlasFullBackupService {
     Directory staging,
     String rootName,
     Directory root,
-  ) async {
-    if (!await root.exists()) return const [];
+    List<File> sourceFiles, {
+    required void Function() onFileCopied,
+  }) async {
     final copied = <Map<String, Object?>>[];
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is Link) {
-        // Never follow or copy a link: it can point outside app-owned storage
-        // (including Windows/OneDrive's synthetic `..` reparse point).
-        continue;
-      }
-      if (entity is! File) continue;
+    for (final entity in sourceFiles) {
       final relative = p.relative(entity.path, from: root.path);
       if (!_isSafeBundleRelativePath(relative)) {
         throw AtlasFullBackupException(
@@ -438,8 +555,23 @@ class AtlasFullBackupService {
           kind: 'app_owned_file',
         ),
       );
+      onFileCopied();
     }
     return copied;
+  }
+
+  Future<List<File>> _listAppOwnedFiles(Directory root) async {
+    if (!await root.exists()) return const [];
+    final files = <File>[];
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is Link) {
+        // Never follow or copy a link: it can point outside app-owned storage
+        // (including Windows/OneDrive's synthetic `..` reparse point).
+        continue;
+      }
+      if (entity is File) files.add(entity);
+    }
+    return files;
   }
 
   Future<Map<String, Object?>> _fileManifestEntry(

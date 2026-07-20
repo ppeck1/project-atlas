@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../theme/atlas_colors.dart';
+import '../models/app_state_scope.dart';
+import '../../services/atlas_full_backup_service.dart';
 import 'atlas_shortcuts.dart';
 
 /// Derives a human-readable display label from a route [path].
@@ -21,7 +23,9 @@ String legacyRouteLabel(String path) {
       .replaceAll(RegExp(r'[-_]'), ' ')
       .split(' ')
       .map(
-        (w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}',
+        (w) => w.isEmpty
+            ? ''
+            : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}',
       )
       .join(' ');
 }
@@ -109,6 +113,7 @@ class AtlasShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).uri.toString();
+    final backupProgress = AppStateScope.of(context).fullBackupProgress;
 
     final destinations = <_NavDest>[
       _NavDest('Today', Icons.today_outlined, Icons.today, '/today'),
@@ -168,6 +173,8 @@ class AtlasShell extends StatelessWidget {
                       if (selectedIndex == -1 && !settingsSelected)
                         AtlasLegacyRouteBar(path: location),
                       Expanded(child: child),
+                      if (backupProgress != null)
+                        _RecoveryBackupStatusStrip(progress: backupProgress),
                     ],
                   ),
                 ),
@@ -175,6 +182,79 @@ class AtlasShell extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Persistent operation feedback for a backup that continues across routes.
+class _RecoveryBackupStatusStrip extends StatelessWidget {
+  final AtlasFullBackupProgress progress;
+
+  const _RecoveryBackupStatusStrip({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
+    final isFailed = progress.phase == AtlasFullBackupPhase.failed;
+    final isComplete = progress.phase == AtlasFullBackupPhase.complete;
+    final accent = isFailed
+        ? Colors.redAccent
+        : isComplete
+        ? Colors.greenAccent
+        : colors.primary;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 9, 16, 10),
+      decoration: BoxDecoration(
+        color: colors.panel,
+        border: Border(top: BorderSide(color: colors.line)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isFailed
+                ? Icons.error_outline
+                : isComplete
+                ? Icons.verified_outlined
+                : Icons.backup_outlined,
+            size: 18,
+            color: accent,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  progress.message,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: accent,
+                  ),
+                ),
+                if (progress.fileProgressLabel case final label?)
+                  Text(
+                    label,
+                    style: TextStyle(fontSize: 11, color: colors.inactive),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          SizedBox(
+            width: 180,
+            child: LinearProgressIndicator(
+              value: progress.fraction,
+              minHeight: 5,
+              backgroundColor: colors.bg,
+              valueColor: AlwaysStoppedAnimation<Color>(accent),
+            ),
+          ),
+        ],
       ),
     );
   }

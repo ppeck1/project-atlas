@@ -53,8 +53,10 @@ void main() {
   );
 
   test('creates a validated online SQLite snapshot with owned files', () async {
+    final progress = <AtlasFullBackupProgress>[];
     final result = await service().createBundle(
       Directory(p.join(tempDir.path, 'backups')),
+      onProgress: progress.add,
     );
 
     expect(await result.bundle.exists(), isTrue);
@@ -89,6 +91,18 @@ void main() {
 
     final validation = await service().validateBundle(result.bundle);
     expect(validation.isValid, isTrue, reason: validation.errors.join('\n'));
+    expect(
+      progress.map((update) => update.phase),
+      containsAll([
+        AtlasFullBackupPhase.snapshotting,
+        AtlasFullBackupPhase.copyingFiles,
+        AtlasFullBackupPhase.writingManifest,
+        AtlasFullBackupPhase.validating,
+        AtlasFullBackupPhase.complete,
+      ]),
+    );
+    expect(progress.last.copiedFiles, 1);
+    expect(progress.last.totalFiles, 1);
   });
 
   test('validation detects a tampered app-owned file', () async {
