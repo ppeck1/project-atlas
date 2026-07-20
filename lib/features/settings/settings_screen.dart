@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -2596,7 +2597,8 @@ class _AdminTabState extends State<_AdminTab> {
                     setState(() => _status = 'Portable export created: $path');
                   }
                 } catch (e) {
-                  if (mounted) setState(() => _status = 'Portable export failed: $e');
+                  if (mounted)
+                    setState(() => _status = 'Portable export failed: $e');
                 }
               },
               icon: const Icon(Icons.save_alt, size: 16),
@@ -2620,6 +2622,80 @@ class _AdminTabState extends State<_AdminTab> {
         const SizedBox(height: 10),
         const Text(
           'Portable export is not a complete backup and cannot restore an Atlas instance.',
+          style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
+        ),
+        const SizedBox(height: 22),
+        _SectionTitle(
+          icon: Icons.health_and_safety_outlined,
+          iconColor: Colors.tealAccent,
+          title: 'Recovery backup',
+          subtitle:
+              'Create a complete local backup or restore one into a separate staging folder.',
+        ),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            OutlinedButton.icon(
+              onPressed: () async {
+                final path = await FilePicker.platform.getDirectoryPath(
+                  dialogTitle: 'Choose folder for full Atlas backup',
+                );
+                if (path == null || path.trim().isEmpty) return;
+                try {
+                  final result = await state.createFullBackup(Directory(path));
+                  if (mounted) {
+                    setState(
+                      () => _status =
+                          'Full backup validated: ${result.bundle.path}',
+                    );
+                  }
+                } catch (e) {
+                  if (mounted)
+                    setState(() => _status = 'Full backup failed: $e');
+                }
+              },
+              icon: const Icon(Icons.backup_outlined, size: 16),
+              label: const Text('Create full backup'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final selected = await FilePicker.platform.pickFiles(
+                  dialogTitle: 'Choose a full-backup manifest.json',
+                  type: FileType.custom,
+                  allowedExtensions: const ['json'],
+                );
+                final manifestPath = selected?.files.singleOrNull?.path;
+                if (manifestPath == null || manifestPath.trim().isEmpty) return;
+                final destination = await FilePicker.platform.getDirectoryPath(
+                  dialogTitle: 'Choose a separate staging-restore folder',
+                );
+                if (destination == null || destination.trim().isEmpty) return;
+                try {
+                  final result = await state.restoreFullBackupToStaging(
+                    File(manifestPath).parent,
+                    Directory(destination),
+                  );
+                  if (mounted) {
+                    setState(
+                      () => _status =
+                          'Staging restore validated: ${result.bundle.path}',
+                    );
+                  }
+                } catch (e) {
+                  if (mounted)
+                    setState(() => _status = 'Staging restore failed: $e');
+                }
+              },
+              icon: const Icon(Icons.restore_page_outlined, size: 16),
+              label: const Text('Validate & stage restore'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'A staging restore verifies a separate copy only. It never replaces the active Atlas database or files.',
           style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
         ),
         if (_status != null) ...[
