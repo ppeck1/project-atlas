@@ -93,11 +93,14 @@ void main() {
     'schema v21 migration backfills project source topology safely',
     () async {
       final dbPath = p.join(tempDir.path, 'schema21_source_topology.sqlite');
+      await _initializeCurrentSchema(dbPath);
       final legacy = sqlite3.sqlite3.open(dbPath);
       final now =
           DateTime(2026, 7, 15).millisecondsSinceEpoch ~/
           Duration.millisecondsPerSecond;
       try {
+        legacy.execute('DROP TABLE project_capsule_revisions');
+        legacy.execute('DROP TABLE project_registry');
         legacy.execute('PRAGMA user_version = 21');
         legacy.execute('''
         CREATE TABLE project_registry (
@@ -163,8 +166,28 @@ void main() {
     'schema v10 migration creates local operations tables and supports writes',
     () async {
       final dbPath = p.join(tempDir.path, 'schema10.sqlite');
+      await _initializeCurrentSchema(dbPath);
       final legacy = sqlite3.sqlite3.open(dbPath);
       try {
+        for (final table in [
+          'project_registry',
+          'project_observations',
+          'project_scan_runs',
+          'local_project_refresh_items',
+          'work_item_tags',
+          'project_git_remotes',
+          'project_enrichment_runs',
+          'project_enrichment_findings',
+          'project_enrichment_steps',
+          'project_enrichment_proposals',
+          'llm_task_queue',
+          'media_links',
+          'project_runtime_profiles',
+          'project_runtime_runs',
+          'project_capsule_revisions',
+        ]) {
+          legacy.execute('DROP TABLE $table');
+        }
         legacy.execute('PRAGMA user_version = 10');
       } finally {
         legacy.dispose();
@@ -3243,6 +3266,15 @@ Pressure flakes a useful edge.
       expect(cleanGit['ref'], 'abc123');
     },
   );
+}
+
+Future<void> _initializeCurrentSchema(String path) async {
+  final initialized = AppDb.withExecutor(NativeDatabase(File(path)));
+  try {
+    await initialized.customSelect('SELECT 1').get();
+  } finally {
+    await initialized.close();
+  }
 }
 
 void _makeCandidate(Directory tempDir, String name) {
