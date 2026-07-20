@@ -12,6 +12,9 @@ import '../db/db_open.dart';
 
 /// The on-disk contract for a full Atlas recovery bundle.
 const atlasFullBackupManifestSchema = 'project_atlas_full_backup_v1';
+const _atlasFullBackupCompletionSchema =
+    'project_atlas_full_backup_completion_v1';
+const _atlasFullBackupCompletionFile = 'backup_complete.json';
 
 /// Raised when a requested backup or validation operation is unsafe.
 class AtlasFullBackupException implements Exception {
@@ -104,8 +107,10 @@ class AtlasFullBackupService {
 
   /// Produces a completed recovery bundle under [destinationRoot].
   ///
-  /// An interrupted run leaves a clearly named `.incomplete` directory in
-  /// place for inspection. It is never presented as a completed backup.
+  /// A completion marker is written only after the bundle validates. This
+  /// avoids relying on a directory rename, which Windows can deny when an
+  /// indexer, Explorer, antivirus, or sync client has the directory open.
+  /// A directory without the marker is intentionally not restorable.
   Future<AtlasFullBackupCreation> createBundle(
     Directory destinationRoot,
   ) async {
@@ -118,23 +123,22 @@ class AtlasFullBackupService {
 
     final name = _bundleName();
     final bundle = Directory(p.join(destinationRoot.path, name));
-    final staging = Directory('${bundle.path}.incomplete');
-    if (await bundle.exists() || await staging.exists()) {
+    if (await bundle.exists()) {
       throw AtlasFullBackupException(
         'Refusing to overwrite an existing recovery bundle: ${bundle.path}',
       );
     }
-    await staging.create(recursive: true);
+    await bundle.create(recursive: true);
 
     final snapshot = File(
-      p.join(staging.path, 'database', 'project_atlas.sqlite'),
+      p.join(bundle.path, 'database', 'project_atlas.sqlite'),
     );
     await snapshot.parent.create(recursive: true);
     await _createOnlineSnapshot(snapshot);
 
     final copiedFiles = <Map<String, Object?>>[
       await _fileManifestEntry(
-        staging,
+        bundle,
         snapshot,
         path: 'database/project_atlas.sqlite',
         kind: 'sqlite_snapshot',
@@ -144,7 +148,7 @@ class AtlasFullBackupService {
     for (final root in appOwnedRoots.entries) {
       roots.add({'name': root.key, 'sourcePresent': await root.value.exists()});
       copiedFiles.addAll(
-        await _copyRootIntoBundle(staging, root.key, root.value),
+        await _copyRootIntoBundle(bundle, root.key, root.value),
       );
     }
 
@@ -157,27 +161,31 @@ class AtlasFullBackupService {
       'appOwnedRoots': roots,
       'files': copiedFiles,
     };
-    final manifestFile = File(p.join(staging.path, 'manifest.json'));
+    final manifestFile = File(p.join(bundle.path, 'manifest.json'));
     await manifestFile.writeAsString(
       const JsonEncoder.withIndent('  ').convert(manifest),
       flush: true,
     );
 
-    final stagedValidation = await validateBundle(staging);
+    final stagedValidation = await validateBundle(
+      bundle,
+      requireCompletion: false,
+    );
     if (!stagedValidation.isValid) {
       throw AtlasFullBackupException(
         'The staged recovery bundle failed validation: '
         '${stagedValidation.errors.join('; ')}',
       );
     }
-    await staging.rename(bundle.path);
+    await _writeCompletionMarker(bundle, manifestFile);
     return AtlasFullBackupCreation(bundle: bundle, manifest: manifest);
   }
 
   /// Validates checksums, SQLite integrity, foreign keys, and table inventory.
   Future<AtlasFullBackupValidationReport> validateBundle(
-    Directory bundle,
-  ) async {
+    Directory bundle, {
+    bool requireCompletion = true,
+  }) async {
     final errors = <String>[];
     Map<String, Object?>? manifest;
     final manifestFile = File(p.join(bundle.path, 'manifest.json'));
@@ -205,6 +213,9 @@ class AtlasFullBackupService {
 
     if (manifest['schema'] != atlasFullBackupManifestSchema) {
       errors.add('Unsupported manifest schema: ${manifest['schema']}.');
+    }
+    if (requireCompletion) {
+      await _validateCompletionMarker(bundle, manifestFile, errors);
     }
     final entries = manifest['files'];
     if (entries is! List) {
@@ -298,37 +309,90 @@ class AtlasFullBackupService {
     await destinationRoot.create(recursive: true);
 
     final restored = Directory(p.join(destinationRoot.path, _restoreName()));
-    final staging = Directory('${restored.path}.incomplete');
-    if (await restored.exists() || await staging.exists()) {
+    if (await restored.exists()) {
       throw AtlasFullBackupException(
         'Refusing to overwrite an existing staging restore: ${restored.path}',
       );
     }
-    await staging.create(recursive: true);
+    await restored.create(recursive: true);
     await File(
       p.join(bundle.path, 'manifest.json'),
-    ).copy(p.join(staging.path, 'manifest.json'));
+    ).copy(p.join(restored.path, 'manifest.json'));
     for (final rawEntry in entries) {
       final entry = rawEntry as Map;
       final relativePath = entry['path'] as String;
       final source = File(p.joinAll([bundle.path, ...p.split(relativePath)]));
-      final target = File(p.joinAll([staging.path, ...p.split(relativePath)]));
+      final target = File(p.joinAll([restored.path, ...p.split(relativePath)]));
       await target.parent.create(recursive: true);
       await source.copy(target.path);
     }
 
-    final stagingValidation = await validateBundle(staging);
+    final stagingValidation = await validateBundle(
+      restored,
+      requireCompletion: false,
+    );
     if (!stagingValidation.isValid) {
       throw AtlasFullBackupException(
         'The staging restore failed validation: '
         '${stagingValidation.errors.join('; ')}',
       );
     }
-    await staging.rename(restored.path);
+    await File(
+      p.join(bundle.path, _atlasFullBackupCompletionFile),
+    ).copy(p.join(restored.path, _atlasFullBackupCompletionFile));
+    final completedValidation = await validateBundle(restored);
+    if (!completedValidation.isValid) {
+      throw AtlasFullBackupException(
+        'The completed staging restore failed validation: '
+        '${completedValidation.errors.join('; ')}',
+      );
+    }
     return AtlasFullBackupStagingRestore(
       bundle: restored,
-      validation: stagingValidation,
+      validation: completedValidation,
     );
+  }
+
+  Future<void> _writeCompletionMarker(Directory bundle, File manifest) async {
+    final marker = File(p.join(bundle.path, _atlasFullBackupCompletionFile));
+    final payload = <String, Object?>{
+      'schema': _atlasFullBackupCompletionSchema,
+      'completedAt': _clock().toUtc().toIso8601String(),
+      'manifestSha256': await _sha256File(manifest),
+    };
+    await marker.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(payload),
+      flush: true,
+    );
+  }
+
+  Future<void> _validateCompletionMarker(
+    Directory bundle,
+    File manifest,
+    List<String> errors,
+  ) async {
+    final marker = File(p.join(bundle.path, _atlasFullBackupCompletionFile));
+    if (!await marker.exists()) {
+      errors.add('$_atlasFullBackupCompletionFile is missing.');
+      return;
+    }
+    try {
+      final decoded = jsonDecode(await marker.readAsString());
+      if (decoded is! Map) {
+        throw const FormatException('The completion marker must be an object.');
+      }
+      final completion = decoded.map((key, value) => MapEntry('$key', value));
+      if (completion['schema'] != _atlasFullBackupCompletionSchema) {
+        errors.add('Unsupported completion marker schema.');
+      }
+      if (completion['manifestSha256'] != await _sha256File(manifest)) {
+        errors.add('Completion marker does not match manifest.json.');
+      }
+    } on FormatException catch (error) {
+      errors.add(
+        '$_atlasFullBackupCompletionFile is invalid: ${error.message}',
+      );
+    }
   }
 
   Future<void> _createOnlineSnapshot(File destination) async {

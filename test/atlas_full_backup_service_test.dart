@@ -60,6 +60,10 @@ void main() {
     expect(await result.bundle.exists(), isTrue);
     expect(result.bundle.path, isNot(endsWith('.incomplete')));
     expect(
+      await File(p.join(result.bundle.path, 'backup_complete.json')).exists(),
+      isTrue,
+    );
+    expect(
       await File(
         p.join(result.bundle.path, 'files', 'atlas_documents', 'brief.txt'),
       ).readAsString(),
@@ -107,6 +111,18 @@ void main() {
     );
   });
 
+  test('validation rejects a bundle without its completion marker', () async {
+    final result = await service().createBundle(
+      Directory(p.join(tempDir.path, 'backups')),
+    );
+    await File(p.join(result.bundle.path, 'backup_complete.json')).delete();
+
+    final validation = await service().validateBundle(result.bundle);
+
+    expect(validation.isValid, isFalse);
+    expect(validation.errors, contains('backup_complete.json is missing.'));
+  });
+
   test('validation detects a tampered SQLite snapshot', () async {
     final result = await service().createBundle(
       Directory(p.join(tempDir.path, 'backups')),
@@ -145,6 +161,12 @@ void main() {
       expect(restored.validation.isValid, isTrue);
       expect(await restored.bundle.exists(), isTrue);
       expect(restored.bundle.path, isNot(endsWith('.incomplete')));
+      expect(
+        await File(
+          p.join(restored.bundle.path, 'backup_complete.json'),
+        ).exists(),
+        isTrue,
+      );
       expect(
         await File(
           p.join(restored.bundle.path, 'files', 'atlas_documents', 'brief.txt'),
