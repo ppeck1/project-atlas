@@ -613,7 +613,7 @@ class AppState extends ChangeNotifier {
   int? _projectEnrichmentProgressTotal;
   AtlasFullBackupProgress? _fullBackupProgress;
   Future<AtlasFullBackupCreation>? _fullBackupOperation;
-  AtlasOperationStatus? _activeOperation;
+  final Map<String, AtlasOperationStatus> _operationStatuses = {};
   final List<StreamSubscription<String?>> _settingsSubscriptions = [];
 
   bool get isProjectSummaryRefreshRunning => _summaryRefreshRunning;
@@ -650,7 +650,11 @@ class AppState extends ChangeNotifier {
   /// an in-progress backup.
   AtlasFullBackupProgress? get fullBackupProgress => _fullBackupProgress;
   bool get isFullBackupRunning => _fullBackupOperation != null;
-  AtlasOperationStatus? get activeOperation => _activeOperation;
+
+  /// The most recent operations, with running work retained alongside recent
+  /// completion/failure results so concurrent jobs cannot overwrite each other.
+  List<AtlasOperationStatus> get operationStatuses =>
+      List.unmodifiable(_operationStatuses.values.toList(growable: false));
 
   AppState(
     this.db, {
@@ -8567,13 +8571,21 @@ class AppState extends ChangeNotifier {
     int? total,
     bool notify = true,
   }) {
-    _activeOperation = AtlasOperationStatus(
+    _operationStatuses.remove(title);
+    _operationStatuses[title] = AtlasOperationStatus(
       title: title,
       message: message,
       state: state,
       current: current,
       total: total,
     );
+    while (_operationStatuses.length > 4) {
+      final terminal = _operationStatuses.entries.firstWhere(
+        (entry) => entry.value.state != AtlasOperationState.running,
+        orElse: () => _operationStatuses.entries.first,
+      );
+      _operationStatuses.remove(terminal.key);
+    }
     if (notify) notifyListeners();
   }
 
