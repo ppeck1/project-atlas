@@ -116,6 +116,10 @@ For public changes, also verify:
   (`ThemeExtension<AtlasColors>`, registered in `lib/app/theme.dart`)
 - App-level keyboard shortcuts: `lib/shared/widgets/atlas_shortcuts.dart`
 - State and orchestration: `lib/shared/models/app_state.dart`
+- Local clean-git bundle archives: `lib/services/local_git_archive_service.dart`.
+  AppState owns export orchestration and cached-GitHub fallback; the service
+  owns local candidate ordering, clean-tree checks, and `git archive` failure
+  handling.
 - Persistence: `lib/db/`
 - Runtime and integrations: `lib/services/`
 - Local MCP: `lib/mcp/`
