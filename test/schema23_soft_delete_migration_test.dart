@@ -82,7 +82,7 @@ void main() {
             .map((row) => row['name'] as String)
             .toList();
         expect(columns, contains('deleted_at'));
-        expect(after.userVersion, 24);
+        expect(after.userVersion, 25);
         expect(after.select('PRAGMA quick_check').first.values.first, 'ok');
       } finally {
         after.dispose();

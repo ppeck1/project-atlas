@@ -176,15 +176,13 @@ class ProjectCapsuleTruthService {
   Future<ProjectCapsuleTruthState?> load(String projectId) async {
     final project = await db.getProjectFull(projectId);
     if (project == null) return null;
-    final rows = await _revisionRows(projectId);
-    final head = rows.isEmpty
-        ? null
-        : ProjectCapsuleAcceptedRevision.fromRow(rows.first);
+    final revisions = await _verifiedRevisions(projectId);
+    final head = revisions.isEmpty ? null : revisions.first;
     return ProjectCapsuleTruthState(
       project: project,
       truth: ProjectCapsuleTruth.fromProjectMap(project.toJson()),
       recordedHead: head,
-      revisionCount: rows.length,
+      revisionCount: revisions.length,
     );
   }
 
@@ -192,12 +190,8 @@ class ProjectCapsuleTruthService {
     String projectId, {
     int limit = 50,
   }) async {
-    final query = db.select(db.projectCapsuleRevisions)
-      ..where((table) => table.projectId.equals(projectId))
-      ..orderBy([(table) => OrderingTerm.desc(table.revisionNumber)])
-      ..limit(limit.clamp(1, 200));
-    final rows = await query.get();
-    return List.unmodifiable(rows.map(ProjectCapsuleAcceptedRevision.fromRow));
+    final revisions = await _verifiedRevisions(projectId);
+    return List.unmodifiable(revisions.take(limit.clamp(1, 200)));
   }
 
   Future<ProjectCapsuleAcceptedRevision?> findAcceptedRevisionBySource({
@@ -360,6 +354,53 @@ class ProjectCapsuleTruthService {
         .get();
   }
 
+  Future<List<ProjectCapsuleAcceptedRevision>> _verifiedRevisions(
+    String projectId,
+  ) async {
+    final revisions = List<ProjectCapsuleAcceptedRevision>.unmodifiable(
+      (await _revisionRows(
+        projectId,
+      )).map(ProjectCapsuleAcceptedRevision.fromRow),
+    );
+    if (revisions.isEmpty) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule revision ledger for $projectId has no baseline revision.',
+      );
+    }
+    ProjectCapsuleAcceptedRevision? parent;
+    var expectedNumber = 1;
+    for (final revision in revisions.reversed) {
+      if (revision.projectId != projectId) {
+        throw ProjectCapsuleTruthLedgerException(
+          'Capsule revision ${revision.id} belongs to ${revision.projectId}, '
+          'not $projectId.',
+        );
+      }
+      if (revision.revisionNumber != expectedNumber) {
+        throw ProjectCapsuleTruthLedgerException(
+          'Capsule revisions for $projectId are not contiguous at '
+          'revision ${revision.revisionNumber}.',
+        );
+      }
+      if (revision.parentRevisionId != parent?.id) {
+        throw ProjectCapsuleTruthLedgerException(
+          'Capsule revision ${revision.id} has an invalid parent link.',
+        );
+      }
+      final expectedChanges = parent == null
+          ? const <String, ProjectCapsuleTruthChange>{}
+          : parent.truth.diff(revision.truth);
+      if (!_changesMatch(expectedChanges, revision.changedFields)) {
+        throw ProjectCapsuleTruthLedgerException(
+          'Capsule revision ${revision.id} has an invalid recorded diff.',
+        );
+      }
+      parent = revision;
+      expectedNumber++;
+    }
+    return revisions;
+  }
+
   Future<ProjectCapsuleAcceptedRevision> _insertRevision({
     required String projectId,
     required ProjectCapsuleTruth truth,
@@ -396,6 +437,22 @@ class ProjectCapsuleTruthService {
     await db.into(db.projectCapsuleRevisions).insert(row);
     return ProjectCapsuleAcceptedRevision.fromRow(row);
   }
+}
+
+bool _changesMatch(
+  Map<String, ProjectCapsuleTruthChange> expected,
+  Map<String, ProjectCapsuleTruthChange> actual,
+) {
+  if (expected.length != actual.length) return false;
+  for (final entry in expected.entries) {
+    final recorded = actual[entry.key];
+    if (recorded == null ||
+        recorded.before != entry.value.before ||
+        recorded.after != entry.value.after) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool _revisionContainsPatch(

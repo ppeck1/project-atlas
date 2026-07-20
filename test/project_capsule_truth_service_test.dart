@@ -6,6 +6,15 @@ import 'package:project_atlas/shared/models/project_capsule_truth.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
 
 void main() {
+  Future<void> disableLedgerGuards(AppDb db) async {
+    await db.customStatement(
+      'DROP TRIGGER guard_project_capsule_revisions_update',
+    );
+    await db.customStatement(
+      'DROP TRIGGER guard_project_capsule_revisions_delete',
+    );
+  }
+
   group('ProjectCapsuleTruth', () {
     test('normalizes authored text before canonical hashing', () {
       final first = ProjectCapsuleTruth.fromJson({
@@ -237,8 +246,36 @@ void main() {
       expect(await service.listRevisions('atlas'), hasLength(2));
     });
 
+    test('database rejects ordinary revision mutation and deletion', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+
+      await expectLater(
+        db.customStatement(
+          "UPDATE project_capsule_revisions SET actor_label = 'Changed' "
+          "WHERE project_id = 'atlas'",
+        ),
+        throwsA(
+          predicate<Object>(
+            (error) => '$error'.contains('capsule_revision_immutable:update'),
+          ),
+        ),
+      );
+      await expectLater(
+        db.customStatement(
+          "DELETE FROM project_capsule_revisions WHERE project_id = 'atlas'",
+        ),
+        throwsA(
+          predicate<Object>(
+            (error) => '$error'.contains('capsule_revision_immutable:delete'),
+          ),
+        ),
+      );
+      expect(await service.listRevisions('atlas'), hasLength(1));
+    });
+
     test('revision reads verify stored content hashes', () async {
       await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      await disableLedgerGuards(db);
       final corruptHash = List.filled(64, '0').join();
       await db.customStatement(
         "UPDATE project_capsule_revisions SET content_hash = '$corruptHash' "
@@ -248,6 +285,74 @@ void main() {
       await expectLater(
         service.listRevisions('atlas'),
         throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('ledger rejects malformed changed-fields JSON', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      final state = (await service.load('atlas'))!;
+      await service.acceptPatch(
+        projectId: 'atlas',
+        expectedRevisionId: state.revisionId,
+        fields: const {'description': 'Recorded change.'},
+      );
+      await disableLedgerGuards(db);
+      await db.customStatement(
+        "UPDATE project_capsule_revisions SET changed_fields_json = '[]' "
+        'WHERE project_id = \'atlas\' AND revision_number = 2',
+      );
+
+      await expectLater(
+        service.listRevisions('atlas'),
+        throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+      );
+    });
+
+    test('ledger rejects broken parent links, numbers, and diffs', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      final initial = (await service.load('atlas'))!;
+      await service.acceptPatch(
+        projectId: 'atlas',
+        expectedRevisionId: initial.revisionId,
+        fields: const {'description': 'Recorded change.'},
+      );
+      await disableLedgerGuards(db);
+      await db.customStatement(
+        "UPDATE project_capsule_revisions SET parent_revision_id = 'wrong' "
+        'WHERE project_id = \'atlas\' AND revision_number = 2',
+      );
+      await expectLater(
+        service.listRevisions('atlas'),
+        throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+      );
+
+      await db.customStatement(
+        "UPDATE project_capsule_revisions SET parent_revision_id = "
+        "(SELECT id FROM project_capsule_revisions "
+        "WHERE project_id = 'atlas' AND revision_number = 1) "
+        'WHERE project_id = \'atlas\' AND revision_number = 2',
+      );
+      await db.customStatement(
+        'UPDATE project_capsule_revisions SET revision_number = 3 '
+        'WHERE project_id = \'atlas\' AND revision_number = 2',
+      );
+      await expectLater(
+        service.listRevisions('atlas'),
+        throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+      );
+
+      await db.customStatement(
+        'UPDATE project_capsule_revisions SET revision_number = 2 '
+        'WHERE project_id = \'atlas\' AND revision_number = 3',
+      );
+      await db.customStatement(
+        "UPDATE project_capsule_revisions SET changed_fields_json = "
+        "'{\"description\":{\"before\":null,\"after\":\"Wrong\"}}' "
+        'WHERE project_id = \'atlas\' AND revision_number = 2',
+      );
+      await expectLater(
+        service.listRevisions('atlas'),
+        throwsA(isA<ProjectCapsuleTruthLedgerException>()),
       );
     });
 

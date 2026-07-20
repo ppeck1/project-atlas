@@ -43,7 +43,7 @@ void main() {
 
       final migrated = AppDb.withExecutor(NativeDatabase(File(path)));
       try {
-        expect(migrated.schemaVersion, 24);
+        expect(migrated.schemaVersion, 25);
         final project = await migrated.getProjectFull('atlas');
         final truth = await ProjectCapsuleTruthService(migrated).load('atlas');
         final revisions = await ProjectCapsuleTruthService(
@@ -77,12 +77,21 @@ void main() {
 
       final after = sqlite3.sqlite3.open(path);
       try {
-        expect(after.userVersion, 24);
+        expect(after.userVersion, 25);
         expect(
           after
               .select(
                 "SELECT name FROM sqlite_master WHERE type='index' "
                 "AND name='idx_project_capsule_revisions_head'",
+              )
+              .length,
+          1,
+        );
+        expect(
+          after
+              .select(
+                "SELECT name FROM sqlite_master WHERE type='trigger' "
+                "AND name='guard_project_capsule_revisions_update'",
               )
               .length,
           1,

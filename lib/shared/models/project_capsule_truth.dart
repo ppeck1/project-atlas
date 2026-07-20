@@ -44,6 +44,10 @@ class ProjectCapsuleTruthChange {
       ProjectCapsuleTruthChange(before: json['before'], after: json['after']);
 }
 
+class ProjectCapsuleTruthLedgerException extends FormatException {
+  ProjectCapsuleTruthLedgerException(String message) : super(message);
+}
+
 class ProjectCapsuleTruth {
   static const schemaName = 'atlas.project_capsule_truth.v1';
   static const maxFieldLength = 20000;
@@ -187,19 +191,43 @@ class ProjectCapsuleTruth {
 Map<String, ProjectCapsuleTruthChange> decodeProjectCapsuleTruthChanges(
   String rawJson,
 ) {
+  final Object? decoded;
   try {
-    final decoded = jsonDecode(rawJson);
-    if (decoded is! Map) return const {};
-    return Map<String, ProjectCapsuleTruthChange>.unmodifiable({
-      for (final entry in decoded.entries)
-        if (entry.value is Map)
-          '${entry.key}': ProjectCapsuleTruthChange.fromJson(
-            (entry.value as Map).map((key, value) => MapEntry('$key', value)),
-          ),
-    });
-  } catch (_) {
-    return const {};
+    decoded = jsonDecode(rawJson);
+  } on FormatException catch (error) {
+    throw ProjectCapsuleTruthLedgerException(
+      'Capsule revision changed-fields JSON is malformed: ${error.message}',
+    );
   }
+  if (decoded is! Map) {
+    throw ProjectCapsuleTruthLedgerException(
+      'Capsule revision changed-fields JSON must be an object.',
+    );
+  }
+  final changes = <String, ProjectCapsuleTruthChange>{};
+  for (final entry in decoded.entries) {
+    final key = '${entry.key}';
+    if (!projectCapsuleTruthFieldKeys.contains(key)) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule revision changed-fields JSON has an unknown field: $key.',
+      );
+    }
+    if (entry.value is! Map) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule revision changed-fields entry for $key must be an object.',
+      );
+    }
+    final value = (entry.value as Map).map(
+      (field, fieldValue) => MapEntry('$field', fieldValue),
+    );
+    if (!value.containsKey('before') || !value.containsKey('after')) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule revision changed-fields entry for $key must contain before and after.',
+      );
+    }
+    changes[key] = ProjectCapsuleTruthChange.fromJson(value);
+  }
+  return Map<String, ProjectCapsuleTruthChange>.unmodifiable(changes);
 }
 
 String encodeProjectCapsuleTruthChanges(

@@ -159,7 +159,7 @@ void main() {
         );
       }
 
-      expect(after.userVersion, 24);
+      expect(after.userVersion, 25);
       expect(after.hasColumns('work_items', _workItemPlanningColumns), isTrue);
       expect(after.hasColumns('documents', ['deleted_at']), isTrue);
       expect(after.hasColumns('llm_task_queue', _queuePlanningColumns), isTrue);

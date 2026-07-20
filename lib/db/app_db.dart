@@ -817,7 +817,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 24;
+  int get schemaVersion => 25;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1039,6 +1039,9 @@ class AppDb extends _$AppDb {
         await m.createTable(projectCapsuleRevisions);
         await _backfillProjectCapsuleRevisionBaselines();
       }
+      if (from < 25) {
+        await _ensureProjectCapsuleRevisionImmutabilityTriggers();
+      }
     },
     beforeOpen: (_) async {
       await _ensureProjectCompatibilityColumns();
@@ -1050,6 +1053,7 @@ class AppDb extends _$AppDb {
       await _ensureProjectEnrichmentTables();
       await _ensureLlmTaskQueueTable();
       await _ensureProjectCapsuleRevisionIndex();
+      await _ensureProjectCapsuleRevisionImmutabilityTriggers();
       await _ensureTimestampUnitTriggers();
       await recoverStaleProjectEnrichmentRuns();
     },
@@ -1060,6 +1064,30 @@ class AppDb extends _$AppDb {
       'CREATE INDEX IF NOT EXISTS idx_project_capsule_revisions_head '
       'ON project_capsule_revisions(project_id, revision_number DESC)',
     );
+  }
+
+  Future<void> _ensureProjectCapsuleRevisionImmutabilityTriggers() async {
+    final table = await customSelect(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'project_capsule_revisions' LIMIT 1",
+    ).getSingleOrNull();
+    if (table == null) return;
+    await customStatement('''
+      CREATE TRIGGER IF NOT EXISTS guard_project_capsule_revisions_update
+      BEFORE UPDATE ON project_capsule_revisions
+      FOR EACH ROW
+      BEGIN
+        SELECT RAISE(ABORT, 'capsule_revision_immutable:update');
+      END
+    ''');
+    await customStatement('''
+      CREATE TRIGGER IF NOT EXISTS guard_project_capsule_revisions_delete
+      BEFORE DELETE ON project_capsule_revisions
+      FOR EACH ROW
+      BEGIN
+        SELECT RAISE(ABORT, 'capsule_revision_immutable:delete');
+      END
+    ''');
   }
 
   Future<void> _backfillProjectCapsuleRevisionBaselines() async {

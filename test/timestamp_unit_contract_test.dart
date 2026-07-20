@@ -171,7 +171,7 @@ void main() {
             'ok',
           );
           expect(verified.select('PRAGMA foreign_key_check'), isEmpty);
-          expect(verified.userVersion, 24);
+          expect(verified.userVersion, 25);
         } finally {
           verified.dispose();
         }
