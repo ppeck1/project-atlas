@@ -12,6 +12,7 @@ import '../../db/app_db.dart';
 import '../../services/github_archive_service.dart';
 import '../../services/github_remote_metadata_service.dart';
 import '../../services/local_git_visibility_service.dart';
+import '../../services/local_git_archive_service.dart';
 import '../../services/local_project_refresh_service.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../services/ollama_service.dart';
@@ -23,8 +24,7 @@ import '../../services/shopify_seo_review_service.dart';
 import '../../services/telegram_service.dart';
 import '../../services/workload_planning_service.dart';
 
-export '../../services/github_archive_service.dart'
-    show GithubArchiveFetcher;
+export '../../services/github_archive_service.dart' show GithubArchiveFetcher;
 export '../../services/project_enrichment_service.dart'
     show
         ProjectEnrichmentStatusCallback,
@@ -562,16 +562,6 @@ class _ProjectGitArchive {
   });
 }
 
-class _LocalGitArchiveCandidate {
-  final ProjectRegistryEntry registry;
-  final LocalGitVisibilityReport report;
-
-  const _LocalGitArchiveCandidate({
-    required this.registry,
-    required this.report,
-  });
-}
-
 /// App-wide state wrapper around [AppDb].
 class AppState extends ChangeNotifier {
   final AppDb db;
@@ -597,10 +587,11 @@ class AppState extends ChangeNotifier {
   };
   late final ProjectEnrichmentService _projectEnrichmentService =
       ProjectEnrichmentService(db);
-  late final ProjectIdentityEnrichmentService _projectIdentityEnrichmentService =
-      ProjectIdentityEnrichmentService(db);
-  late final GithubArchiveService _githubArchiveService =
-      GithubArchiveService(db);
+  late final ProjectIdentityEnrichmentService
+  _projectIdentityEnrichmentService = ProjectIdentityEnrichmentService(db);
+  late final GithubArchiveService _githubArchiveService = GithubArchiveService(
+    db,
+  );
 
   Timer? _localProjectRefreshTimer;
   bool _summaryRefreshRunning = false;
@@ -840,7 +831,9 @@ class AppState extends ChangeNotifier {
         }
       }
     } catch (e) {
-      debugPrint('[Atlas] loadProjectDetailSectionVisibility: JSON parse of visible sections failed (continuing): $e');
+      debugPrint(
+        '[Atlas] loadProjectDetailSectionVisibility: JSON parse of visible sections failed (continuing): $e',
+      );
     }
     return ProjectDetailSectionVisibility(visibleSectionIds: defaults);
   }
@@ -2573,11 +2566,8 @@ class AppState extends ChangeNotifier {
   // Drift streams (watchTags, watchTagsByProject, watchTagsForProject,
   // watchWorkItemTags); remaining Future reads are dialog-scoped one-shots.
 
-  Future<String> saveTag({
-    String? id,
-    required String name,
-    String? color,
-  }) => db.saveTag(id: id, name: name, color: color);
+  Future<String> saveTag({String? id, required String name, String? color}) =>
+      db.saveTag(id: id, name: name, color: color);
 
   Future<void> updateTag(String id, {String? name, String? color}) =>
       db.updateTag(id, name: name, color: color);
@@ -6885,7 +6875,9 @@ class AppState extends ChangeNotifier {
       final decoded = jsonDecode(raw);
       if (decoded is List) return decoded.map((item) => '$item').toList();
     } catch (e) {
-      debugPrint('[Atlas] _decodeStringList: JSON parse of string list failed (continuing): $e');
+      debugPrint(
+        '[Atlas] _decodeStringList: JSON parse of string list failed (continuing): $e',
+      );
     }
     return const [];
   }
@@ -6898,7 +6890,9 @@ class AppState extends ChangeNotifier {
         if (value.isNotEmpty) return value;
       }
     } catch (e) {
-      debugPrint('[Atlas] _displayNameFromObservation: JSON parse of observation rawJson failed (continuing): $e');
+      debugPrint(
+        '[Atlas] _displayNameFromObservation: JSON parse of observation rawJson failed (continuing): $e',
+      );
     }
     return p.basename(observation.observedPath);
   }
@@ -7074,17 +7068,23 @@ class AppState extends ChangeNotifier {
     try {
       risks = await getProjectRisks(projectId);
     } catch (e) {
-      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load risks (continuing): $e');
+      debugPrint(
+        '[Atlas] buildProjectSummaryEvidencePacket: failed to load risks (continuing): $e',
+      );
     }
     try {
       decisions = await getProjectDecisions(projectId);
     } catch (e) {
-      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load decisions (continuing): $e');
+      debugPrint(
+        '[Atlas] buildProjectSummaryEvidencePacket: failed to load decisions (continuing): $e',
+      );
     }
     try {
       people = await getProjectPeople(projectId);
     } catch (e) {
-      debugPrint('[Atlas] buildProjectSummaryEvidencePacket: failed to load people (continuing): $e');
+      debugPrint(
+        '[Atlas] buildProjectSummaryEvidencePacket: failed to load people (continuing): $e',
+      );
     }
 
     final suppliedDocs = await db.getDocumentsForProject(projectId);
@@ -7638,7 +7638,9 @@ class AppState extends ChangeNotifier {
           return clean(text);
         }
       } catch (e) {
-        debugPrint('[Atlas] _readDocumentText: failed to read document from disk at $path (continuing): $e');
+        debugPrint(
+          '[Atlas] _readDocumentText: failed to read document from disk at $path (continuing): $e',
+        );
       }
     }
     return null;
@@ -8196,7 +8198,9 @@ class AppState extends ChangeNotifier {
       final decoded = jsonDecode(text);
       if (decoded is Map) return Map<String, Object?>.from(decoded);
     } catch (e) {
-      debugPrint('[Atlas] _decodeJsonMap: JSON parse of map failed (continuing): $e');
+      debugPrint(
+        '[Atlas] _decodeJsonMap: JSON parse of map failed (continuing): $e',
+      );
     }
     return {'raw': raw};
   }
@@ -9306,7 +9310,7 @@ class AppState extends ChangeNotifier {
     List<String> warnings,
   ) async {
     final localWarnings = <String>[];
-    final local = await _findCleanLocalGitArchiveCandidate(
+    final local = await _localGitArchiveService().findCleanCandidate(
       registries,
       warnings: localWarnings,
     );
@@ -9331,12 +9335,22 @@ class AppState extends ChangeNotifier {
     List<String> warnings,
   ) async {
     final localWarnings = <String>[];
-    final local = await _findCleanLocalGitArchiveCandidate(
+    final local = await _localGitArchiveService().findCleanCandidate(
       registries,
       warnings: localWarnings,
     );
     if (local != null) {
-      return _buildLocalGitArchive(local, warnings);
+      final archive = await _localGitArchiveService().buildArchive(
+        local,
+        warnings,
+      );
+      return archive == null
+          ? null
+          : _ProjectGitArchive(
+              bytes: archive.bytes,
+              archivePath: archive.archivePath,
+              metadata: archive.metadata,
+            );
     }
     final github = await _findGithubArchiveCandidate(projectId);
     if (github == null) {
@@ -9385,138 +9399,12 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  Future<_ProjectGitArchive?> _buildLocalGitArchive(
-    _LocalGitArchiveCandidate candidate,
-    List<String> warnings,
-  ) async {
-    final report = candidate.report;
-    final gitRoot = report.gitRoot;
-    if (gitRoot == null) return null;
-    try {
-      final result = await Process.run(
-        'git',
-        const ['archive', '--format=zip', 'HEAD'],
-        workingDirectory: gitRoot,
-        stdoutEncoding: null,
-        stderrEncoding: utf8,
-      ).timeout(const Duration(seconds: 15));
-      final output = result.stdout;
-      if (result.exitCode == 0 && output is List<int> && output.isNotEmpty) {
-        const archivePath = 'git/clean_HEAD.zip';
-        return _ProjectGitArchive(
-          bytes: output,
-          archivePath: archivePath,
-          metadata: {
-            'source': 'local',
-            'registryId': candidate.registry.id,
-            'registryDisplayName': candidate.registry.displayName,
-            'registryLocalPath': candidate.registry.localPath,
-            'gitRoot': report.gitRoot,
-            'branch': report.branch,
-            'headSha': report.headSha,
-            'remoteUrl': report.remoteUrl,
-            'archivePath': archivePath,
-          },
-        );
-      }
-      warnings.add(
-        'Clean git archive failed: ${result.stderr?.toString().trim() ?? 'empty output'}',
-      );
-    } on TimeoutException {
-      warnings.add('Clean git archive timed out.');
-    } on ProcessException catch (error) {
-      warnings.add('Clean git archive failed: ${error.message}');
-    }
-    return null;
-  }
-
-  Future<_LocalGitArchiveCandidate?> _findCleanLocalGitArchiveCandidate(
-    List<ProjectRegistryEntry> registries, {
-    List<String>? warnings,
-  }) async {
-    final failures = <String>[];
-    for (final registry in _orderedProjectRegistries(registries)) {
-      if (_looksLikeRemotePath(registry.localPath)) {
-        failures.add(
-          'Git ${registry.displayName}: registered path is a remote URL, not a local folder.',
-        );
-        continue;
-      }
-      final report = await const LocalGitVisibilityService().inspect(
-        registry.localPath,
-      );
-      if (_localGitReportIsArchiveReady(report)) {
-        return _LocalGitArchiveCandidate(registry: registry, report: report);
-      }
-      failures.add(_localGitArchiveSkipReason(registry, report));
-    }
-    if (warnings != null && failures.isNotEmpty) {
-      warnings.addAll(_cappedDistinct(failures, 5));
-      if (failures.length > 5) {
-        warnings.add(
-          'Git: ${failures.length - 5} additional local registry candidate(s) were not archive-ready.',
-        );
-      }
-    }
-    return null;
-  }
-
-  bool _localGitReportIsArchiveReady(LocalGitVisibilityReport report) =>
-      report.isGitRepository &&
-      report.gitRoot != null &&
-      report.changedTrackedCount == 0 &&
-      report.untrackedCount == 0 &&
-      (report.headSha ?? '').trim().isNotEmpty;
-
-  String _localGitArchiveSkipReason(
-    ProjectRegistryEntry registry,
-    LocalGitVisibilityReport report,
-  ) {
-    if (!report.isGitRepository || report.gitRoot == null) {
-      return 'Git ${registry.displayName}: no readable git repository at ${registry.localPath}.';
-    }
-    if (report.changedTrackedCount > 0 || report.untrackedCount > 0) {
-      return 'Git ${registry.displayName}: working tree has ${report.changedTrackedCount} changed tracked and ${report.untrackedCount} untracked path(s).';
-    }
-    return 'Git ${registry.displayName}: git HEAD could not be resolved.';
-  }
-
   Future<GithubArchiveCandidate?> _findGithubArchiveCandidate(
     String projectId,
   ) => _githubArchiveService.findCandidateForProject(projectId);
 
-  List<ProjectRegistryEntry> _orderedProjectRegistries(
-    List<ProjectRegistryEntry> registries,
-  ) {
-    final ordered = [...registries];
-    int score(ProjectRegistryEntry entry) {
-      var value = 0;
-      if (entry.reviewState != 'linked') value += 10;
-      if ((entry.gitRoot ?? '').trim().isEmpty) value += 2;
-      if (_looksLikeRemotePath(entry.localPath)) value += 50;
-      return value;
-    }
-
-    ordered.sort((a, b) {
-      final scoreCompare = score(a).compareTo(score(b));
-      if (scoreCompare != 0) return scoreCompare;
-      final updatedCompare = b.updatedAt.compareTo(a.updatedAt);
-      if (updatedCompare != 0) return updatedCompare;
-      return a.displayName.compareTo(b.displayName);
-    });
-    return ordered;
-  }
-
-  List<String> _cappedDistinct(List<String> values, int limit) {
-    final seen = <String>{};
-    final result = <String>[];
-    for (final value in values) {
-      if (!seen.add(value)) continue;
-      result.add(value);
-      if (result.length >= limit) break;
-    }
-    return result;
-  }
+  LocalGitArchiveService _localGitArchiveService() =>
+      LocalGitArchiveService(isRemotePath: _looksLikeRemotePath);
 
   // ---------------------------------------------------------------------------
   // Telegram
