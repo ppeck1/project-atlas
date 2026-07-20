@@ -1443,6 +1443,172 @@ class _ExportTabState extends State<_ExportTab>
 // Tab 4 — Workforce
 // ─────────────────────────────────────────────────────────────────────────────
 
+class _ProjectRecoveryPanel extends StatefulWidget {
+  const _ProjectRecoveryPanel();
+
+  @override
+  State<_ProjectRecoveryPanel> createState() => _ProjectRecoveryPanelState();
+}
+
+class _ProjectRecoveryPanelState extends State<_ProjectRecoveryPanel> {
+  Future<List<ProjectFull>>? _projects;
+  String? _projectId;
+  bool _working = false;
+  String? _status;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _projects ??= AppStateScope.of(context).getProjectsFull();
+  }
+
+  Future<void> _backup(ProjectFull project) async {
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save project recovery backup',
+      fileName: '${_safeExportStem(project.title)}_project_recovery.zip',
+      type: FileType.custom,
+      allowedExtensions: const ['zip'],
+    );
+    if (path == null || path.trim().isEmpty || !mounted) return;
+    setState(() {
+      _working = true;
+      _status = null;
+    });
+    try {
+      await AppStateScope.of(context).exportProjectBundleToZip(
+        project.id,
+        path.toLowerCase().endsWith('.zip') ? path : '$path.zip',
+        includeFiles: true,
+        includeLatestSummary: true,
+        includeEventLogs: true,
+        includeChangeLog: true,
+        includeBootstrapContext: true,
+      );
+      if (mounted) setState(() => _status = 'Project recovery backup created.');
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Project backup failed: $error');
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _stage(ProjectFull project) async {
+    final picked = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Select project recovery ZIP',
+      type: FileType.custom,
+      allowedExtensions: const ['zip'],
+    );
+    final bundlePath = picked?.files.singleOrNull?.path;
+    if (bundlePath == null || bundlePath.trim().isEmpty) return;
+    final destination = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Choose project recovery staging folder',
+    );
+    if (destination == null || destination.trim().isEmpty || !mounted) return;
+    setState(() {
+      _working = true;
+      _status = null;
+    });
+    try {
+      final report = await AppStateScope.of(context)
+          .verifyAndStageProjectRecovery(
+            File(bundlePath),
+            Directory(destination),
+            expectedProjectId: project.id,
+          );
+      if (mounted) {
+        setState(
+          () => _status = 'Project recovery staged: ${report.stagingPath}',
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Project recovery failed: $error');
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _WizardStepPanel(
+      step: 'Recovery',
+      title: 'Single-project backup & recovery',
+      child: FutureBuilder<List<ProjectFull>>(
+        future: _projects,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const LinearProgressIndicator(minHeight: 2);
+          }
+          if (snapshot.hasError) {
+            return Text('Projects failed to load: ${snapshot.error}');
+          }
+          final projects = snapshot.data ?? const <ProjectFull>[];
+          final selected = projects
+              .where((item) => item.id == _projectId)
+              .firstOrNull;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Create a complete ZIP for one project, or validate a selected project ZIP into a separate staging folder. This never changes the live project.',
+                style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: selected?.id,
+                decoration: const InputDecoration(
+                  labelText: 'Project',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final project in projects)
+                    DropdownMenuItem(
+                      value: project.id,
+                      child: Text(project.title),
+                    ),
+                ],
+                onChanged: _working
+                    ? null
+                    : (value) => setState(() {
+                        _projectId = value;
+                        _status = null;
+                      }),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: selected == null || _working
+                        ? null
+                        : () => _backup(selected),
+                    icon: const Icon(Icons.backup_outlined, size: 16),
+                    label: const Text('Back up selected project'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: selected == null || _working
+                        ? null
+                        : () => _stage(selected),
+                    icon: const Icon(Icons.restore_page_outlined, size: 16),
+                    label: const Text('Validate & stage selected project'),
+                  ),
+                ],
+              ),
+              if (_status != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _status!,
+                  style: const TextStyle(fontSize: 12, color: _text54),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 enum _ProjectBundlePreset { complete, handoff, audit, cleanGit, custom }
 
 enum _ProjectBundleLogWindow { last7, last30, last90, all }
@@ -2702,6 +2868,8 @@ class _AdminTabState extends State<_AdminTab> {
           'Round-trip verification restores and re-hashes a separate copy only. It never replaces the active Atlas database or files.',
           style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
         ),
+        const SizedBox(height: 18),
+        const _ProjectRecoveryPanel(),
         if (state.fullBackupProgress case final progress?) ...[
           const SizedBox(height: 10),
           Text(

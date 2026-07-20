@@ -18,6 +18,7 @@ import '../../services/local_project_refresh_service.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../services/ollama_service.dart';
 import '../../services/project_enrichment_service.dart';
+import '../../services/project_bundle_recovery_service.dart';
 import '../../services/project_capsule_truth_service.dart';
 import '../../services/project_identity_enrichment_service.dart';
 import '../../services/project_runtime_service.dart';
@@ -9328,6 +9329,33 @@ class AppState extends ChangeNotifier {
     );
     return payload.length;
   }
+
+  /// Verifies a project-scoped recovery ZIP and expands it into a separate
+  /// staging folder. The active Atlas database and app-owned files are never
+  /// modified by this operation.
+  Future<ProjectBundleStagingReport> verifyAndStageProjectRecovery(
+    File bundle,
+    Directory destinationRoot, {
+    String? expectedProjectId,
+  }) => _trackOperation(
+    title: 'Project recovery',
+    startingMessage: 'Validating project recovery package…',
+    run: () async {
+      final report = await ProjectBundleRecoveryService().validateAndStage(
+        bundle,
+        destinationRoot,
+        expectedProjectId: expectedProjectId,
+      );
+      await db.logEvent(
+        area: 'recovery',
+        action: 'project_bundle_staged',
+        entityType: 'project',
+        entityId: report.projectId,
+        outputJson: jsonEncode(report.toJson()),
+      );
+      return report;
+    },
+  );
 
   String _projectBundleReadme({
     required ProjectFull project,

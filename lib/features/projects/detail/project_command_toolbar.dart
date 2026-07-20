@@ -11,6 +11,7 @@ class ProjectCommandToolbar extends StatefulWidget {
   final Future<void> Function() onOpenWorkboard;
   final VoidCallback onEditMeta;
   final VoidCallback onExportBundle;
+  final VoidCallback onRecovery;
 
   const ProjectCommandToolbar({
     super.key,
@@ -18,6 +19,7 @@ class ProjectCommandToolbar extends StatefulWidget {
     required this.onOpenWorkboard,
     required this.onEditMeta,
     required this.onExportBundle,
+    required this.onRecovery,
   });
 
   @override
@@ -36,10 +38,12 @@ class _ProjectCommandToolbarState extends State<ProjectCommandToolbar> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _watchRuntimeProfile ??=
-        AppStateScope.of(context).watchProjectRuntimeProfile(widget.projectId);
-    _watchRuntimeRuns ??=
-        AppStateScope.of(context).watchProjectRuntimeRuns(widget.projectId, limit: 5);
+    _watchRuntimeProfile ??= AppStateScope.of(
+      context,
+    ).watchProjectRuntimeProfile(widget.projectId);
+    _watchRuntimeRuns ??= AppStateScope.of(
+      context,
+    ).watchProjectRuntimeRuns(widget.projectId, limit: 5);
   }
 
   @override
@@ -100,6 +104,12 @@ class _ProjectCommandToolbarState extends State<ProjectCommandToolbar> {
                     icon: Icons.archive_outlined,
                     label: 'Export',
                     onPressed: widget.onExportBundle,
+                  ),
+                  _ProjectToolbarButton(
+                    tooltip: 'Back up or stage-validate this project',
+                    icon: Icons.health_and_safety_outlined,
+                    label: 'Recovery',
+                    onPressed: widget.onRecovery,
                   ),
                   _ProjectToolbarButton(
                     tooltip: runtimeReady

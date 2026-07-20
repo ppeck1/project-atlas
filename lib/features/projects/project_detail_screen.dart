@@ -1114,6 +1114,8 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
                 onEditMeta: () => _showMetaDialog(context, project),
                 onExportBundle: () =>
                     _showProjectBundleExportDialog(context, project.title),
+                onRecovery: () =>
+                    _showProjectRecoveryDialog(context, project.title),
               ),
               const SizedBox(height: 8),
               StreamBuilder<List<LlmTaskQueueItem>>(
@@ -1984,6 +1986,104 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     }
   }
 
+  Future<void> _showProjectRecoveryDialog(
+    BuildContext context,
+    String projectTitle,
+  ) async {
+    final state = AppStateScope.of(context);
+    final choice = await showDialog<_ProjectRecoveryAction>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _kPanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: _kLine),
+        ),
+        title: const Text('Project recovery'),
+        content: const SizedBox(
+          width: 520,
+          child: Text(
+            'Create a complete recovery ZIP for this project, or validate an existing ZIP into a separate staging folder. Staging never changes the live Atlas project or its files.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () =>
+                Navigator.of(ctx).pop(_ProjectRecoveryAction.stage),
+            icon: const Icon(Icons.restore_page_outlined, size: 16),
+            label: const Text('Stage recovery'),
+          ),
+          FilledButton.icon(
+            onPressed: () =>
+                Navigator.of(ctx).pop(_ProjectRecoveryAction.backup),
+            icon: const Icon(Icons.backup_outlined, size: 16),
+            label: const Text('Back up project'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    try {
+      if (choice == _ProjectRecoveryAction.backup) {
+        final safeTitle = projectTitle
+            .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
+            .replaceAll(RegExp(r'_+'), '_');
+        final path = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save project recovery backup',
+          fileName: '${safeTitle}_project_recovery.zip',
+          type: FileType.custom,
+          allowedExtensions: const ['zip'],
+        );
+        if (path == null || path.trim().isEmpty) return;
+        await state.exportProjectBundleToZip(
+          widget.projectId,
+          path.toLowerCase().endsWith('.zip') ? path : '$path.zip',
+          includeFiles: true,
+          includeLatestSummary: true,
+          includeEventLogs: true,
+          includeChangeLog: true,
+          includeBootstrapContext: true,
+        );
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Project recovery backup created.')),
+        );
+        return;
+      }
+      final picked = await FilePicker.platform.pickFiles(
+        dialogTitle: 'Select project recovery ZIP',
+        type: FileType.custom,
+        allowedExtensions: const ['zip'],
+      );
+      final bundlePath = picked?.files.single.path;
+      if (bundlePath == null || bundlePath.trim().isEmpty) return;
+      final destination = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Choose project recovery staging folder',
+      );
+      if (destination == null || destination.trim().isEmpty) return;
+      final report = await state.verifyAndStageProjectRecovery(
+        File(bundlePath),
+        Directory(destination),
+        expectedProjectId: widget.projectId,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Project recovery staged: ${report.stagingPath}'),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Project recovery failed: $error')),
+      );
+    }
+  }
+
   Future<void> _showSectionVisibilityDialog(BuildContext context) async {
     final state = AppStateScope.of(context);
     final selected = _visibleSectionIds.toSet();
@@ -2789,6 +2889,8 @@ class _ProjectBundleExportRequest {
     required this.includeFiles,
   });
 }
+
+enum _ProjectRecoveryAction { backup, stage }
 
 class _StatusDot extends StatelessWidget {
   final String status;
