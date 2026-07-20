@@ -204,6 +204,7 @@ class ProjectCapsuleSnapshot {
   final List<ProjectCapsuleAction> inProgressItems;
   final List<ProjectCapsuleAction> reviewItems;
   final List<ProjectCapsuleAction> blockedItems;
+  final Map<String, int> listTotals;
   final List<Map<String, Object?>> decisions;
   final List<Map<String, Object?>> risks;
   final List<String> gaps;
@@ -236,6 +237,7 @@ class ProjectCapsuleSnapshot {
     required this.inProgressItems,
     required this.reviewItems,
     required this.blockedItems,
+    required this.listTotals,
     required this.decisions,
     required this.risks,
     required this.gaps,
@@ -266,6 +268,7 @@ class ProjectCapsuleSnapshot {
     required List<ProjectCapsuleAction> inProgressItems,
     required List<ProjectCapsuleAction> reviewItems,
     required List<ProjectCapsuleAction> blockedItems,
+    required Map<String, int> listTotals,
     required List<Map<String, Object?>> decisions,
     required List<Map<String, Object?>> risks,
     required List<String> gaps,
@@ -297,6 +300,7 @@ class ProjectCapsuleSnapshot {
     final frozenBlockedItems = List<ProjectCapsuleAction>.unmodifiable(
       blockedItems,
     );
+    final frozenListTotals = Map<String, int>.unmodifiable(listTotals);
     final frozenDecisions = List<Map<String, Object?>>.unmodifiable(
       decisions.map(_deepFreezeMap),
     );
@@ -332,6 +336,7 @@ class ProjectCapsuleSnapshot {
           .toList(),
       'reviewItems': frozenReviewItems.map((item) => item.toJson()).toList(),
       'blockedItems': frozenBlockedItems.map((item) => item.toJson()).toList(),
+      'listTotals': frozenListTotals,
       'decisions': frozenDecisions,
       'risks': frozenRisks,
       'gaps': frozenGaps,
@@ -367,6 +372,7 @@ class ProjectCapsuleSnapshot {
       inProgressItems: frozenInProgressItems,
       reviewItems: frozenReviewItems,
       blockedItems: frozenBlockedItems,
+      listTotals: frozenListTotals,
       decisions: frozenDecisions,
       risks: frozenRisks,
       gaps: frozenGaps,
@@ -408,6 +414,7 @@ class ProjectCapsuleSnapshot {
       'inProgressItems': inProgressItems.map((item) => item.toJson()).toList(),
       'reviewItems': reviewItems.map((item) => item.toJson()).toList(),
       'blockedItems': blockedItems.map((item) => item.toJson()).toList(),
+      'listTotals': listTotals,
       'gaps': gaps,
       'warnings': warnings,
       'errors': errors,
@@ -508,6 +515,15 @@ class ProjectCapsuleService {
         .take(5)
         .map(ProjectCapsuleAction.fromCard)
         .toList(growable: false);
+    final listTotals = <String, int>{
+      'readyItems': workload.suggestedNextTotal,
+      'decisionItems': workload.countsByGroup['needs_decision'] ?? 0,
+      'inProgressItems': workload.countsByGroup['in_progress'] ?? 0,
+      'reviewItems': workload.reviewNeededTotal,
+      'blockedItems': workload.blocksProgressTasks,
+      'decisions': brief.decisions.length,
+      'risks': brief.risks.length,
+    };
 
     final gaps = _safeDiagnostics([
       if (_clean(truth.desiredOutcome) == null)
@@ -619,6 +635,7 @@ class ProjectCapsuleService {
       inProgressItems: inProgressItems,
       reviewItems: reviewItems,
       blockedItems: blockedItems,
+      listTotals: listTotals,
       decisions: brief.decisions.take(5).toList(growable: false),
       risks: brief.risks.take(5).toList(growable: false),
       gaps: gaps,

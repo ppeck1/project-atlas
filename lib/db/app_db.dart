@@ -1034,22 +1034,10 @@ class AppDb extends _$AppDb {
         }
       }
       if (from < 24) {
-        try {
-          await m.createTable(projectCapsuleRevisions);
-        } catch (e) {
-          _logToleratedSchemaError(
-            'migration v24 createTable projectCapsuleRevisions',
-            e,
-          );
-        }
-        try {
-          await _backfillProjectCapsuleRevisionBaselines();
-        } catch (e) {
-          _logToleratedSchemaError(
-            'migration v24 backfill projectCapsuleRevisions',
-            e,
-          );
-        }
+        // Accepted truth is an integrity boundary. Do not advance the schema
+        // version if its ledger or baseline projection cannot be created.
+        await m.createTable(projectCapsuleRevisions);
+        await _backfillProjectCapsuleRevisionBaselines();
       }
     },
     beforeOpen: (_) async {

@@ -1,6 +1,6 @@
 # Capsule Edit Truth v1 work order
 
-Status: Active on 2026-07-18
+Status: Hardening and integration verification on 2026-07-20
 
 ## Authorization
 
@@ -89,8 +89,9 @@ gate. Do not upgrade the live database while an older Atlas process is open.
 
 ## Implementation status
 
-Engineering implementation and verification are complete; operator acceptance
-of the opened review build is pending.
+The original engineering implementation completed on its feature baseline.
+This follow-up hardening pass must be verified on current `main` before
+operator acceptance.
 
 - Drift generation completed with schema 24 outputs.
 - `flutter analyze` completed with no issues.
@@ -102,6 +103,12 @@ of the opened review build is pending.
 - A SQLite online backup of the working schema-23 database migrated to schema
   24 in the isolated review instance; `quick_check` passed and every cloned
   project received a baseline revision.
+- Schema-24 ledger creation and baseline backfill now fail closed: an
+  unexpected migration error cannot advance the schema version.
+- Capsule exposes legacy phase, priority, or status values as explicit
+  normalization choices and rejects a save until the value is normalized.
+- Bounded Capsule lanes and record lists report visible versus total counts and
+  link to their full Workboard or Project Detail source.
 
 ## Stop conditions
 

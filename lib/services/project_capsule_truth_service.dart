@@ -271,7 +271,7 @@ class ProjectCapsuleTruthService {
         ]);
       }
       final proposedTruth = beforeState.truth.applyPatch(truthPatch);
-      final validationErrors = _validateTruth(proposedTruth);
+      final validationErrors = validateProjectCapsuleTruth(proposedTruth);
       if (validationErrors.isNotEmpty) {
         throw ProjectCapsuleTruthValidationException(validationErrors);
       }
@@ -447,7 +447,7 @@ Map<String, Object?> _projectMetaChanges(
   return result;
 }
 
-List<String> _validateTruth(ProjectCapsuleTruth truth) {
+List<String> validateProjectCapsuleTruth(ProjectCapsuleTruth truth) {
   final errors = [...truth.validate()];
   if (!projectStatusValues.contains(truth.status) &&
       truth.status != 'deleted') {

@@ -222,7 +222,7 @@ class _CapsuleTruthEditorDialogState extends State<_CapsuleTruthEditorDialog> {
       return;
     }
     final proposed = _readTruth();
-    final errors = proposed.validate();
+    final errors = validateProjectCapsuleTruth(proposed);
     final changes = widget.initialTruth.diff(proposed);
     setState(() {
       _error = errors.isNotEmpty
@@ -360,6 +360,23 @@ class _CapsuleTruthEditorDialogState extends State<_CapsuleTruthEditorDialog> {
   }
 
   Widget _editView() {
+    final statusItems = <DropdownMenuItem<String>>[
+      for (final option in projectStatusOptions)
+        DropdownMenuItem(value: option.value, child: Text(option.label)),
+      if (!projectStatusValues.contains(_status) && _status != 'deleted')
+        DropdownMenuItem(
+          value: _status,
+          child: Text('Existing value: $_status (normalize before saving)'),
+        ),
+    ];
+    final phaseItems = _legacyCompatibleItems(
+      current: _phase,
+      supported: projectCapsulePhaseValues,
+    );
+    final priorityItems = _legacyCompatibleItems(
+      current: _priority,
+      supported: projectCapsulePriorityValues,
+    );
     return ListView(
       key: const Key('capsule-truth-editor-fields'),
       children: [
@@ -390,14 +407,9 @@ class _CapsuleTruthEditorDialogState extends State<_CapsuleTruthEditorDialog> {
             DropdownButtonFormField<String>(
               key: const Key('capsule-edit-status'),
               initialValue: _status,
+              isExpanded: true,
               decoration: const InputDecoration(labelText: 'Status'),
-              items: [
-                for (final option in projectStatusOptions)
-                  DropdownMenuItem(
-                    value: option.value,
-                    child: Text(option.label),
-                  ),
-              ],
+              items: statusItems,
               onChanged: (value) {
                 if (value != null) setState(() => _status = value);
               },
@@ -406,36 +418,18 @@ class _CapsuleTruthEditorDialogState extends State<_CapsuleTruthEditorDialog> {
             DropdownButtonFormField<String?>(
               key: const Key('capsule-edit-phase'),
               initialValue: _phase,
+              isExpanded: true,
               decoration: const InputDecoration(labelText: 'Phase'),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('Not set'),
-                ),
-                for (final value in projectCapsulePhaseValues)
-                  DropdownMenuItem(
-                    value: value,
-                    child: Text(workloadLabel(value)),
-                  ),
-              ],
+              items: phaseItems,
               onChanged: (value) => setState(() => _phase = value),
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<String?>(
               key: const Key('capsule-edit-priority'),
               initialValue: _priority,
+              isExpanded: true,
               decoration: const InputDecoration(labelText: 'Priority'),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('Not set'),
-                ),
-                for (final value in projectCapsulePriorityValues)
-                  DropdownMenuItem(
-                    value: value,
-                    child: Text(workloadLabel(value)),
-                  ),
-              ],
+              items: priorityItems,
               onChanged: (value) => setState(() => _priority = value),
             ),
           ],
@@ -494,6 +488,20 @@ class _CapsuleTruthEditorDialogState extends State<_CapsuleTruthEditorDialog> {
     );
   }
 }
+
+List<DropdownMenuItem<String?>> _legacyCompatibleItems({
+  required String? current,
+  required Set<String> supported,
+}) => [
+  const DropdownMenuItem<String?>(value: null, child: Text('Not set')),
+  for (final value in supported)
+    DropdownMenuItem(value: value, child: Text(workloadLabel(value))),
+  if (current != null && !supported.contains(current))
+    DropdownMenuItem(
+      value: current,
+      child: Text('Existing value: $current (normalize before saving)'),
+    ),
+];
 
 class _EditorGroup extends StatelessWidget {
   final String title;

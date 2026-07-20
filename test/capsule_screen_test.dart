@@ -261,6 +261,65 @@ void main() {
     await tester.pump(const Duration(minutes: 1));
   });
 
+  testWidgets('legacy Capsule phase is visible and must be normalized', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1600, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final db = AppDb.withExecutor(NativeDatabase.memory());
+    final state = AppState(db, enableBackgroundSummaryRefresh: false);
+    addTearDown(() async {
+      state.dispose();
+      await db.close();
+    });
+    await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+    await db.updateProjectMeta('atlas', {'phase': 'reference'});
+
+    await tester.pumpWidget(_harness(state));
+    await _pumpFrames(tester);
+    await tester.tap(find.text('Understand'));
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('capsule-edit-truth')));
+    await _pumpFrames(tester);
+
+    expect(tester.takeException(), isNull);
+    expect(
+      find.text('Existing value: reference (normalize before saving)'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('capsule-review-changes')));
+    await _pumpFrames(tester);
+    expect(
+      find.textContaining('Unsupported project phase: reference.'),
+      findsOneWidget,
+    );
+
+    final phase = find.byKey(const Key('capsule-edit-phase'));
+    await tester.scrollUntilVisible(
+      phase,
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const Key('capsule-truth-editor-fields')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.tap(phase);
+    await _pumpFrames(tester);
+    await tester.tap(find.text('Build').last);
+    await _pumpFrames(tester);
+    await tester.tap(find.byKey(const Key('capsule-review-changes')));
+    await _pumpFrames(tester);
+    expect(find.byKey(const Key('capsule-truth-review-diff')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('capsule-save-accepted')));
+    await _pumpFrames(tester);
+    expect((await db.getProjectFull('atlas'))!.phase, 'build');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 1));
+  });
+
   testWidgets('history distinguishes an unrecorded current truth', (
     tester,
   ) async {

@@ -189,6 +189,28 @@ void main() {
       },
     );
 
+    test(
+      'legacy phase values require explicit normalization before saving',
+      () async {
+        await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+        await db.updateProjectMeta('atlas', {'phase': 'reference'});
+        final before = (await service.load('atlas'))!;
+
+        await expectLater(
+          service.acceptPatch(
+            projectId: 'atlas',
+            expectedRevisionId: before.revisionId,
+            fields: const {'desiredOutcome': 'Clarify the project outcome.'},
+          ),
+          throwsA(isA<ProjectCapsuleTruthValidationException>()),
+        );
+
+        final project = await db.getProjectFull('atlas');
+        expect(project!.phase, 'reference');
+        expect(project.desiredOutcome, isNull);
+      },
+    );
+
     test('accepted source IDs recover a partially reviewed proposal', () async {
       await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
       final base = (await service.load('atlas'))!;

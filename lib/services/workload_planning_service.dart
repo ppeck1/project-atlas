@@ -322,6 +322,8 @@ class WorkloadSnapshot {
   final List<WorkloadCard> suggestedNextItems;
   final List<WorkloadCard> planningCandidateItems;
   final List<WorkloadCard> reviewNeededItems;
+  final int suggestedNextTotal;
+  final int reviewNeededTotal;
   final Map<String, int> countsByGroup;
   final Map<String, int> tasksByActor;
   final Map<String, int> tasksByRisk;
@@ -336,6 +338,8 @@ class WorkloadSnapshot {
     required this.suggestedNextItems,
     required this.planningCandidateItems,
     required this.reviewNeededItems,
+    required this.suggestedNextTotal,
+    required this.reviewNeededTotal,
     required this.countsByGroup,
     required this.tasksByActor,
     required this.tasksByRisk,
@@ -378,6 +382,7 @@ class WorkloadSnapshot {
     'suggestedNextItems': suggestedNextItems
         .map((card) => card.toJson(now: generatedAt))
         .toList(growable: false),
+    'suggestedNextTotal': suggestedNextTotal,
     'executionCandidates': suggestedNextItems
         .map((card) => card.toJson(now: generatedAt))
         .toList(growable: false),
@@ -387,6 +392,7 @@ class WorkloadSnapshot {
     'reviewNeededItems': reviewNeededItems
         .map((card) => card.toJson(now: generatedAt))
         .toList(growable: false),
+    'reviewNeededTotal': reviewNeededTotal,
     'cards': cards
         .map((card) => card.toJson(now: generatedAt))
         .toList(growable: false),
@@ -581,6 +587,8 @@ class WorkloadPlanner {
         planningCandidates.take(suggestionLimit),
       ),
       reviewNeededItems: List.unmodifiable(reviewNeeded.take(suggestionLimit)),
+      suggestedNextTotal: executionCandidates.length,
+      reviewNeededTotal: reviewNeeded.length,
       countsByGroup: Map.unmodifiable(countsByGroup),
       tasksByActor: Map.unmodifiable(byActor),
       tasksByRisk: Map.unmodifiable(byRisk),

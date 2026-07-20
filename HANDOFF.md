@@ -4,7 +4,7 @@ This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
 contact data, machine-specific paths, and unrelated project references.
 
-Last updated: 2026-07-18.
+Last updated: 2026-07-20.
 
 ## Current public state
 

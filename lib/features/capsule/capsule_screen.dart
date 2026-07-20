@@ -364,6 +364,10 @@ class _ActTab extends StatelessWidget {
       ...capsule.reviewItems,
       ...capsule.blockedItems,
     ].isNotEmpty;
+    void openProjectWork() => context.go(
+      '/work?projectId=${Uri.encodeQueryComponent(projectId)}&scope=project',
+    );
+    void openProjectDetail() => context.go('/projects/$projectId');
     return ListView(
       key: const Key('capsule-act-list'),
       padding: const EdgeInsets.all(16),
@@ -375,14 +379,12 @@ class _ActTab extends StatelessWidget {
           runSpacing: 8,
           children: [
             FilledButton.icon(
-              onPressed: () => context.go(
-                '/work?projectId=${Uri.encodeQueryComponent(projectId)}&scope=project',
-              ),
+              onPressed: openProjectWork,
               icon: const Icon(Icons.view_kanban_outlined, size: 18),
               label: const Text('Open project work'),
             ),
             OutlinedButton.icon(
-              onPressed: () => context.go('/projects/$projectId'),
+              onPressed: openProjectDetail,
               icon: const Icon(Icons.folder_open_outlined, size: 18),
               label: const Text('Project detail'),
             ),
@@ -407,11 +409,36 @@ class _ActTab extends StatelessWidget {
               'No active work is recorded. Define one bounded next action with an owner and verification.',
             ),
           ),
-        _ActionSection('Ready now', capsule.readyItems),
-        _ActionSection('Human must decide', capsule.decisionItems),
-        _ActionSection('In progress', capsule.inProgressItems),
-        _ActionSection('Ready for acceptance', capsule.reviewItems),
-        _ActionSection('Waiting on evidence', capsule.blockedItems),
+        _ActionSection(
+          'Ready now',
+          capsule.readyItems,
+          totalCount: capsule.listTotals['readyItems'],
+          onOpenAll: openProjectWork,
+        ),
+        _ActionSection(
+          'Human must decide',
+          capsule.decisionItems,
+          totalCount: capsule.listTotals['decisionItems'],
+          onOpenAll: openProjectWork,
+        ),
+        _ActionSection(
+          'In progress',
+          capsule.inProgressItems,
+          totalCount: capsule.listTotals['inProgressItems'],
+          onOpenAll: openProjectWork,
+        ),
+        _ActionSection(
+          'Ready for acceptance',
+          capsule.reviewItems,
+          totalCount: capsule.listTotals['reviewItems'],
+          onOpenAll: openProjectWork,
+        ),
+        _ActionSection(
+          'Waiting on evidence',
+          capsule.blockedItems,
+          totalCount: capsule.listTotals['blockedItems'],
+          onOpenAll: openProjectWork,
+        ),
         if (capsule.errors.isNotEmpty ||
             capsule.warnings.isNotEmpty ||
             capsule.gaps.isNotEmpty)
@@ -477,12 +504,20 @@ class _UnderstandTab extends StatelessWidget {
           'Recent decisions',
           Icons.gavel_outlined,
           capsule.decisions,
+          totalCount: capsule.listTotals['decisions'],
+          onOpenAll: () => context.go(
+            "/projects/${Uri.encodeQueryComponent(_text(capsule.project['projectId'], ''))}",
+          ),
           emptyMessage: 'No project decisions are recorded.',
         ),
         _RecordsSection(
           'Recorded risks',
           Icons.warning_amber_outlined,
           capsule.risks,
+          totalCount: capsule.listTotals['risks'],
+          onOpenAll: () => context.go(
+            "/projects/${Uri.encodeQueryComponent(_text(capsule.project['projectId'], ''))}",
+          ),
           emptyMessage: 'No project risks are recorded.',
         ),
         _MapSection('Scope', Icons.filter_center_focus, capsule.scope),
@@ -618,17 +653,33 @@ class _RecommendationCard extends StatelessWidget {
 class _ActionSection extends StatelessWidget {
   final String title;
   final List<ProjectCapsuleAction> items;
+  final int? totalCount;
+  final VoidCallback? onOpenAll;
 
-  const _ActionSection(this.title, this.items);
+  const _ActionSection(
+    this.title,
+    this.items, {
+    this.totalCount,
+    this.onOpenAll,
+  });
 
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) return const SizedBox.shrink();
+    final total = totalCount == null || totalCount! < items.length
+        ? items.length
+        : totalCount!;
+    final isTruncated = total > items.length;
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: _Section(
-        title: '$title (${items.length})',
+        title: isTruncated
+            ? '$title (${items.length} of $total)'
+            : '$title ($total)',
         icon: Icons.route_outlined,
+        trailing: isTruncated && onOpenAll != null
+            ? TextButton(onPressed: onOpenAll, child: const Text('Open all'))
+            : null,
         child: Column(
           children: [
             for (var i = 0; i < items.length; i++) ...[
@@ -713,23 +764,34 @@ class _RecordsSection extends StatelessWidget {
   final String title;
   final IconData icon;
   final List<Map<String, Object?>> records;
+  final int? totalCount;
+  final VoidCallback? onOpenAll;
   final String emptyMessage;
 
   const _RecordsSection(
     this.title,
     this.icon,
     this.records, {
+    this.totalCount,
+    this.onOpenAll,
     required this.emptyMessage,
   });
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).extension<AtlasColors>()!;
+    final total = totalCount == null || totalCount! < records.length
+        ? records.length
+        : totalCount!;
+    final isTruncated = total > records.length;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: _Section(
-        title: title,
+        title: isTruncated ? '$title (${records.length} of $total)' : title,
         icon: icon,
+        trailing: isTruncated && onOpenAll != null
+            ? TextButton(onPressed: onOpenAll, child: const Text('Open all'))
+            : null,
         child: records.isEmpty
             ? Text(emptyMessage)
             : Column(

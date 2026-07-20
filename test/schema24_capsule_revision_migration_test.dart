@@ -95,4 +95,53 @@ void main() {
       await temp.delete(recursive: true);
     }
   });
+
+  test('v24 migration fails closed for a malformed existing ledger', () async {
+    final temp = await Directory.systemTemp.createTemp('atlas_schema24_bad_');
+    final path = p.join(temp.path, 'migration.sqlite');
+    try {
+      final initial = AppDb.withExecutor(NativeDatabase(File(path)));
+      try {
+        await initial.createProject(
+          'atlas',
+          'Project Atlas',
+          DateTime.utc(2026),
+        );
+      } finally {
+        await initial.close();
+      }
+
+      final legacy = sqlite3.sqlite3.open(path);
+      try {
+        legacy.execute('DROP TABLE project_capsule_revisions');
+        legacy.execute('CREATE TABLE project_capsule_revisions (id TEXT)');
+        legacy.execute('PRAGMA user_version = 23');
+      } finally {
+        legacy.dispose();
+      }
+
+      final migrated = AppDb.withExecutor(NativeDatabase(File(path)));
+      try {
+        await expectLater(
+          migrated.getProjectFull('atlas'),
+          throwsA(
+            predicate<Object>(
+              (error) => '$error'.contains('project_capsule_revisions'),
+            ),
+          ),
+        );
+      } finally {
+        await migrated.close();
+      }
+
+      final after = sqlite3.sqlite3.open(path);
+      try {
+        expect(after.userVersion, 23);
+      } finally {
+        after.dispose();
+      }
+    } finally {
+      await temp.delete(recursive: true);
+    }
+  });
 }

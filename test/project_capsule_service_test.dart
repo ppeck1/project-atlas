@@ -109,6 +109,28 @@ void main() {
       );
     });
 
+    test('reports omitted frontier items with exact totals', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      for (var index = 0; index < 6; index++) {
+        await state.addWorkItemToProject(
+          'atlas',
+          'Ready item $index',
+          readiness: 'ready',
+          suggestedActor: 'codex',
+        );
+      }
+
+      final snapshot = (await service.buildSnapshot('atlas'))!;
+
+      expect(snapshot.readyItems, hasLength(5));
+      expect(snapshot.listTotals['readyItems'], 6);
+      expect(
+        (snapshot.toJson(view: ProjectCapsuleView.act)['listTotals']
+            as Map<String, int>)['readyItems'],
+        6,
+      );
+    });
+
     test('deeply freezes projected state behind the revision hash', () async {
       await _seed(state, db);
       final snapshot = (await service.buildSnapshot('atlas'))!;
