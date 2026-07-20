@@ -376,6 +376,39 @@ void main() {
       },
     );
 
+    test('General Tasks repair records an accepted truth revision', () async {
+      await db.createProject(
+        AppDb.kGeneralTasksProjectId,
+        'General Tasks',
+        DateTime.utc(2026),
+      );
+      await db.updateProjectMeta(AppDb.kGeneralTasksProjectId, {
+        'description': 'Legacy hidden project description.',
+      });
+      final state = AppState(db, enableBackgroundSummaryRefresh: false);
+      try {
+        await state.addGeneralWorkItem('Repair the General Tasks marker');
+      } finally {
+        state.dispose();
+      }
+
+      final truth = (await service.load(AppDb.kGeneralTasksProjectId))!;
+      final revisions = await service.listRevisions(
+        AppDb.kGeneralTasksProjectId,
+      );
+      expect(truth.headMatchesCurrent, isTrue);
+      expect(revisions, hasLength(2));
+      expect(revisions.first.sourceKind, 'general_tasks_repair');
+      expect(
+        revisions.first.changedFields['description']!.after,
+        AppDb.kGeneralTasksProjectDescription,
+      );
+      expect(
+        revisions.first.truth.description,
+        AppDb.kGeneralTasksProjectDescription,
+      );
+    });
+
     test('operator deletion records the accepted lifecycle revision', () async {
       await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
       final state = AppState(db, enableBackgroundSummaryRefresh: false);

@@ -223,6 +223,7 @@ class ProjectCapsuleTruthService {
     String? sourceId,
     String? reason,
     bool recordProjectMetadataAudit = false,
+    bool recordReconciliation = false,
   }) {
     return db.transaction(() async {
       final beforeState = await load(projectId);
@@ -278,7 +279,9 @@ class ProjectCapsuleTruthService {
       final acceptedTruth = ProjectCapsuleTruth.fromProjectMap(
         project.toJson(),
       );
-      final changes = beforeState.truth.diff(acceptedTruth);
+      final priorAcceptedTruth =
+          beforeState.recordedHead?.truth ?? beforeState.truth;
+      final changes = priorAcceptedTruth.diff(acceptedTruth);
       final metadataChanges = _projectMetaChanges(
         beforeState.project,
         project,
@@ -307,7 +310,9 @@ class ProjectCapsuleTruthService {
           }),
         );
       }
-      if (changes.isEmpty) {
+      final reconcileUnrecordedTruth =
+          recordReconciliation && !beforeState.headMatchesCurrent;
+      if (changes.isEmpty && !reconcileUnrecordedTruth) {
         return ProjectCapsuleTruthAcceptance(
           changed: false,
           state: ProjectCapsuleTruthState(

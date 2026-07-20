@@ -3783,10 +3783,15 @@ class AppDb extends _$AppDb {
           createdAt: Value(now),
         ),
       );
-    } else if (existingProject.description != kGeneralTasksProjectDescription) {
-      await updateProjectMeta(projectId, {
-        'description': kGeneralTasksProjectDescription,
-      });
+      final created = await getProjectFull(projectId);
+      if (created == null) {
+        throw StateError('General Tasks project was not created.');
+      }
+      await _ensureProjectCapsuleBaseline(
+        created,
+        sourceKind: 'general_tasks_created',
+        acceptedAt: now,
+      );
     }
     final existingStage =
         await (select(stages)

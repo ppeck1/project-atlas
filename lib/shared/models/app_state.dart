@@ -1080,7 +1080,7 @@ class AppState extends ChangeNotifier {
     String? planningNotes,
     DateTime? lastReviewedAt,
   }) async {
-    final stageId = await db.ensureGeneralTaskStage();
+    final stageId = await _ensureGeneralTaskStage();
     await db.logEvent(
       area: 'ui',
       action: 'create_general_task_request',
@@ -1117,6 +1117,24 @@ class AppState extends ChangeNotifier {
     );
     notifyListeners();
     return workItemId;
+  }
+
+  Future<String> _ensureGeneralTaskStage() async {
+    final project = await db.getGeneralTasksProject();
+    if (project != null &&
+        project.description != AppDb.kGeneralTasksProjectDescription) {
+      await ProjectCapsuleTruthService(db).acceptPatch(
+        projectId: project.id,
+        fields: const {
+          'description': AppDb.kGeneralTasksProjectDescription,
+        },
+        actorLabel: 'Atlas',
+        sourceKind: 'general_tasks_repair',
+        reason: 'Restored the hidden General Tasks project marker.',
+        recordReconciliation: true,
+      );
+    }
+    return db.ensureGeneralTaskStage();
   }
 
   Future<void> updateWorkItem({
