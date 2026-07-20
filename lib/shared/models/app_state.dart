@@ -12,6 +12,7 @@ import '../../db/app_db.dart';
 import '../../services/github_archive_service.dart';
 import '../../services/github_remote_metadata_service.dart';
 import '../../services/atlas_full_backup_service.dart';
+import '../../services/atlas_live_recovery_service.dart';
 import '../../services/local_git_visibility_service.dart';
 import '../../services/local_git_archive_service.dart';
 import '../../services/local_project_refresh_service.dart';
@@ -8654,6 +8655,31 @@ class AppState extends ChangeNotifier {
       return result;
     },
   );
+
+  /// Builds a verified restart-only replacement plan. It does not change the
+  /// active instance; the UI must collect a typed confirmation before calling
+  /// [launchConfirmedLiveRecovery].
+  Future<AtlasLiveRecoveryPlan> prepareLiveRecovery(
+    Directory bundle,
+    Directory safetyBackupRoot,
+  ) => _trackOperation(
+    title: 'Live recovery preparation',
+    startingMessage: 'Validating backup and preparing guarded recovery…',
+    run: () => AtlasLiveRecoveryService().preparePlan(
+      sourceBundle: bundle,
+      safetyBackupRoot: safetyBackupRoot,
+      executablePath: Platform.resolvedExecutable,
+    ),
+  );
+
+  /// Starts a fresh recovery process; the current app must immediately exit
+  /// afterwards so SQLite handles are released before replacement begins.
+  Future<void> launchConfirmedLiveRecovery(AtlasLiveRecoveryPlan plan) async {
+    await Process.start(Platform.resolvedExecutable, [
+      '--apply-live-recovery',
+      plan.planFile.path,
+    ]);
+  }
 
   /// Writes a portable archive for inspection and selective transfer. It does
   /// not include every Atlas table and cannot restore an Atlas instance.

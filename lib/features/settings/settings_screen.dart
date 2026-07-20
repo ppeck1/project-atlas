@@ -2716,6 +2716,102 @@ class _AdminTabState extends State<_AdminTab> {
     return path?.trim().isEmpty == true ? null : path;
   }
 
+  Future<void> _startLiveRecovery() async {
+    final state = AppStateScope.of(context);
+    final selected = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Choose a completed full-backup manifest.json',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    final manifestPath = selected?.files.singleOrNull?.path;
+    if (manifestPath == null || manifestPath.trim().isEmpty) return;
+    final safetyRoot = await FilePicker.platform.getDirectoryPath(
+      dialogTitle:
+          'Choose a separate folder for the pre-recovery safety backup',
+    );
+    if (safetyRoot == null || safetyRoot.trim().isEmpty || !mounted) return;
+    try {
+      final plan = await state.prepareLiveRecovery(
+        File(manifestPath).parent,
+        Directory(safetyRoot),
+      );
+      if (!mounted) return;
+      final confirmed = await _confirmLiveReplacement(plan.managedFileCount);
+      if (confirmed != true || !mounted) return;
+      await state.launchConfirmedLiveRecovery(plan);
+      // The child process performs the safety backup and replacement only
+      // after this process exits and releases SQLite file handles.
+      exit(0);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _status = 'Live recovery was not started: $error');
+      }
+    }
+  }
+
+  Future<bool?> _confirmLiveReplacement(int managedFileCount) async {
+    final controller = TextEditingController();
+    var matches = false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: _panel,
+          title: const Text('Replace active Atlas instance?'),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'This is a replacement recovery, not a merge. Atlas will close, create a fresh full safety backup of the current live instance, then replace the active database, documents, and project media from the selected validated backup.',
+                  style: TextStyle(height: 1.45),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '$managedFileCount manifest-managed files will be recovered. A new Atlas window opens only after replacement completes.',
+                  style: const TextStyle(color: _text54, fontSize: 12),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  onChanged: (value) =>
+                      setLocal(() => matches = value.trim() == 'REPLACE ATLAS'),
+                  decoration: const InputDecoration(
+                    labelText: 'Type REPLACE ATLAS to confirm',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Merge is intentionally unavailable: a partial merge of an Atlas-wide SQLite snapshot could silently violate cross-table relationships.',
+                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: matches ? () => Navigator.of(ctx).pop(true) : null,
+              style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+              icon: const Icon(Icons.warning_amber_outlined, size: 16),
+              label: const Text('Close Atlas and replace'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    return confirmed;
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
@@ -2861,12 +2957,27 @@ class _AdminTabState extends State<_AdminTab> {
               icon: const Icon(Icons.restore_page_outlined, size: 16),
               label: const Text('Verify round trip & stage restore'),
             ),
+            FilledButton.icon(
+              onPressed: _startLiveRecovery,
+              style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+              icon: const Icon(Icons.warning_amber_outlined, size: 16),
+              label: const Text('Replace active Atlas from backup'),
+            ),
           ],
         ),
         const SizedBox(height: 10),
         const Text(
           'Round-trip verification restores and re-hashes a separate copy only. It never replaces the active Atlas database or files.',
           style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Replacement recovery is restart-only and requires typed confirmation. It creates a fresh safety backup first; merge is intentionally unavailable.',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.orangeAccent,
+            height: 1.4,
+          ),
         ),
         const SizedBox(height: 18),
         const _ProjectRecoveryPanel(),
