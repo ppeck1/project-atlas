@@ -2591,6 +2591,8 @@ class AppState extends ChangeNotifier {
   // People
   Future<List<ProjectPerson>> getProjectPeople(String projectId) =>
       db.getProjectPeople(projectId);
+  Stream<List<ProjectPerson>> watchProjectPeople(String projectId) =>
+      db.watchProjectPeople(projectId);
   Future<void> addProjectPerson(
     String projectId,
     String name,
@@ -2619,6 +2621,8 @@ class AppState extends ChangeNotifier {
   // Risks
   Future<List<ProjectRisk>> getProjectRisks(String projectId) =>
       db.getProjectRisks(projectId);
+  Stream<List<ProjectRisk>> watchProjectRisks(String projectId) =>
+      db.watchProjectRisks(projectId);
   Future<void> addProjectRisk(
     String projectId,
     String title,
@@ -2637,6 +2641,8 @@ class AppState extends ChangeNotifier {
   // Decisions
   Future<List<ProjectDecision>> getProjectDecisions(String projectId) =>
       db.getProjectDecisions(projectId);
+  Stream<List<ProjectDecision>> watchProjectDecisions(String projectId) =>
+      db.watchProjectDecisions(projectId);
   Future<void> addProjectDecision(
     String projectId,
     String title,
