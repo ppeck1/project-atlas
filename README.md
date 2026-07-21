@@ -128,9 +128,9 @@ details behind those decisions.
 
 Atlas has no hosted account, analytics, telemetry, or cloud sync. Data leaves
 the machine only when an operator explicitly invokes an enabled integration.
-The local SQLite database is currently plaintext, and configured integration
-secrets are stored locally; review [SECURITY.md](SECURITY.md) before using real
-sensitive material.
+The local SQLite database is currently plaintext. Telegram bot credentials are
+stored separately with Windows DPAPI protection; review
+[SECURITY.md](SECURITY.md) before using real sensitive material.
 
 The Settings portable export is useful for inspection and selective transfer,
 but it is not a complete backup and cannot restore an Atlas instance. Full
@@ -197,7 +197,8 @@ database, and exercises the MCP gateway against the built Windows executable.
 ## Current limitations
 
 - Windows is the supported desktop target.
-- The local database and saved integration secrets are not encrypted at rest.
+- The local database is not encrypted at rest. Telegram bot credentials use
+  Windows DPAPI and remain available only to the Windows user that saved them.
 - The Settings portable export is not a complete backup and has no restore
   workflow yet.
 - AI quality depends on the locally selected Ollama model.

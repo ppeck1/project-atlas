@@ -19,6 +19,7 @@ import '../../services/local_project_refresh_service.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../services/ollama_service.dart';
 import '../../services/project_enrichment_service.dart';
+import '../../services/project_enrichment_audit_service.dart';
 import '../../services/project_bundle_recovery_service.dart';
 import '../../services/project_capsule_truth_service.dart';
 import '../../services/project_identity_enrichment_service.dart';
@@ -26,6 +27,7 @@ import '../../services/project_runtime_service.dart';
 import '../../services/project_summary_models.dart';
 import '../../services/shopify_seo_review_service.dart';
 import '../../services/telegram_service.dart';
+import '../../services/windows_secret_store.dart';
 import '../../services/workload_planning_service.dart';
 import 'atlas_operation_status.dart';
 
@@ -571,6 +573,7 @@ class _ProjectGitArchive {
 class AppState extends ChangeNotifier {
   final AppDb db;
   final GithubArchiveFetcher _githubArchiveFetcher;
+  final SecretStore _secretStore;
   static const String _projectHealthSuppressionsMetaKey =
       'project_health_finding_suppressions_v1';
   static const Set<String> _safeLocalProjectDocNames = {
@@ -592,6 +595,8 @@ class AppState extends ChangeNotifier {
   };
   late final ProjectEnrichmentService _projectEnrichmentService =
       ProjectEnrichmentService(db);
+  late final ProjectEnrichmentAuditService _projectEnrichmentAuditService =
+      ProjectEnrichmentAuditService(db);
   late final ProjectIdentityEnrichmentService
   _projectIdentityEnrichmentService = ProjectIdentityEnrichmentService(db);
   late final GithubArchiveService _githubArchiveService = GithubArchiveService(
@@ -662,9 +667,11 @@ class AppState extends ChangeNotifier {
     this.db, {
     bool enableBackgroundSummaryRefresh = true,
     GithubArchiveFetcher? githubArchiveFetcher,
+    SecretStore? secretStore,
   }) : _githubArchiveFetcher =
            githubArchiveFetcher ??
-           GithubArchiveService.downloadPublicGithubArchive {
+           GithubArchiveService.downloadPublicGithubArchive,
+       _secretStore = secretStore ?? const WindowsSecretStore() {
     _watchProjectAiSummarySettings();
     unawaited(
       _migrateRuntimeManifestPathSetting().catchError((
@@ -1495,8 +1502,28 @@ class AppState extends ChangeNotifier {
   // Settings
   // ---------------------------------------------------------------------------
 
-  Future<String?> getSetting(String key) => db.getMetaString(key);
+  Future<String?> getSetting(String key) async {
+    if (key != AppDb.kTelegramBotToken) return db.getMetaString(key);
+    final protected = await _secretStore.read(key);
+    if (protected != null) return protected;
+    final legacy = await db.getMetaString(key);
+    if (legacy == null || legacy.trim().isEmpty) return legacy;
+    await _secretStore.write(key, legacy);
+    await db.setMetaString(key, null);
+    return legacy;
+  }
+
   Future<void> setSetting(String key, String? value) async {
+    if (key == AppDb.kTelegramBotToken) {
+      if (value == null || value.trim().isEmpty) {
+        await _secretStore.delete(key);
+      } else {
+        await _secretStore.write(key, value);
+      }
+      await db.setMetaString(key, null);
+      notifyListeners();
+      return;
+    }
     await db.setMetaString(key, value);
     notifyListeners();
   }
@@ -4185,7 +4212,7 @@ class AppState extends ChangeNotifier {
           : allProjects
                 .where((project) => scopedProjectIds.contains(project.id))
                 .toList(growable: false);
-      final audit = await _buildProjectEnrichmentAudit(
+      final audit = await _projectEnrichmentAuditService.build(
         registry: scopedRegistry,
         projects: projects,
       );
@@ -4446,468 +4473,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<ProjectEnrichmentAudit> _buildProjectEnrichmentAudit({
-    required List<ProjectRegistryEntry> registry,
-    required List<Project> projects,
-  }) async {
-    final findings = <ProjectEnrichmentFindingDraft>[];
-    final registryByProjectId = <String, ProjectRegistryEntry>{};
-    final registryEntriesByProjectId = <String, List<ProjectRegistryEntry>>{};
-    for (final entry in registry) {
-      final linkedProjectId = entry.atlasProjectId?.trim();
-      if (linkedProjectId == null || linkedProjectId.isEmpty) continue;
-      registryEntriesByProjectId
-          .putIfAbsent(linkedProjectId, () => <ProjectRegistryEntry>[])
-          .add(entry);
-      registryByProjectId.putIfAbsent(linkedProjectId, () => entry);
-    }
-    final projectsById = <String, Project>{
-      for (final project in projects) project.id: project,
-    };
-    final projectIds = projects.map((project) => project.id).toSet();
-    var documents = 0;
-    var media = 0;
-    var sourceFiles = 0;
-    var cards = 0;
-    var projectsWithDocs = 0;
-    var projectsWithMedia = 0;
-    var projectsWithSourceFiles = 0;
-    var projectsWithCards = 0;
-    var projectsWithPeople = 0;
-    var projectsWithTags = 0;
-    var projectsWithTasks = 0;
-    var projectsWithRisks = 0;
-    var projectsWithDecisions = 0;
-    var projectsWithGithubCache = 0;
-    var activePrimarySources = 0;
-    var unresolvedSources = 0;
-    var legacyRemoteSources = 0;
-    var duplicateSourceIdentities = 0;
-
-    void addFinding({
-      Project? project,
-      ProjectRegistryEntry? registryEntry,
-      required String severity,
-      required String category,
-      required String title,
-      String? detail,
-      Map<String, Object?> evidence = const {},
-    }) {
-      findings.add(
-        ProjectEnrichmentFindingDraft(
-          projectId: project?.id,
-          registryId: registryEntry?.id,
-          severity: severity,
-          category: category,
-          title: title,
-          detail: detail,
-          evidence: {
-            if (project != null) 'projectTitle': project.title,
-            if (registryEntry != null) ...{
-              'registryDisplayName': registryEntry.displayName,
-              'localPath': registryEntry.localPath,
-              'reviewState': registryEntry.reviewState,
-            },
-            ...evidence,
-          },
-        ),
-      );
-    }
-
-    for (final entry in registry) {
-      final linkedProjectId = entry.atlasProjectId?.trim();
-      if (entry.reviewState == 'ignored') continue;
-      final localPath = entry.localPath.trim();
-      final pathIsRemote = _looksLikeRemotePath(localPath);
-      final pathExists = !pathIsRemote && _directoryExistsSafely(localPath);
-      final pathHasProblem = pathIsRemote || !pathExists;
-      if (pathIsRemote) {
-        addFinding(
-          registryEntry: entry,
-          severity: 'info',
-          category: 'registry',
-          title: 'Registered local path is a remote URL, not a local folder.',
-          detail: entry.localPath,
-          evidence: {'pathKind': 'remote_url'},
-        );
-      } else if (!pathExists) {
-        addFinding(
-          registryEntry: entry,
-          severity: 'error',
-          category: 'registry',
-          title: 'Registered local path does not exist.',
-          detail: entry.localPath,
-        );
-      }
-      if (linkedProjectId == null || linkedProjectId.isEmpty) {
-        if (!pathHasProblem && entry.reviewState == 'needs_review') {
-          addFinding(
-            registryEntry: entry,
-            severity: 'warning',
-            category: 'registry',
-            title: 'Registered local project still needs review.',
-            detail:
-                'Review it, link it to an existing project, import it as a new project, or mark it ignored.',
-          );
-        } else if (!pathHasProblem) {
-          addFinding(
-            registryEntry: entry,
-            severity: 'warning',
-            category: 'registry',
-            title:
-                'Registered local project is not linked to an Atlas project.',
-            detail:
-                'Link it to an existing project, import it as a new project, or mark it ignored.',
-          );
-        }
-      } else if (!projectIds.contains(linkedProjectId)) {
-        addFinding(
-          registryEntry: entry,
-          severity: 'error',
-          category: 'registry',
-          title: 'Registry row points to a missing Atlas project.',
-          detail: linkedProjectId,
-        );
-      } else if (!pathHasProblem && entry.reviewState == 'needs_review') {
-        addFinding(
-          registryEntry: entry,
-          severity: 'warning',
-          category: 'registry',
-          title: 'Registered local project still needs review.',
-          detail:
-              'Review this linked registry row or mark it accepted/ignored.',
-        );
-      }
-    }
-
-    for (final duplicateGroup in registryEntriesByProjectId.entries.where(
-      (entry) => entry.value.length > 1,
-    )) {
-      final linkedProject = projectsById[duplicateGroup.key];
-      final entries = duplicateGroup.value;
-      addFinding(
-        project: linkedProject,
-        registryEntry: entries.first,
-        severity: 'warning',
-        category: 'registry',
-        title:
-            'Multiple local registry entries are linked to the same Atlas project.',
-        detail:
-            'Review these registry rows and merge, unlink, or mark duplicates ignored.',
-        evidence: {
-          'atlasProjectId': duplicateGroup.key,
-          'linkedRegistryIds': entries.map((entry) => entry.id).toList(),
-          'linkedDisplayNames': entries
-              .map((entry) => entry.displayName)
-              .toList(),
-          'linkedLocalPaths': entries.map((entry) => entry.localPath).toList(),
-        },
-      );
-    }
-
-    final duplicateIdentityGroups = <String, List<ProjectRegistryEntry>>{};
-    for (final entry in registry) {
-      if (entry.reviewState == 'ignored') continue;
-      final identity = _sourceTopologyIdentity(entry);
-      if (identity == null) continue;
-      duplicateIdentityGroups
-          .putIfAbsent(identity, () => <ProjectRegistryEntry>[])
-          .add(entry);
-    }
-    for (final group in duplicateIdentityGroups.entries.where(
-      (entry) => entry.value.length > 1,
-    )) {
-      duplicateSourceIdentities++;
-      final entries = group.value;
-      addFinding(
-        project: entries.first.atlasProjectId == null
-            ? null
-            : projectsById[entries.first.atlasProjectId],
-        registryEntry: entries.first,
-        severity: 'warning',
-        category: 'source_topology',
-        title: 'Multiple source rows share the same normalized identity.',
-        detail:
-            'Review these source rows before applying identity reconciliation.',
-        evidence: {
-          'normalizedIdentity': group.key,
-          'registryIds': entries.map((entry) => entry.id).toList(),
-          'atlasProjectIds': entries
-              .map((entry) => entry.atlasProjectId)
-              .whereType<String>()
-              .toSet()
-              .toList(),
-          'localPaths': entries.map((entry) => entry.localPath).toList(),
-        },
-      );
-    }
-
-    for (final project in projects) {
-      final projectRegistryEntries =
-          registryEntriesByProjectId[project.id] ??
-          const <ProjectRegistryEntry>[];
-      final registryEntry = projectRegistryEntries.firstOrNull;
-      final projectPrimarySources = projectRegistryEntries
-          .where(_isActivePrimarySource)
-          .toList(growable: false);
-      final projectUnresolvedSources = projectRegistryEntries
-          .where(_isUnresolvedSource)
-          .toList(growable: false);
-      activePrimarySources += projectPrimarySources.length;
-      unresolvedSources += projectUnresolvedSources.length;
-      legacyRemoteSources += projectRegistryEntries
-          .where((entry) => entry.sourceType == 'remote_url_legacy')
-          .length;
-      final docs = await db.getDocumentsForProject(project.id);
-      final mediaItems = await getProjectMedia(project.id);
-      final tags = await getTagsForProject(project.id);
-      final people = await getProjectPeople(project.id);
-      final items = await getWorkItemsForProject(project.id);
-      final risks = await getProjectRisks(project.id);
-      final decisions = await getProjectDecisions(project.id);
-      final observation = registryEntry == null
-          ? null
-          : await db.getLatestProjectObservationForPath(
-              registryEntry.localPath,
-            );
-      final github = await getLatestProjectGitRemoteStatus(project.id);
-      final refreshItems = registryEntry == null
-          ? const <LocalProjectRefreshItem>[]
-          : await db.getLocalProjectRefreshItemsForRegistry(registryEntry.id);
-      final sourceFileCount = refreshItems
-          .where((item) => item.sourceKind == 'source_file')
-          .length;
-      final cardCount = refreshItems
-          .where((item) => item.sourceKind == 'atlas_card')
-          .length;
-
-      documents += docs.length;
-      media += mediaItems.length;
-      sourceFiles += sourceFileCount;
-      cards += cardCount;
-      if (docs.isNotEmpty) projectsWithDocs++;
-      if (mediaItems.isNotEmpty) projectsWithMedia++;
-      if (sourceFileCount > 0) projectsWithSourceFiles++;
-      if (cardCount > 0) projectsWithCards++;
-      if (people.isNotEmpty) projectsWithPeople++;
-      if (tags.isNotEmpty) projectsWithTags++;
-      if (items.isNotEmpty) projectsWithTasks++;
-      if (risks.isNotEmpty) projectsWithRisks++;
-      if (decisions.isNotEmpty) projectsWithDecisions++;
-      if (github != null) projectsWithGithubCache++;
-
-      if (registryEntry == null) {
-        addFinding(
-          project: project,
-          severity: 'warning',
-          category: 'registry',
-          title: 'Atlas project is not linked to a local registry entry.',
-          detail:
-              'Run an Operations scan and link or upload the matching local project.',
-        );
-      } else if (projectPrimarySources.isEmpty) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'error',
-          category: 'source_topology',
-          title: 'Project has no active primary working source.',
-          detail:
-              'Mark one valid local source as primary_working before identity reconciliation.',
-          evidence: {
-            'linkedRegistryIds': projectRegistryEntries
-                .map((entry) => entry.id)
-                .toList(),
-            'sourceRoles': projectRegistryEntries
-                .map((entry) => entry.sourceRole)
-                .toSet()
-                .toList(),
-            'lifecycleStates': projectRegistryEntries
-                .map((entry) => entry.lifecycleState)
-                .toSet()
-                .toList(),
-          },
-        );
-      } else if (projectPrimarySources.length > 1) {
-        addFinding(
-          project: project,
-          registryEntry: projectPrimarySources.first,
-          severity: 'error',
-          category: 'source_topology',
-          title: 'Project has multiple active primary working sources.',
-          detail:
-              'Resolve source authority before applying identity reconciliation.',
-          evidence: {
-            'primaryRegistryIds': projectPrimarySources
-                .map((entry) => entry.id)
-                .toList(),
-            'primaryLocalPaths': projectPrimarySources
-                .map((entry) => entry.localPath)
-                .toList(),
-          },
-        );
-      }
-      for (final source in projectUnresolvedSources) {
-        addFinding(
-          project: project,
-          registryEntry: source,
-          severity: source.authorityLevel == 'blocked_unresolved'
-              ? 'error'
-              : 'warning',
-          category: 'source_topology',
-          title: 'Source topology is unresolved for this project.',
-          detail:
-              'Review the source role, lifecycle state, and authority before reconciliation.',
-          evidence: {
-            'sourceRole': source.sourceRole,
-            'sourceType': source.sourceType,
-            'lifecycleState': source.lifecycleState,
-            'authorityLevel': source.authorityLevel,
-            'normalizedIdentity': source.normalizedIdentity,
-          },
-        );
-      }
-      if (_isBlank(project.description)) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'identity',
-          title: 'Project description is blank.',
-        );
-      }
-      if (_isBlank(project.owner)) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'people',
-          title: 'Project owner is blank.',
-        );
-      }
-      if (tags.isEmpty) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'identity',
-          title: 'Project has no tags.',
-        );
-      }
-      if (docs.isEmpty) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'warning',
-          category: 'library',
-          title: 'Project has no imported documents.',
-        );
-      }
-      if (_looksLikeSoftwareProject(observation, registryEntry) &&
-          sourceFileCount == 0) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'warning',
-          category: 'library',
-          title: 'Software project has no individual source files imported.',
-          detail:
-              'Run linked project refresh with source documents enabled, or review source import caps/exclusions.',
-        );
-      }
-      if (_looksLikeCardProject(project, registryEntry) && cardCount == 0) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'warning',
-          category: 'library',
-          title: 'Card-style project has no individual cards imported.',
-          detail:
-              'Run linked project refresh and review card source parser coverage.',
-        );
-      }
-      final remote = observation?.remoteUrl;
-      final githubIdentity = GithubRemoteMetadataService.parseGithubRemoteUrl(
-        remote,
-      );
-      if (githubIdentity != null && github == null) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'warning',
-          category: 'repository',
-          title: 'GitHub remote is detected but metadata is not cached.',
-          detail:
-              'Use Refresh GitHub so Atlas can show public/private/default-branch state.',
-          evidence: {'remoteUrl': remote},
-        );
-      } else if (github?.hasError == true) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'warning',
-          category: 'repository',
-          title: 'Latest GitHub metadata refresh has a warning.',
-          detail: github?.error,
-          evidence: {'remoteUrl': github?.remoteUrl},
-        );
-      }
-      final dirtyCount = observation?.dirtyCount ?? 0;
-      if (dirtyCount > 0) {
-        addFinding(
-          project: project,
-          registryEntry: registryEntry,
-          severity: 'info',
-          category: 'repository',
-          title: 'Latest local git observation has uncommitted changes.',
-          evidence: {'dirtyCount': dirtyCount},
-        );
-      }
-    }
-
-    final coverage = {
-      'projects': projects.length,
-      'registryEntries': registry.length,
-      'linkedSources': registryEntriesByProjectId.values.fold<int>(
-        0,
-        (total, entries) => total + entries.length,
-      ),
-      'linkedProjects': registryByProjectId.length,
-      'distinctLinkedProjects': registryByProjectId.length,
-      'unlinkedRegistryEntries': registry
-          .where(
-            (entry) =>
-                entry.reviewState != 'ignored' &&
-                (entry.atlasProjectId ?? '').isEmpty,
-          )
-          .length,
-      'atlasProjectsWithoutRegistry': projects
-          .where((project) => !registryByProjectId.containsKey(project.id))
-          .length,
-      'documents': documents,
-      'media': media,
-      'sourceFiles': sourceFiles,
-      'cards': cards,
-      'projectsWithDocs': projectsWithDocs,
-      'projectsWithMedia': projectsWithMedia,
-      'projectsWithSourceFiles': projectsWithSourceFiles,
-      'projectsWithCards': projectsWithCards,
-      'projectsWithPeople': projectsWithPeople,
-      'projectsWithTags': projectsWithTags,
-      'projectsWithTasks': projectsWithTasks,
-      'projectsWithRisks': projectsWithRisks,
-      'projectsWithDecisions': projectsWithDecisions,
-      'projectsWithGithubCache': projectsWithGithubCache,
-      'sourceTopology': {
-        'activePrimarySources': activePrimarySources,
-        'unresolvedSources': unresolvedSources,
-        'legacyRemoteSources': legacyRemoteSources,
-        'duplicateNormalizedIdentities': duplicateSourceIdentities,
-      },
-    };
-    return ProjectEnrichmentAudit(findings: findings, coverage: coverage);
-  }
-
   bool _isActivePrimarySource(ProjectRegistryEntry entry) {
     return entry.reviewState != 'ignored' &&
         entry.sourceRole == 'primary_working' &&
@@ -4919,55 +4484,6 @@ class AppState extends ChangeNotifier {
         (entry.sourceRole == 'unresolved_candidate' ||
             entry.lifecycleState == 'legacy_remote' ||
             entry.authorityLevel == 'blocked_unresolved');
-  }
-
-  String? _sourceTopologyIdentity(ProjectRegistryEntry entry) {
-    final normalized = entry.normalizedIdentity?.trim();
-    if (normalized != null && normalized.isNotEmpty) return normalized;
-    final gitRoot = entry.gitRoot?.trim();
-    if (gitRoot != null && gitRoot.isNotEmpty) return _pathKey(gitRoot);
-    final localPath = entry.localPath.trim();
-    if (localPath.isEmpty) return null;
-    return _pathKey(localPath);
-  }
-
-  bool _looksLikeSoftwareProject(
-    ProjectObservation? observation,
-    ProjectRegistryEntry? registry,
-  ) {
-    final markers = observation == null
-        ? const <String>[]
-        : _decodeStringList(observation.markerFilesJson);
-    const softwareMarkers = {
-      'package.json',
-      'pubspec.yaml',
-      'pyproject.toml',
-      'Cargo.toml',
-      'go.mod',
-      'pom.xml',
-      'build.gradle',
-    };
-    if (markers.any(softwareMarkers.contains)) return true;
-    final path = [
-      registry?.localPath,
-      observation?.observedPath,
-    ].whereType<String>().join(' ').toLowerCase();
-    return path.contains(r'\src') ||
-        path.contains(r'\lib') ||
-        path.contains(r'\app') ||
-        path.contains('flutter') ||
-        path.contains('python') ||
-        path.contains('node');
-  }
-
-  bool _looksLikeCardProject(Project project, ProjectRegistryEntry? registry) {
-    final haystack = [
-      project.title,
-      project.description,
-      registry?.displayName,
-      registry?.localPath,
-    ].whereType<String>().join(' ').toLowerCase();
-    return haystack.contains('goalcard') || haystack.contains('card library');
   }
 
   bool _isBlank(String? value) => value == null || value.trim().isEmpty;
@@ -5782,7 +5298,7 @@ class AppState extends ChangeNotifier {
       }
     }
 
-    final audit = await _buildProjectEnrichmentAudit(
+    final audit = await _projectEnrichmentAuditService.build(
       registry: registryEntries,
       projects: [project],
     );

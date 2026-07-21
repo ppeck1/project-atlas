@@ -58,9 +58,14 @@ Any process running under your Windows user account can read this file. Do not
 store passwords, API keys, or other sensitive credentials in project notes,
 decisions, or risk descriptions.
 
-**Telegram credentials (bot token and chat ID) are stored in plaintext** inside
-the SQLite database. Use a dedicated bot created solely for Project Atlas; do
-not reuse a shared group bot token that other people or services rely on.
+**Telegram bot tokens are protected with Windows DPAPI** and stored separately
+from SQLite. They are decryptable only by the Windows user that saved them on
+that machine. On the next Settings read, a legacy plaintext database token is
+migrated into the protected store and removed from SQLite. Telegram chat IDs
+remain SQLite metadata and should be treated as private, not as credentials.
+
+This does not encrypt project content or other SQLite metadata. Do not store
+passwords, API keys, or other sensitive credentials in project fields.
 
 ## Reporting a Vulnerability
 

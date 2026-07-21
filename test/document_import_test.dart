@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:project_atlas/db/app_db.dart';
+import 'package:project_atlas/services/windows_secret_store.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
 
 // ── Minimal path_provider mock ──────────────────────────────────────────────
@@ -564,7 +565,11 @@ This is the email body.''';
 
   group('sendTodayToTelegram', () {
     test('returns disabled result without creating an outbox send', () async {
-      final state = AppState(db, enableBackgroundSummaryRefresh: false);
+      final state = AppState(
+        db,
+        enableBackgroundSummaryRefresh: false,
+        secretStore: MemorySecretStore(),
+      );
       addTearDown(state.dispose);
 
       await state.setSetting(AppDb.kTelegramBotToken, 'token');
@@ -575,6 +580,39 @@ This is the email body.''';
       expect(ok, isFalse);
       expect(err, contains('disabled'));
       expect(await db.watchOutboxMessages().first, isEmpty);
+    });
+  });
+
+  group('protected integration settings', () {
+    test('migrates a legacy Telegram token out of AppMeta on first read', () async {
+      final secrets = MemorySecretStore();
+      final state = AppState(
+        db,
+        enableBackgroundSummaryRefresh: false,
+        secretStore: secrets,
+      );
+      addTearDown(state.dispose);
+      await db.setMetaString(AppDb.kTelegramBotToken, 'legacy-token');
+
+      expect(await state.getSetting(AppDb.kTelegramBotToken), 'legacy-token');
+      expect(secrets.values[AppDb.kTelegramBotToken], 'legacy-token');
+      expect(await db.getMetaString(AppDb.kTelegramBotToken), isNull);
+    });
+
+    test('writes and clears Telegram tokens outside AppMeta', () async {
+      final secrets = MemorySecretStore();
+      final state = AppState(
+        db,
+        enableBackgroundSummaryRefresh: false,
+        secretStore: secrets,
+      );
+      addTearDown(state.dispose);
+
+      await state.setSetting(AppDb.kTelegramBotToken, 'new-token');
+      expect(secrets.values[AppDb.kTelegramBotToken], 'new-token');
+      expect(await db.getMetaString(AppDb.kTelegramBotToken), isNull);
+      await state.setSetting(AppDb.kTelegramBotToken, null);
+      expect(secrets.values, isEmpty);
     });
   });
 
