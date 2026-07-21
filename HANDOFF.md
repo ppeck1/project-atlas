@@ -78,7 +78,9 @@ Use an ignored local directory whose name includes `portfolio-capture`.
 
 The capture seeder is fail-closed: it requires an Atlas-initialized database,
 requires `portfolio-capture` in the path, and refuses a database that already
-contains projects, work items, or documents.
+contains projects, work items, or documents. It also creates a valid immutable
+Capsule baseline for every demo project, so the Resume capture exercises the
+same accepted-truth contract as the current application.
 
 ## Verification baseline
 

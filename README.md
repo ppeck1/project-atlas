@@ -17,6 +17,11 @@ from the running application using an isolated, public-safe demo database._
 The capture set is refreshed against the current release build and includes the
 same navigation, source-topology, and theme surfaces described below.
 
+Projects also has a local search field: press `/` while the Projects view is
+active to focus it, then filter by a project's title, description, owner,
+category, or phase without disturbing the existing tags, status, phase, and
+priority filters.
+
 ## Portfolio snapshot
 
 | Area | What this repository demonstrates |
@@ -86,6 +91,8 @@ available without turning a project brief into an untraceable summary.
   revisions.
 - A workload model that distinguishes execution-ready work from blocked,
   stale, review-dependent, and decision-dependent items.
+- Fast local Project search, with a `/` shortcut that focuses the query without
+  replacing the screen's structured filters.
 - Project discovery and health review with shallow scans, candidate triage,
   source topology, reconciliation previews, findings, and operator acceptance.
 - Searchable document and media import with format-aware extraction and
@@ -133,8 +140,10 @@ stored separately with Windows DPAPI protection; review
 [SECURITY.md](SECURITY.md) before using real sensitive material.
 
 The Settings portable export is useful for inspection and selective transfer,
-but it is not a complete backup and cannot restore an Atlas instance. Full
-backup-and-restore remains a separately scoped recovery feature.
+but it is not a complete backup and cannot restore an Atlas instance. The
+separate Recovery workflow creates a checksum-verified full bundle, restores
+only into a staging folder for validation, and requires typed confirmation,
+restart, and a fresh safety backup before it can replace a live Atlas instance.
 
 Example data in the public repository is limited to demo fixtures and the real
 application captures shown above. Those captures were made from an isolated
@@ -199,8 +208,8 @@ database, and exercises the MCP gateway against the built Windows executable.
 - Windows is the supported desktop target.
 - The local database is not encrypted at rest. Telegram bot credentials use
   Windows DPAPI and remain available only to the Windows user that saved them.
-- The Settings portable export is not a complete backup and has no restore
-  workflow yet.
+- The Settings portable export is selective and non-restorable; full recovery
+  uses a separate, checksum-validated bundle and a guarded restart-only flow.
 - AI quality depends on the locally selected Ollama model.
 - Runtime actions execute operator-provided commands and require the same care
   as running those commands directly.

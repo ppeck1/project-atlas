@@ -64,6 +64,22 @@ CREATE TABLE app_meta (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL
 );
+CREATE TABLE project_capsule_revisions (
+  id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  revision_number INTEGER NOT NULL,
+  parent_revision_id TEXT,
+  content_hash TEXT NOT NULL,
+  truth_json TEXT NOT NULL,
+  changed_fields_json TEXT NOT NULL,
+  actor_type TEXT NOT NULL,
+  actor_label TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  source_id TEXT,
+  reason TEXT,
+  accepted_at INTEGER NOT NULL,
+  UNIQUE(project_id, revision_number)
+);
 CREATE TABLE project_registry (
   id TEXT PRIMARY KEY NOT NULL,
   atlas_project_id TEXT,
@@ -133,6 +149,22 @@ class SeedPortfolioCaptureTest(unittest.TestCase):
                 ).fetchone()[0],
                 "atlas-portfolio-demo",
             )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM project_capsule_revisions"
+                ).fetchone()[0],
+                3,
+            )
+            baseline = connection.execute(
+                """
+                SELECT revision_number, source_kind, truth_json
+                FROM project_capsule_revisions
+                WHERE project_id = 'atlas-portfolio-demo'
+                """
+            ).fetchone()
+            self.assertEqual(baseline[0], 1)
+            self.assertEqual(baseline[1], "capture_fixture_baseline")
+            self.assertIn('"schema":"atlas.project_capsule_truth.v1"', baseline[2])
 
     def test_refuses_to_overwrite_seeded_database(self) -> None:
         seed_database(self.database_path)
