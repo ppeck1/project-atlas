@@ -85,7 +85,7 @@ screen. They are not process environment variables.
 | `project_ai_summary_allow_bulk_refresh` | Enables the Projects-toolbar batch refresh | `false`; effective only when summaries are enabled | No |
 | `project_ai_summary_model` | Per-summary model override | Unset; falls back to `ollama_model`, then runtime fallback | No |
 | `telegram_enabled` | Enables outbound task-list delivery | Disabled | No |
-| `telegram_bot_token` | Telegram Bot API credential | Unset | **Yes** |
+| `telegram_bot_token` | Telegram Bot API credential | Unset | **Yes — stored as Windows-DPAPI ciphertext in the app-support secret store, not in SQLite.** Legacy plaintext AppMeta values migrate and are deleted on first read. |
 | `telegram_chat_id` | Telegram destination | Unset | Treat as private |
 | `project_runtime_default_manifest_path` | Runtime manifest used for profile imports | Built-in neutral default path | Path may reveal local layout |
 | `project_runtime_default_capsule_enabled` | Default capsule preflight toggle for imported/new runtime profiles | `true` | No |
