@@ -46,7 +46,7 @@ reproduction or design disposition before implementation.
 | SPA-20260721-R-03 | P1 | Accepted | Closed | WP1 | The replaced live target is not revalidated before completion. | Codex | PR #30 | Exact inventory/length/SHA-256 verification and corruption rollback proof merged as `1e18ebd`; post-merge focused suite passed 18/18. |
 | SPA-20260721-R-04 | P1 | Accepted | Closed | WP1 | Parent exits without child plan-acceptance acknowledgement. | Codex | PR #30 | Validated child acknowledgement and early-exit handling merged as `1e18ebd`; post-merge focused suite passed 18/18. |
 | SPA-20260721-R-05 | P1 | Accepted | Closed | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Codex | PR #30 | Owned-root atomic v2 plan, strict schema/checksum/identity/path validation, and threat model merged as `1e18ebd`; post-merge focused suite passed 18/18. |
-| SPA-20260721-R-06 | P0 | Accepted | In progress | WP2 | Full backup may mix database and file states during concurrent mutation. | Codex | `fix/backup-point-in-time-contract` | Exclusive backup/mutation coordination, fixed owned-root inventory, source length/SHA-256 recheck, and concurrent document/media tests pass 10/10. Contract: `docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md`. Awaiting full gates and PR. |
+| SPA-20260721-R-06 | P0 | Accepted | In progress | WP2 | Full backup may mix database and file states during concurrent mutation. | Codex | PR #31 | Exclusive backup/mutation coordination, fixed owned-root inventory, source length/SHA-256 recheck, and concurrent document/media tests pass 10/10. Contract: `docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md`. Hosted CI passed; awaiting merge and post-merge proof. |
 | SPA-20260721-R-07 | P1 | Needs verification | Open | WP2 | Bundle manifest inventory is not exact. | Unassigned | TBD | Missing, duplicate, and undeclared files all fail validation. |
 | SPA-20260721-R-08 | P1 | Needs verification | Open | WP2 | Project recovery decodes unbounded ZIP content in memory. | Unassigned | TBD | Source, entry-count, per-entry, and expanded-size limits with hostile fixtures. |
 | SPA-20260721-R-09 | P1 | Needs verification | Open | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Unassigned | TBD | Exact path/kind/size/SHA-256 manifest rejects all mutations. |
@@ -108,7 +108,8 @@ reproduction or design disposition before implementation.
 - Static analysis: clean.
 - Python policy/maintenance suite: 30 tests passed.
 - Windows release build: passed.
-- Hosted CI remains pending.
+- Hosted PR #31 CI passed on 2026-07-21, including the seeded isolated MCP
+  gateway smoke.
 
 ### WP1 local slice — 2026-07-21
 
