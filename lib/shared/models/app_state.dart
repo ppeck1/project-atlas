@@ -8190,7 +8190,6 @@ class AppState extends ChangeNotifier {
     run: () => AtlasLiveRecoveryService().preparePlan(
       sourceBundle: bundle,
       safetyBackupRoot: safetyBackupRoot,
-      executablePath: Platform.resolvedExecutable,
     ),
   );
 

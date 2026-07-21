@@ -27,7 +27,7 @@ reproduction or design disposition before implementation.
 
 | Order | Package | Scope | Exit condition |
 |---:|---|---|---|
-| 1 | WP1 — replacement atomicity | R-01–R-05 | Fault injection covers every destructive step, rollback removes partial targets, the final live target is revalidated, and child handoff is acknowledged. |
+| 1 | WP1 — replacement atomicity | R-01–R-05 | Fault injection covers every destructive step, rollback removes partial targets, the final live target is revalidated, and the one-time child handoff is bounded and acknowledged. |
 | 2 | WP2 — backup and bundle integrity | R-06–R-14 | A point-in-time owned-file contract, exact manifests, bounded archive/extraction behavior, and incomplete-artifact handling are verified. |
 | 3 | WP3 — queue lease safety | A-01–A-02, A-05, A-11 | Claims and terminal transitions use lease-owner CAS rules; retries are idempotent; invalid queue states are rejected. |
 | 4 | WP4 — proposal acceptance safety | A-03–A-04, A-06–A-10 | Proposal application is crash-idempotent, stale changes fail closed, and truth/tag transactions have explicit concurrency contracts. |
@@ -47,7 +47,7 @@ reproduction or design disposition before implementation.
 | SPA-20260721-R-02 | P0 | Accepted | In progress | WP1 | Rollback retains a partial new target when no original existed. | Codex | Local working tree | Original-presence tracking removes partial new targets; missing-original fault test passes. Awaiting commit/PR and post-merge proof. |
 | SPA-20260721-R-03 | P1 | Accepted | In progress | WP1 | The replaced live target is not revalidated before completion. | Codex | Local working tree | Exact staged/live inventory, length, and SHA-256 verification now precedes completion; corruption test proves rollback. Awaiting commit/PR. |
 | SPA-20260721-R-04 | P1 | Accepted | In progress | WP1 | Parent exits without child plan-acceptance acknowledgement. | Codex | Local working tree | Validated acknowledgement handshake and early-worker-exit tests pass; Settings waits before exiting. Awaiting commit/PR. |
-| SPA-20260721-R-05 | P1 | Needs verification | Open | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Unassigned | TBD | Owned handoff location, atomic consume, path validation, and threat-model decision. The local WP1 slice stops executing the plan-supplied executable path. |
+| SPA-20260721-R-05 | P1 | Accepted | In progress | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Codex | `fix/recovery-atomicity-audit-followup` | V2 plan removes executable paths; owned-root enforcement, atomic write/consume, strict schema/checksum and path-boundary tests pass. Threat boundary is recorded in `docs/RECOVERY_HANDOFF_THREAT_MODEL.md`. Awaiting PR/post-merge proof. |
 | SPA-20260721-R-06 | P0 | Needs verification | Open | WP2 | Full backup may mix database and file states during concurrent mutation. | Unassigned | TBD | Concurrent mutation test proves one point-in-time ownership contract. |
 | SPA-20260721-R-07 | P1 | Needs verification | Open | WP2 | Bundle manifest inventory is not exact. | Unassigned | TBD | Missing, duplicate, and undeclared files all fail validation. |
 | SPA-20260721-R-08 | P1 | Needs verification | Open | WP2 | Project recovery decodes unbounded ZIP content in memory. | Unassigned | TBD | Source, entry-count, per-entry, and expanded-size limits with hostile fixtures. |
@@ -99,19 +99,23 @@ reproduction or design disposition before implementation.
 
 ### WP1 local slice — 2026-07-21
 
-- Focused recovery suite: 13 tests passed, covering the success path, every
+- Focused recovery suite: 18 tests passed, covering the success path, every
   database/documents/media/WAL/SHM move boundary, failures during each copy,
   missing-original partial-target rollback, post-copy corruption, valid child
-  acknowledgement, and worker exit before acknowledgement.
-- Full Flutter suite: 452 tests passed with 1 intentional skip.
+  acknowledgement, worker exit before acknowledgement, owned-root enforcement,
+  payload tampering, filename/identity binding, atomic serialization,
+  executable-path exclusion, and source/safety path separation.
+- Full Flutter suite: 457 tests passed with 1 intentional skip.
 - Static analysis: clean.
 - Python policy/maintenance suite: 30 tests passed.
 - Windows release build: passed and produced
   `build/windows/x64/runner/Release/project_atlas.exe`.
-- MCP smoke: not verified in this local slice. The isolated database-path
-  rebuild timed out without a smoke result; no live Atlas database was used.
-- `R-05` remains open, so WP1 and the experimental-recovery constraint remain
-  active. No row is `Verified` or `Closed` until commit/PR and post-merge proof.
+- MCP smoke: not verified in this local slice. A second isolated database-path
+  rebuild was terminated after roughly four silent minutes without producing
+  a smoke result; no live Atlas database was used.
+- `R-05` is implemented on the follow-up branch with its supported threat model
+  documented. WP1 remains in progress and the experimental-recovery constraint
+  remains active. No row is `Verified` or `Closed` until PR and post-merge proof.
 
 ## Update protocol
 

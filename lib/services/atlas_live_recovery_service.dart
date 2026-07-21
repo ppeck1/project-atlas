@@ -15,11 +15,12 @@ import '../db/db_open.dart';
 /// after an explicit typed confirmation; a fresh process applies that plan
 /// after the UI process exits.
 class AtlasLiveRecoveryService {
-  static const planSchema = 'project_atlas_live_recovery_plan_v1';
+  static const planSchema = 'project_atlas_live_recovery_plan_v2';
   final Future<AtlasFullBackupService> Function()? _backupService;
   final Future<AtlasLiveRecoveryPaths> Function()? _paths;
   final Future<void> Function(Duration) _delay;
   final Future<void> Function(String step)? _replacementStepHook;
+  final Future<Directory> Function()? _handoffRoot;
   final DateTime Function() _clock;
 
   AtlasLiveRecoveryService({
@@ -27,15 +28,24 @@ class AtlasLiveRecoveryService {
     Future<AtlasLiveRecoveryPaths> Function()? paths,
     Future<void> Function(Duration)? delay,
     Future<void> Function(String step)? replacementStepHook,
+    Future<Directory> Function()? handoffRoot,
     DateTime Function()? clock,
   }) : _backupService = backupService,
        _paths = paths,
        _delay = delay ?? Future<void>.delayed,
        _replacementStepHook = replacementStepHook,
+       _handoffRoot = handoffRoot,
        _clock = clock ?? DateTime.now;
 
   Future<AtlasFullBackupService> _backup() =>
       _backupService?.call() ?? AtlasFullBackupService.forCurrentAtlasApp();
+
+  Future<Directory> _ownedHandoffRoot() async {
+    final override = _handoffRoot;
+    if (override != null) return override();
+    final support = await getApplicationSupportDirectory();
+    return Directory(p.join(support.path, 'recovery_handoffs'));
+  }
 
   Future<AtlasLiveRecoveryPaths> _managedPaths() async {
     final override = _paths;
@@ -52,7 +62,6 @@ class AtlasLiveRecoveryService {
   Future<AtlasLiveRecoveryPlan> preparePlan({
     required Directory sourceBundle,
     required Directory safetyBackupRoot,
-    required String executablePath,
   }) async {
     final backup = await _backup();
     final validation = await backup.validateBundle(sourceBundle);
@@ -62,10 +71,9 @@ class AtlasLiveRecoveryService {
         '${validation.errors.join('; ')}',
       );
     }
-    final support = await getApplicationSupportDirectory();
-    final planRoot = Directory(p.join(support.path, 'recovery_handoffs'));
+    final planRoot = await _ownedHandoffRoot();
     await planRoot.create(recursive: true);
-    final id = DateTime.now().toUtc().toIso8601String().replaceAll(':', '-');
+    final id = _clock().toUtc().toIso8601String().replaceAll(':', '-');
     final planFile = File(p.join(planRoot.path, 'live-recovery-$id.json'));
     final manifest = validation.manifest!;
     final files = manifest['files'] is List
@@ -73,9 +81,9 @@ class AtlasLiveRecoveryService {
         : const [];
     final plan = AtlasLiveRecoveryPlan(
       planFile: planFile,
+      handoffId: id,
       sourceBundle: sourceBundle,
       safetyBackupRoot: safetyBackupRoot,
-      executablePath: executablePath,
       managedFileCount: files.length,
       databaseInventory: manifest['databaseInventory'],
     );
@@ -85,7 +93,13 @@ class AtlasLiveRecoveryService {
 
   /// Called before Flutter opens the database in a fresh process.
   Future<void> applyPlan(File planFile) async {
-    final plan = await AtlasLiveRecoveryPlan.read(planFile);
+    final ownedRoot = await _ownedHandoffRoot();
+    await _validatePlanLocation(planFile, ownedRoot);
+    final consumedFile = File('${planFile.path}.consuming-$pid');
+    await planFile.rename(consumedFile.path);
+    final plan = await AtlasLiveRecoveryPlan.read(consumedFile);
+    _validatePlanIdentity(plan, planFile);
+    _validatePlanPaths(plan, ownedRoot);
     final backup = await _backup();
     final validation = await backup.validateBundle(plan.sourceBundle);
     if (!validation.isValid) {
@@ -116,10 +130,66 @@ class AtlasLiveRecoveryService {
       }),
       flush: true,
     );
-    await plan.planFile.delete();
+    await consumedFile.delete();
     if (await plan.acceptanceFile.exists()) {
       await plan.acceptanceFile.delete();
     }
+  }
+
+  Future<void> _validatePlanLocation(File planFile, Directory ownedRoot) async {
+    final root = p.normalize(p.absolute(ownedRoot.path));
+    final candidate = p.normalize(p.absolute(planFile.path));
+    if (!p.equals(p.dirname(candidate), root) ||
+        !RegExp(r'^live-recovery-.+\.json$').hasMatch(p.basename(candidate))) {
+      throw const AtlasFullBackupException(
+        'Recovery plan is outside the Atlas-owned handoff directory.',
+      );
+    }
+  }
+
+  void _validatePlanIdentity(AtlasLiveRecoveryPlan plan, File claimedFile) {
+    final expectedName = 'live-recovery-${plan.handoffId}.json';
+    if (!RegExp(r'^[A-Za-z0-9._-]+$').hasMatch(plan.handoffId) ||
+        p.basename(claimedFile.path) != expectedName) {
+      throw const AtlasFullBackupException(
+        'Recovery plan identity does not match its handoff filename.',
+      );
+    }
+  }
+
+  void _validatePlanPaths(AtlasLiveRecoveryPlan plan, Directory ownedRoot) {
+    final root = p.normalize(p.absolute(ownedRoot.path));
+    final source = _validatedAbsolutePath(
+      plan.sourceBundle.path,
+      label: 'source bundle',
+    );
+    final safety = _validatedAbsolutePath(
+      plan.safetyBackupRoot.path,
+      label: 'safety backup root',
+    );
+    bool overlaps(String left, String right) =>
+        p.equals(left, right) ||
+        p.isWithin(left, right) ||
+        p.isWithin(right, left);
+    if (overlaps(root, source) || overlaps(root, safety)) {
+      throw const AtlasFullBackupException(
+        'Recovery source and safety backup must be outside the handoff directory.',
+      );
+    }
+    if (overlaps(source, safety)) {
+      throw const AtlasFullBackupException(
+        'Recovery source and safety backup must be separate folders.',
+      );
+    }
+  }
+
+  String _validatedAbsolutePath(String value, {required String label}) {
+    if (!p.isAbsolute(value) || p.normalize(value) != value) {
+      throw AtlasFullBackupException(
+        'Recovery $label must use an absolute normalized path.',
+      );
+    }
+    return value;
   }
 
   Future<void> awaitPlanAcceptance(
@@ -281,43 +351,61 @@ class AtlasLiveRecoveryPaths {
 
 class AtlasLiveRecoveryPlan {
   final File planFile;
+  final String handoffId;
   final Directory sourceBundle;
   final Directory safetyBackupRoot;
-  final String executablePath;
   final int managedFileCount;
   final Object? databaseInventory;
 
   const AtlasLiveRecoveryPlan({
     required this.planFile,
+    required this.handoffId,
     required this.sourceBundle,
     required this.safetyBackupRoot,
-    required this.executablePath,
     required this.managedFileCount,
     required this.databaseInventory,
   });
 
-  File get acceptanceFile => File('${planFile.path}.accepted.json');
+  File get acceptanceFile => File(
+    p.join(planFile.parent.path, 'live-recovery-$handoffId.accepted.json'),
+  );
 
-  Map<String, Object?> toJson() => {
+  Map<String, Object?> _payload() => {
     'schema': AtlasLiveRecoveryService.planSchema,
+    'handoffId': handoffId,
     'sourceBundle': sourceBundle.path,
     'safetyBackupRoot': safetyBackupRoot.path,
-    'executablePath': executablePath,
     'managedFileCount': managedFileCount,
     'databaseInventory': databaseInventory,
   };
 
-  Future<void> write() => planFile.writeAsString(
-    const JsonEncoder.withIndent('  ').convert(toJson()),
-    flush: true,
-  );
+  Map<String, Object?> toJson() {
+    final payload = _payload();
+    return {
+      ...payload,
+      'payloadSha256': sha256
+          .convert(utf8.encode(jsonEncode(payload)))
+          .toString(),
+    };
+  }
+
+  Future<void> write() async {
+    await planFile.parent.create(recursive: true);
+    final temporary = File('${planFile.path}.tmp-$pid');
+    if (await temporary.exists()) await temporary.delete();
+    await temporary.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(toJson()),
+      flush: true,
+    );
+    await temporary.rename(planFile.path);
+  }
 
   Future<void> writeAcceptance() async {
     final temporary = File('${acceptanceFile.path}.tmp-$pid');
     await temporary.writeAsString(
       const JsonEncoder.withIndent('  ').convert({
         'schema': 'project_atlas_live_recovery_acceptance_v1',
-        'planFile': planFile.path,
+        'handoffId': handoffId,
         'acceptedAt': DateTime.now().toUtc().toIso8601String(),
       }),
       flush: true,
@@ -329,7 +417,7 @@ class AtlasLiveRecoveryPlan {
     final decoded = jsonDecode(await acceptanceFile.readAsString());
     if (decoded is! Map ||
         decoded['schema'] != 'project_atlas_live_recovery_acceptance_v1' ||
-        decoded['planFile'] != planFile.path) {
+        decoded['handoffId'] != handoffId) {
       throw const AtlasFullBackupException(
         'Recovery worker wrote an invalid plan acknowledgement.',
       );
@@ -338,7 +426,18 @@ class AtlasLiveRecoveryPlan {
 
   static Future<AtlasLiveRecoveryPlan> read(File file) async {
     final decoded = jsonDecode(await file.readAsString());
-    if (decoded is! Map ||
+    const expectedKeys = {
+      'schema',
+      'handoffId',
+      'sourceBundle',
+      'safetyBackupRoot',
+      'managedFileCount',
+      'databaseInventory',
+      'payloadSha256',
+    };
+    if (decoded is! Map<String, dynamic> ||
+        decoded.keys.toSet().difference(expectedKeys).isNotEmpty ||
+        expectedKeys.difference(decoded.keys.toSet()).isNotEmpty ||
         decoded['schema'] != AtlasLiveRecoveryService.planSchema) {
       throw const AtlasFullBackupException(
         'Invalid live recovery handoff plan.',
@@ -350,14 +449,24 @@ class AtlasLiveRecoveryPlan {
       throw AtlasFullBackupException('Live recovery plan is missing $key.');
     }
 
-    return AtlasLiveRecoveryPlan(
+    final plan = AtlasLiveRecoveryPlan(
       planFile: file,
+      handoffId: text('handoffId'),
       sourceBundle: Directory(text('sourceBundle')),
       safetyBackupRoot: Directory(text('safetyBackupRoot')),
-      executablePath: text('executablePath'),
       managedFileCount: (decoded['managedFileCount'] as num?)?.toInt() ?? 0,
       databaseInventory: decoded['databaseInventory'],
     );
+    final suppliedChecksum = text('payloadSha256');
+    final expectedChecksum = sha256
+        .convert(utf8.encode(jsonEncode(plan._payload())))
+        .toString();
+    if (suppliedChecksum != expectedChecksum) {
+      throw const AtlasFullBackupException(
+        'Live recovery plan payload checksum does not match.',
+      );
+    }
+    return plan;
   }
 }
 

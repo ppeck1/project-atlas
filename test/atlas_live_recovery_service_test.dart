@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -50,10 +51,12 @@ void main() {
       await File('${live.path}-wal').writeAsString('old wal');
       await File('${live.path}-shm').writeAsString('old shm');
       final plan = AtlasLiveRecoveryPlan(
-        planFile: File(p.join(root.path, 'handoff', 'plan.json')),
+        planFile: File(
+          p.join(root.path, 'handoff', 'live-recovery-success.json'),
+        ),
+        handoffId: 'success',
         sourceBundle: source.bundle,
         safetyBackupRoot: Directory(p.join(root.path, 'safety_backups')),
-        executablePath: 'test.exe',
         managedFileCount: 3,
         databaseInventory: null,
       );
@@ -68,6 +71,7 @@ void main() {
           media: media,
         ),
         delay: (_) async {},
+        handoffRoot: () async => plan.planFile.parent,
       );
       await service.applyPlan(plan.planFile);
 
@@ -147,7 +151,8 @@ void main() {
 
         expect(injected, isTrue);
         await fixture.expectMutatedLiveState();
-        expect(await fixture.plan.planFile.exists(), isTrue);
+        expect(await fixture.plan.planFile.exists(), isFalse);
+        expect(await fixture.hasConsumedDiagnostic(), isTrue);
         expect(await fixture.completionMarker.exists(), isFalse);
       },
     );
@@ -245,6 +250,123 @@ void main() {
       ),
     );
   });
+
+  test('rejects a plan outside the Atlas-owned handoff directory', () async {
+    final fixture = await _RecoveryFixture.create();
+    addTearDown(fixture.dispose);
+    final outside = File(
+      p.join(fixture.root.path, 'outside', 'live-recovery-x.json'),
+    );
+    await outside.parent.create(recursive: true);
+    await fixture.plan.planFile.copy(outside.path);
+
+    await expectLater(
+      fixture.service().applyPlan(outside),
+      throwsA(
+        isA<AtlasFullBackupException>().having(
+          (error) => error.message,
+          'message',
+          contains('Atlas-owned handoff directory'),
+        ),
+      ),
+    );
+    expect(await outside.exists(), isTrue);
+  });
+
+  test(
+    'rejects a tampered payload and retains the consumed diagnostic',
+    () async {
+      final fixture = await _RecoveryFixture.create();
+      addTearDown(fixture.dispose);
+      final decoded =
+          jsonDecode(await fixture.plan.planFile.readAsString())
+              as Map<String, dynamic>;
+      decoded['sourceBundle'] = p.join(fixture.root.path, 'tampered');
+      await fixture.plan.planFile.writeAsString(
+        jsonEncode(decoded),
+        flush: true,
+      );
+
+      await expectLater(
+        fixture.service().applyPlan(fixture.plan.planFile),
+        throwsA(
+          isA<AtlasFullBackupException>().having(
+            (error) => error.message,
+            'message',
+            contains('checksum does not match'),
+          ),
+        ),
+      );
+      expect(await fixture.hasConsumedDiagnostic(), isTrue);
+    },
+  );
+
+  test('rejects a handoff identity that does not match its filename', () async {
+    final fixture = await _RecoveryFixture.create();
+    addTearDown(fixture.dispose);
+    final invalid = AtlasLiveRecoveryPlan(
+      planFile: fixture.plan.planFile,
+      handoffId: 'different',
+      sourceBundle: fixture.plan.sourceBundle,
+      safetyBackupRoot: fixture.plan.safetyBackupRoot,
+      managedFileCount: fixture.plan.managedFileCount,
+      databaseInventory: fixture.plan.databaseInventory,
+    );
+    await invalid.write();
+
+    await expectLater(
+      fixture.service().applyPlan(invalid.planFile),
+      throwsA(
+        isA<AtlasFullBackupException>().having(
+          (error) => error.message,
+          'message',
+          contains('identity does not match'),
+        ),
+      ),
+    );
+  });
+
+  test('plan schema excludes executable paths and writes atomically', () async {
+    final fixture = await _RecoveryFixture.create();
+    addTearDown(fixture.dispose);
+    final decoded =
+        jsonDecode(await fixture.plan.planFile.readAsString())
+            as Map<String, dynamic>;
+
+    expect(decoded.containsKey('executablePath'), isFalse);
+    expect(decoded['payloadSha256'], isA<String>());
+    expect(
+      await File('${fixture.plan.planFile.path}.tmp-$pid').exists(),
+      isFalse,
+    );
+  });
+
+  test('rejects overlapping source and safety roots', () async {
+    final fixture = await _RecoveryFixture.create();
+    addTearDown(fixture.dispose);
+    final invalid = AtlasLiveRecoveryPlan(
+      planFile: fixture.plan.planFile,
+      handoffId: fixture.plan.handoffId,
+      sourceBundle: fixture.plan.sourceBundle,
+      safetyBackupRoot: Directory(
+        p.join(fixture.plan.sourceBundle.path, 'nested-safety'),
+      ),
+      managedFileCount: fixture.plan.managedFileCount,
+      databaseInventory: fixture.plan.databaseInventory,
+    );
+    await invalid.write();
+
+    await expectLater(
+      fixture.service().applyPlan(invalid.planFile),
+      throwsA(
+        isA<AtlasFullBackupException>().having(
+          (error) => error.message,
+          'message',
+          contains('separate folders'),
+        ),
+      ),
+    );
+  });
 }
 
 class _RecoveryFixture {
@@ -300,10 +422,12 @@ class _RecoveryFixture {
     await File('${live.path}-wal').writeAsString('old wal');
     await File('${live.path}-shm').writeAsString('old shm');
     final plan = AtlasLiveRecoveryPlan(
-      planFile: File(p.join(root.path, 'handoff', 'plan.json')),
+      planFile: File(
+        p.join(root.path, 'handoff', 'live-recovery-fixture.json'),
+      ),
+      handoffId: 'fixture',
       sourceBundle: source.bundle,
       safetyBackupRoot: Directory(p.join(root.path, 'safety_backups')),
-      executablePath: 'test.exe',
       managedFileCount: 3,
       databaseInventory: null,
     );
@@ -328,6 +452,7 @@ class _RecoveryFixture {
       media: media,
     ),
     delay: (_) async {},
+    handoffRoot: () async => plan.planFile.parent,
     replacementStepHook: (step) async {
       if (step == 'begin-replacement') {
         _walAtReplacement = await File('${live.path}-wal').readAsBytes();
@@ -336,6 +461,13 @@ class _RecoveryFixture {
       await stepHook?.call(step);
     },
   );
+
+  Future<bool> hasConsumedDiagnostic() async =>
+      (await plan.planFile.parent.list().toList()).any(
+        (entity) => p
+            .basename(entity.path)
+            .startsWith('${p.basename(plan.planFile.path)}.consuming-'),
+      );
 
   Future<void> expectMutatedLiveState() async {
     await expectSidecarsRestored();
