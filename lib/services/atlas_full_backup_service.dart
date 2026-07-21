@@ -9,9 +9,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import '../db/db_open.dart';
+import '../shared/atlas_owned_file_snapshot_coordinator.dart';
 
 /// The on-disk contract for a full Atlas recovery bundle.
 const atlasFullBackupManifestSchema = 'project_atlas_full_backup_v1';
+const atlasFullBackupSnapshotContract = 'atlas_owned_roots_quiesced_v1';
 const _atlasFullBackupCompletionSchema =
     'project_atlas_full_backup_completion_v1';
 const _atlasFullBackupCompletionFile = 'backup_complete.json';
@@ -142,14 +144,21 @@ class AtlasFullBackupService {
   final Map<String, Directory> appOwnedRoots;
   final DateTime Function() _clock;
   final Random _random;
+  final AtlasOwnedFileSnapshotCoordinator _snapshotCoordinator;
+  final Future<void> Function(String step)? _snapshotStepHook;
 
   AtlasFullBackupService({
     required this.sourceDatabase,
     this.appOwnedRoots = const {},
     DateTime Function()? clock,
     Random? random,
+    AtlasOwnedFileSnapshotCoordinator? snapshotCoordinator,
+    Future<void> Function(String step)? snapshotStepHook,
   }) : _clock = clock ?? DateTime.now,
-       _random = random ?? Random.secure() {
+       _random = random ?? Random.secure(),
+       _snapshotCoordinator =
+           snapshotCoordinator ?? AtlasOwnedFileSnapshotCoordinator.instance,
+       _snapshotStepHook = snapshotStepHook {
     for (final name in appOwnedRoots.keys) {
       if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(name)) {
         throw ArgumentError.value(
@@ -186,7 +195,18 @@ class AtlasFullBackupService {
   Future<AtlasFullBackupCreation> createBundle(
     Directory destinationRoot, {
     AtlasFullBackupProgressCallback? onProgress,
+  }) => _snapshotCoordinator.runBackup(
+    () => _createBundleWithOwnedFilesLocked(
+      destinationRoot,
+      onProgress: onProgress,
+    ),
+  );
+
+  Future<AtlasFullBackupCreation> _createBundleWithOwnedFilesLocked(
+    Directory destinationRoot, {
+    AtlasFullBackupProgressCallback? onProgress,
   }) async {
+    await _snapshotStepHook?.call('owned-files-locked');
     if (!await sourceDatabase.exists()) {
       throw AtlasFullBackupException(
         'The Atlas database does not exist: ${sourceDatabase.path}',
@@ -231,6 +251,7 @@ class AtlasFullBackupService {
     );
     await snapshot.parent.create(recursive: true);
     await _createOnlineSnapshot(snapshot);
+    await _snapshotStepHook?.call('database-snapshotted');
 
     final copiedFiles = <Map<String, Object?>>[
       await _fileManifestEntry(
@@ -271,6 +292,8 @@ class AtlasFullBackupService {
         ),
       );
     }
+    await _verifyOwnedFileInventoryStable(filesByRoot);
+    await _snapshotStepHook?.call('owned-files-copied');
 
     emit(
       AtlasFullBackupProgress(
@@ -283,6 +306,7 @@ class AtlasFullBackupService {
     final inventory = _readDatabaseInventory(snapshot);
     final manifest = <String, Object?>{
       'schema': atlasFullBackupManifestSchema,
+      'snapshotContract': atlasFullBackupSnapshotContract,
       'createdAt': _clock().toUtc().toIso8601String(),
       'databaseSnapshot': 'database/project_atlas.sqlite',
       'databaseInventory': inventory,
@@ -645,15 +669,28 @@ class AtlasFullBackupService {
       final bundlePath = p.joinAll(['files', rootName, ...p.split(relative)]);
       final target = File(p.joinAll([staging.path, ...p.split(bundlePath)]));
       await target.parent.create(recursive: true);
+      final sourceLengthBefore = await entity.length();
+      final sourceHashBefore = await _sha256File(entity);
+      await _snapshotStepHook?.call('before-copy:$rootName:$relative');
       await entity.copy(target.path);
-      copied.add(
-        await _fileManifestEntry(
-          staging,
-          target,
-          path: bundlePath,
-          kind: 'app_owned_file',
-        ),
+      await _snapshotStepHook?.call('after-copy:$rootName:$relative');
+      final sourceLengthAfter = await entity.length();
+      final sourceHashAfter = await _sha256File(entity);
+      final manifestEntry = await _fileManifestEntry(
+        staging,
+        target,
+        path: bundlePath,
+        kind: 'app_owned_file',
       );
+      if (sourceLengthBefore != sourceLengthAfter ||
+          sourceHashBefore != sourceHashAfter ||
+          manifestEntry['bytes'] != sourceLengthBefore ||
+          manifestEntry['sha256'] != sourceHashBefore) {
+        throw AtlasFullBackupException(
+          'App-owned file changed while it was being copied: ${entity.path}',
+        );
+      }
+      copied.add(manifestEntry);
       onFileCopied();
     }
     return copied;
@@ -671,6 +708,24 @@ class AtlasFullBackupService {
       if (entity is File) files.add(entity);
     }
     return files;
+  }
+
+  Future<void> _verifyOwnedFileInventoryStable(
+    Map<String, List<File>> original,
+  ) async {
+    for (final root in appOwnedRoots.entries) {
+      final before = original[root.key]!
+          .map((file) => p.normalize(file.path))
+          .toSet();
+      final after = (await _listAppOwnedFiles(
+        root.value,
+      )).map((file) => p.normalize(file.path)).toSet();
+      if (before.length != after.length || !before.containsAll(after)) {
+        throw AtlasFullBackupException(
+          'App-owned file inventory changed during backup: ${root.key}',
+        );
+      }
+    }
   }
 
   Future<Map<String, Object?>> _fileManifestEntry(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -5,6 +6,7 @@ import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:project_atlas/services/atlas_full_backup_service.dart';
+import 'package:project_atlas/shared/atlas_owned_file_snapshot_coordinator.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 void main() {
@@ -80,6 +82,7 @@ void main() {
             )
             as Map<String, dynamic>;
     expect(manifest['schema'], atlasFullBackupManifestSchema);
+    expect(manifest['snapshotContract'], atlasFullBackupSnapshotContract);
     expect(manifest['databaseSnapshot'], 'database/project_atlas.sqlite');
     expect(
       manifest['databaseInventory']['tables'],
@@ -103,6 +106,168 @@ void main() {
     );
     expect(progress.last.copiedFiles, 1);
     expect(progress.last.totalFiles, 1);
+  });
+
+  test(
+    'database and owned files stay at one point while concurrent mutations wait',
+    () async {
+      final mediaDir = Directory(p.join(tempDir.path, 'project_media'));
+      await mediaDir.create(recursive: true);
+      final mediaFile = File(p.join(mediaDir.path, 'cover.txt'));
+      await mediaFile.writeAsString('old media');
+      final coordinator = AtlasOwnedFileSnapshotCoordinator();
+      final snapshotReached = Completer<void>();
+      final releaseSnapshot = Completer<void>();
+      final guardedService = AtlasFullBackupService(
+        sourceDatabase: sourceDatabase,
+        appOwnedRoots: {
+          'atlas_documents': documentsDir,
+          'project_media': mediaDir,
+        },
+        clock: () => DateTime.utc(2026, 7, 20, 16),
+        random: Random(8),
+        snapshotCoordinator: coordinator,
+        snapshotStepHook: (step) async {
+          if (step == 'database-snapshotted') {
+            snapshotReached.complete();
+            await releaseSnapshot.future;
+          }
+        },
+      );
+
+      final backupFuture = guardedService.createBundle(
+        Directory(p.join(tempDir.path, 'backups')),
+      );
+      await snapshotReached.future;
+      var mutationEntered = false;
+      final mutationFuture = coordinator.runMutation(() async {
+        mutationEntered = true;
+        final liveDatabase = sqlite3.open(sourceDatabase.path);
+        liveDatabase.execute("UPDATE projects SET title = 'New Atlas';");
+        liveDatabase.dispose();
+        await File(
+          p.join(documentsDir.path, 'brief.txt'),
+        ).writeAsString('new document');
+        await mediaFile.writeAsString('new media');
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(mutationEntered, isFalse);
+
+      releaseSnapshot.complete();
+      final backup = await backupFuture;
+      await mutationFuture;
+
+      final snapshotDatabase = sqlite3.open(
+        p.join(backup.bundle.path, 'database', 'project_atlas.sqlite'),
+        mode: OpenMode.readOnly,
+      );
+      expect(
+        snapshotDatabase.select('SELECT title FROM projects;').single['title'],
+        'Atlas',
+      );
+      snapshotDatabase.dispose();
+      expect(
+        await File(
+          p.join(backup.bundle.path, 'files', 'atlas_documents', 'brief.txt'),
+        ).readAsString(),
+        'This is app-owned content.',
+      );
+      expect(
+        await File(
+          p.join(backup.bundle.path, 'files', 'project_media', 'cover.txt'),
+        ).readAsString(),
+        'old media',
+      );
+      expect(
+        await File(p.join(documentsDir.path, 'brief.txt')).readAsString(),
+        'new document',
+      );
+      expect(await mediaFile.readAsString(), 'new media');
+    },
+  );
+
+  test('backup waits for an active owned-file mutation to finish', () async {
+    final coordinator = AtlasOwnedFileSnapshotCoordinator();
+    final mutationEntered = Completer<void>();
+    final releaseMutation = Completer<void>();
+    final mutationFuture = coordinator.runMutation(() async {
+      final liveDatabase = sqlite3.open(sourceDatabase.path);
+      liveDatabase.execute("UPDATE projects SET title = 'Coordinated Atlas';");
+      liveDatabase.dispose();
+      await File(
+        p.join(documentsDir.path, 'brief.txt'),
+      ).writeAsString('coordinated document');
+      mutationEntered.complete();
+      await releaseMutation.future;
+    });
+    await mutationEntered.future;
+    var backupEntered = false;
+    final guardedService = AtlasFullBackupService(
+      sourceDatabase: sourceDatabase,
+      appOwnedRoots: {'atlas_documents': documentsDir},
+      clock: () => DateTime.utc(2026, 7, 20, 16),
+      random: Random(9),
+      snapshotCoordinator: coordinator,
+      snapshotStepHook: (step) async {
+        if (step == 'owned-files-locked') backupEntered = true;
+      },
+    );
+    final backupFuture = guardedService.createBundle(
+      Directory(p.join(tempDir.path, 'backups')),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(backupEntered, isFalse);
+
+    releaseMutation.complete();
+    await mutationFuture;
+    final backup = await backupFuture;
+
+    final snapshotDatabase = sqlite3.open(
+      p.join(backup.bundle.path, 'database', 'project_atlas.sqlite'),
+      mode: OpenMode.readOnly,
+    );
+    expect(
+      snapshotDatabase.select('SELECT title FROM projects;').single['title'],
+      'Coordinated Atlas',
+    );
+    snapshotDatabase.dispose();
+    expect(
+      await File(
+        p.join(backup.bundle.path, 'files', 'atlas_documents', 'brief.txt'),
+      ).readAsString(),
+      'coordinated document',
+    );
+  });
+
+  test('fails closed when an out-of-band file changes during copy', () async {
+    var mutated = false;
+    final guardedService = AtlasFullBackupService(
+      sourceDatabase: sourceDatabase,
+      appOwnedRoots: {'atlas_documents': documentsDir},
+      clock: () => DateTime.utc(2026, 7, 20, 16),
+      random: Random(10),
+      snapshotCoordinator: AtlasOwnedFileSnapshotCoordinator(),
+      snapshotStepHook: (step) async {
+        if (!mutated && step.startsWith('after-copy:atlas_documents:')) {
+          mutated = true;
+          await File(
+            p.join(documentsDir.path, 'brief.txt'),
+          ).writeAsString('out-of-band change');
+        }
+      },
+    );
+
+    await expectLater(
+      guardedService.createBundle(Directory(p.join(tempDir.path, 'backups'))),
+      throwsA(
+        isA<AtlasFullBackupException>().having(
+          (error) => error.message,
+          'message',
+          contains('changed while it was being copied'),
+        ),
+      ),
+    );
+    expect(mutated, isTrue);
   });
 
   test('validation detects a tampered app-owned file', () async {

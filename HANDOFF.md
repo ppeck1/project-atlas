@@ -9,6 +9,8 @@ matrix for operational status. The uploaded audit is preserved unchanged under
 [`docs/audits/`](docs/audits/README.md). The supported local security boundary
 for the guarded worker is recorded in the
 [`live recovery handoff threat model`](docs/RECOVERY_HANDOFF_THREAT_MODEL.md).
+The database-plus-owned-files consistency boundary is defined in the
+[`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
 Until the P0 rows close, guarded live replacement is experimental and the LLM
 queue is restricted to an attended single-worker operating assumption.

@@ -29,6 +29,7 @@ import '../../services/shopify_seo_review_service.dart';
 import '../../services/telegram_service.dart';
 import '../../services/windows_secret_store.dart';
 import '../../services/workload_planning_service.dart';
+import '../atlas_owned_file_snapshot_coordinator.dart';
 import 'atlas_operation_status.dart';
 
 export '../../services/github_archive_service.dart' show GithubArchiveFetcher;
@@ -2765,6 +2766,26 @@ class AppState extends ChangeNotifier {
     bool isCover = false,
     String? source,
     String? metadataJson,
+  }) => AtlasOwnedFileSnapshotCoordinator.instance.runMutation(
+    () => _importProjectMediaWithSnapshotCoordination(
+      projectId,
+      path,
+      title: title,
+      caption: caption,
+      isCover: isCover,
+      source: source,
+      metadataJson: metadataJson,
+    ),
+  );
+
+  Future<String> _importProjectMediaWithSnapshotCoordination(
+    String projectId,
+    String path, {
+    String? title,
+    String? caption,
+    bool isCover = false,
+    String? source,
+    String? metadataJson,
   }) async {
     final sourceFile = File(path);
     if (!sourceFile.existsSync()) {
@@ -2812,7 +2833,12 @@ class AppState extends ChangeNotifier {
     await db.setProjectCoverMedia(projectId, mediaId);
   }
 
-  Future<void> deleteProjectMedia(String id) async {
+  Future<void> deleteProjectMedia(String id) =>
+      AtlasOwnedFileSnapshotCoordinator.instance.runMutation(
+        () => _deleteProjectMediaWithSnapshotCoordination(id),
+      );
+
+  Future<void> _deleteProjectMediaWithSnapshotCoordination(String id) async {
     final media = await db.getProjectMediaItem(id);
     await db.deleteProjectMedia(id);
     if (media != null) {
@@ -2972,6 +2998,14 @@ class AppState extends ChangeNotifier {
   /// hard-deleted.
   Future<void> purgeExpiredDeletedDocuments({
     Duration olderThan = const Duration(days: 7),
+  }) => AtlasOwnedFileSnapshotCoordinator.instance.runMutation(
+    () => _purgeExpiredDeletedDocumentsWithSnapshotCoordination(
+      olderThan: olderThan,
+    ),
+  );
+
+  Future<void> _purgeExpiredDeletedDocumentsWithSnapshotCoordination({
+    required Duration olderThan,
   }) async {
     final expired = await db.getSoftDeletedDocumentsOlderThan(olderThan);
     if (expired.isEmpty) return;

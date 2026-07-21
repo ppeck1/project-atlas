@@ -16,8 +16,6 @@ reproduction or design disposition before implementation.
 
 ## Immediate operating constraints
 
-- Treat guarded live replacement as experimental until SPA-20260721-R-01 and
-  SPA-20260721-R-02 are verified closed. Do not use it as routine recovery.
 - Treat the LLM queue as single-worker and attended until SPA-20260721-A-01
   through SPA-20260721-A-05 are verified closed.
 - Do not record formal Capsule Edit Truth v1 acceptance until WP6 completes.
@@ -43,12 +41,12 @@ reproduction or design disposition before implementation.
 
 | ID | Pri | Disposition | Status | Package | Finding | Owner | Target PR | Required proof / closure evidence |
 |---|---:|---|---|---|---|---|---|---|
-| SPA-20260721-R-01 | P0 | Accepted | In progress | WP1 | Destructive recovery moves precede the rollback guard. | Codex | PR #30 | Implemented guarded move/copy/verify transaction; fault tests pass at every move boundary. Hosted CI passed; awaiting review, merge, and post-merge proof. |
-| SPA-20260721-R-02 | P0 | Accepted | In progress | WP1 | Rollback retains a partial new target when no original existed. | Codex | PR #30 | Original-presence tracking removes partial new targets; missing-original fault test passes. Hosted CI passed; awaiting review, merge, and post-merge proof. |
-| SPA-20260721-R-03 | P1 | Accepted | In progress | WP1 | The replaced live target is not revalidated before completion. | Codex | PR #30 | Exact staged/live inventory, length, and SHA-256 verification now precedes completion; corruption test proves rollback. Hosted CI passed; awaiting review and merge. |
-| SPA-20260721-R-04 | P1 | Accepted | In progress | WP1 | Parent exits without child plan-acceptance acknowledgement. | Codex | PR #30 | Validated acknowledgement handshake and early-worker-exit tests pass; Settings waits before exiting. Hosted CI passed; awaiting review and merge. |
-| SPA-20260721-R-05 | P1 | Accepted | In progress | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Codex | PR #30 | V2 plan removes executable paths; owned-root enforcement, atomic write/consume, strict schema/checksum and path-boundary tests pass. Threat boundary is recorded in `docs/RECOVERY_HANDOFF_THREAT_MODEL.md`; hosted CI passed. Awaiting review and merge. |
-| SPA-20260721-R-06 | P0 | Needs verification | Open | WP2 | Full backup may mix database and file states during concurrent mutation. | Unassigned | TBD | Concurrent mutation test proves one point-in-time ownership contract. |
+| SPA-20260721-R-01 | P0 | Accepted | Closed | WP1 | Destructive recovery moves precede the rollback guard. | Codex | PR #30 | Guarded move/copy/verify transaction and every-move fault proof merged as `1e18ebd`; post-merge focused suite passed 18/18. |
+| SPA-20260721-R-02 | P0 | Accepted | Closed | WP1 | Rollback retains a partial new target when no original existed. | Codex | PR #30 | Original-presence tracking and missing-original rollback proof merged as `1e18ebd`; post-merge focused suite passed 18/18. |
+| SPA-20260721-R-03 | P1 | Accepted | Closed | WP1 | The replaced live target is not revalidated before completion. | Codex | PR #30 | Exact inventory/length/SHA-256 verification and corruption rollback proof merged as `1e18ebd`; post-merge focused suite passed 18/18. |
+| SPA-20260721-R-04 | P1 | Accepted | Closed | WP1 | Parent exits without child plan-acceptance acknowledgement. | Codex | PR #30 | Validated child acknowledgement and early-exit handling merged as `1e18ebd`; post-merge focused suite passed 18/18. |
+| SPA-20260721-R-05 | P1 | Accepted | Closed | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Codex | PR #30 | Owned-root atomic v2 plan, strict schema/checksum/identity/path validation, and threat model merged as `1e18ebd`; post-merge focused suite passed 18/18. |
+| SPA-20260721-R-06 | P0 | Accepted | In progress | WP2 | Full backup may mix database and file states during concurrent mutation. | Codex | PR #31 | Exclusive backup/mutation coordination, fixed owned-root inventory, source length/SHA-256 recheck, and concurrent document/media tests pass 10/10. Contract: `docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md`. Hosted CI passed; awaiting merge and post-merge proof. |
 | SPA-20260721-R-07 | P1 | Needs verification | Open | WP2 | Bundle manifest inventory is not exact. | Unassigned | TBD | Missing, duplicate, and undeclared files all fail validation. |
 | SPA-20260721-R-08 | P1 | Needs verification | Open | WP2 | Project recovery decodes unbounded ZIP content in memory. | Unassigned | TBD | Source, entry-count, per-entry, and expanded-size limits with hostile fixtures. |
 | SPA-20260721-R-09 | P1 | Needs verification | Open | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Unassigned | TBD | Exact path/kind/size/SHA-256 manifest rejects all mutations. |
@@ -97,7 +95,26 @@ reproduction or design disposition before implementation.
 
 ## Progress evidence
 
+### WP2 R-06 local slice — 2026-07-21
+
+- Focused full-backup suite: 10 tests passed.
+- Concurrent database/document/media mutation waits behind the snapshot and
+  changes live state only after the captured database and files are complete.
+- A snapshot waits for an already-running owned-file mutation and captures its
+  completed database-plus-file state.
+- Out-of-band source-byte changes during copy fail closed; source inventory is
+  rechecked before bundle certification.
+- Full Flutter suite: 460 tests passed with 1 intentional skip.
+- Static analysis: clean.
+- Python policy/maintenance suite: 30 tests passed.
+- Windows release build: passed.
+- Hosted PR #31 CI passed on 2026-07-21, including the seeded isolated MCP
+  gateway smoke.
+
 ### WP1 local slice — 2026-07-21
+
+WP1 closed after PR #30 merged as `1e18ebd` and the focused recovery suite
+passed 18/18 on current `main`.
 
 - Focused recovery suite: 18 tests passed, covering the success path, every
   database/documents/media/WAL/SHM move boundary, failures during each copy,
@@ -115,9 +132,9 @@ reproduction or design disposition before implementation.
   a smoke result; no live Atlas database was used.
 - Hosted PR #30 CI passed on 2026-07-21, including the seeded isolated MCP
   gateway smoke.
-- `R-05` is implemented on the follow-up branch with its supported threat model
-  documented. WP1 remains in progress and the experimental-recovery constraint
-  remains active. No row is `Verified` or `Closed` until PR and post-merge proof.
+- `R-01` through `R-05` are closed. The guarded-replacement experimental
+  constraint has been removed; ordinary recovery still requires the existing
+  validation, safety-backup, typed-confirmation, and acceptance safeguards.
 
 ## Update protocol
 
