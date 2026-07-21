@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -179,6 +181,40 @@ PROJECT_SOURCES = (
 )
 
 
+def _capsule_truth(
+    *,
+    title: str,
+    owner: str,
+    category: str,
+    description: str,
+    desired_outcome: str,
+    success_criteria: str,
+    phase: str,
+    priority: str,
+) -> dict[str, object | None]:
+    """Mirror the v24 Capsule baseline projection for capture-only projects."""
+    return {
+        "schema": "atlas.project_capsule_truth.v1",
+        "title": title,
+        "owner": owner,
+        "status": "active",
+        "category": category,
+        "phase": phase,
+        "priority": priority,
+        "description": description,
+        "desiredOutcome": desired_outcome,
+        "successCriteria": success_criteria,
+        "scopeIncluded": None,
+        "scopeExcluded": None,
+        "outcomeSummary": None,
+    }
+
+
+def _canonical_json(value: object) -> str:
+    """Match Dart's sorted Capsule hash input without adding whitespace."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
 def seed_database(database_path: Path) -> None:
     resolved = database_path.resolve()
     if "portfolio-capture" not in str(resolved).lower():
@@ -190,7 +226,14 @@ def seed_database(database_path: Path) -> None:
 
     connection = sqlite3.connect(resolved)
     try:
-        required_tables = {"projects", "stages", "work_items", "documents", "app_meta"}
+        required_tables = {
+            "projects",
+            "stages",
+            "work_items",
+            "documents",
+            "app_meta",
+            "project_capsule_revisions",
+        }
         tables = {
             row[0]
             for row in connection.execute(
@@ -240,6 +283,35 @@ def seed_database(database_path: Path) -> None:
                         category,
                         phase,
                         priority,
+                    ),
+                )
+                truth = _capsule_truth(
+                    title=title,
+                    owner=owner,
+                    category=category,
+                    description=description,
+                    desired_outcome=desired_outcome,
+                    success_criteria=success_criteria,
+                    phase=phase,
+                    priority=priority,
+                )
+                truth_json = _canonical_json(truth)
+                connection.execute(
+                    """
+                    INSERT INTO project_capsule_revisions (
+                        id, project_id, revision_number, parent_revision_id,
+                        content_hash, truth_json, changed_fields_json,
+                        actor_type, actor_label, source_kind, source_id,
+                        reason, accepted_at
+                    ) VALUES (?, ?, 1, NULL, ?, ?, '{}', 'system', 'Atlas',
+                              'capture_fixture_baseline', NULL, NULL, ?)
+                    """,
+                    (
+                        f"capsule-baseline-{project_id}",
+                        project_id,
+                        hashlib.sha256(truth_json.encode("utf-8")).hexdigest(),
+                        truth_json,
+                        now,
                     ),
                 )
                 connection.execute(

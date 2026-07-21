@@ -4,7 +4,7 @@ This matrix describes the configuration variables used by the current public
 Project Atlas source. It intentionally contains names, defaults, and handling
 rules only—never live values, credentials, or machine-specific paths.
 
-Last reviewed: 2026-07-20. This is a reconciliation reference: it records
+Last reviewed: 2026-07-21. This is a reconciliation reference: it records
 where each value is read, how precedence works, and whether it is portable
 between installs. It never records a live value.
 
@@ -64,7 +64,7 @@ server, and exactly one token-validation mechanism: JWKS or introspection.
 
 `tools/seed_portfolio_capture.py` takes an explicit `--db` argument instead of
 an environment variable. It refuses paths that do not contain
-`portfolio-capture`, requires an Atlas-initialized current schema (schema 24 at
+`portfolio-capture`, requires an Atlas-initialized current schema (schema 25 at
 this review), and refuses to seed a database that already contains projects,
 work items, or documents. The fixture also seeds public-safe Project Sources
 rows for Operations screenshots. Treat the schema number as a verification
@@ -118,7 +118,21 @@ reconciliation procedure explicitly calls for it.
 | `project_detail::<projectId>::visible_sections` | Project Detail section controls | Default sections remain visible | JSON preference tied to a local project ID. |
 | `projects_tab::category_sort`, `projects_tab::project_sort` | Projects screen sort controls | `name_az` | Enum UI preference, not project data. |
 | `projects_tab::pinned_categories`, `projects_tab::pinned_projects`, `projects_tab::collapsed_sections`, `projects_tab::visible_categories` | Projects screen | Empty JSON arrays / no saved preference | JSON UI state; local project/category references may not transfer. |
+| Projects search query and `/` focus registration | `ProjectsScreen` and `AtlasSearchFocusRegistry` | Empty query; `/` focuses the visible Projects query field | Transient widget state only. It is intentionally not written to `app_meta`, exported, or reconciled between installations. |
 | `project_health_finding_suppressions_v1` | Project-health review workflow | Empty suppression list | JSON review-state preference; retain only with evidence. |
+
+## Recovery paths and one-shot handoffs
+
+Full-backup and project-recovery locations are selected through native file or
+folder pickers, then passed directly to the recovery service for that one
+operation. They are deliberately not persisted as `app_meta` settings: a path
+can be private, stale, removable, or point at a different Atlas instance.
+
+| Value / artifact | Writer / reader | Lifetime and handling | Reconciliation note |
+|---|---|---|---|
+| Full-backup destination, selected `manifest.json`, staging root, and live-recovery safety-backup root | Settings recovery UI -> `AtlasFullBackupService` / `AtlasLiveRecoveryService` | Native-picker result; operation-local only | Treat every selected path as private. A full restore validates and stages first; live replacement is restart-only, uses typed confirmation, and creates a new safety backup. |
+| Project-recovery ZIP and staging root | Project Detail and Settings -> `ProjectBundleRecoveryService` | Native-picker result; operation-local only | Project recovery expands only into a separate staging folder; it does not overwrite the live project. |
+| `recovery_handoffs/live-recovery-<id>.json` | `AtlasLiveRecoveryService` | App-support one-shot restart handoff, created only after confirmation | Contains selected local paths and must remain app-private. It is not portable configuration and should not be copied during reconciliation. |
 
 ## Linked-project compatibility contracts
 
