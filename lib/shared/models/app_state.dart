@@ -11,12 +11,15 @@ import 'package:path_provider/path_provider.dart';
 import '../../db/app_db.dart';
 import '../../services/github_archive_service.dart';
 import '../../services/github_remote_metadata_service.dart';
+import '../../services/atlas_full_backup_service.dart';
+import '../../services/atlas_live_recovery_service.dart';
 import '../../services/local_git_visibility_service.dart';
 import '../../services/local_git_archive_service.dart';
 import '../../services/local_project_refresh_service.dart';
 import '../../services/local_operations_scanner.dart';
 import '../../services/ollama_service.dart';
 import '../../services/project_enrichment_service.dart';
+import '../../services/project_bundle_recovery_service.dart';
 import '../../services/project_capsule_truth_service.dart';
 import '../../services/project_identity_enrichment_service.dart';
 import '../../services/project_runtime_service.dart';
@@ -24,6 +27,7 @@ import '../../services/project_summary_models.dart';
 import '../../services/shopify_seo_review_service.dart';
 import '../../services/telegram_service.dart';
 import '../../services/workload_planning_service.dart';
+import 'atlas_operation_status.dart';
 
 export '../../services/github_archive_service.dart' show GithubArchiveFetcher;
 export '../../services/project_enrichment_service.dart'
@@ -609,6 +613,9 @@ class AppState extends ChangeNotifier {
   DateTime? _projectEnrichmentStartedAt;
   int? _projectEnrichmentProgressCurrent;
   int? _projectEnrichmentProgressTotal;
+  AtlasFullBackupProgress? _fullBackupProgress;
+  Future<AtlasFullBackupCreation>? _fullBackupOperation;
+  final Map<String, AtlasOperationStatus> _operationStatuses = {};
   final List<StreamSubscription<String?>> _settingsSubscriptions = [];
 
   bool get isProjectSummaryRefreshRunning => _summaryRefreshRunning;
@@ -639,6 +646,17 @@ class AppState extends ChangeNotifier {
     if (total == null || current == null || total <= 0) return null;
     return '$current/$total';
   }
+
+  /// The current or most recent app-wide recovery backup state. This lives in
+  /// [AppState], not a settings widget, so route changes cannot hide or cancel
+  /// an in-progress backup.
+  AtlasFullBackupProgress? get fullBackupProgress => _fullBackupProgress;
+  bool get isFullBackupRunning => _fullBackupOperation != null;
+
+  /// The most recent operations, with running work retained alongside recent
+  /// completion/failure results so concurrent jobs cannot overwrite each other.
+  List<AtlasOperationStatus> get operationStatuses =>
+      List.unmodifiable(_operationStatuses.values.toList(growable: false));
 
   AppState(
     this.db, {
@@ -1743,6 +1761,33 @@ class AppState extends ChangeNotifier {
     model: model?.trim().isNotEmpty == true ? model!.trim() : 'qwen3.5:9b',
   );
 
+  Future<OllamaResult> _trackOllamaRequest(
+    String title,
+    Future<OllamaResult> request,
+  ) async {
+    _setActiveOperation(title: title, message: 'Waiting for Ollama…');
+    try {
+      final result = await request;
+      _setActiveOperation(
+        title: title,
+        message: result.isSuccess
+            ? 'Ollama response ready.'
+            : 'Ollama completed without a usable response.',
+        state: result.isSuccess
+            ? AtlasOperationState.complete
+            : AtlasOperationState.failed,
+      );
+      return result;
+    } catch (error) {
+      _setActiveOperation(
+        title: title,
+        message: 'Ollama request failed: $error',
+        state: AtlasOperationState.failed,
+      );
+      rethrow;
+    }
+  }
+
   Future<String?> _projectSummaryModelSetting() async {
     final projectSummaryModel = _metaString(
       await getSetting(AppDb.kProjectAiSummaryModel),
@@ -1783,11 +1828,14 @@ class AppState extends ChangeNotifier {
         .take(10)
         .toList();
 
-    return svc.summarizeProject(
-      projectTitle: proj?.title ?? projectId,
-      activeItems: active,
-      blockedItems: blocked,
-      completedRecently: done,
+    return _trackOllamaRequest(
+      'AI project summary',
+      svc.summarizeProject(
+        projectTitle: proj?.title ?? projectId,
+        activeItems: active,
+        blockedItems: blocked,
+        completedRecently: done,
+      ),
     );
   }
 
@@ -1800,33 +1848,36 @@ class AppState extends ChangeNotifier {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
-    return svc.summarizeToday(
-      doingItems: items
-          .where((i) => i.status == 'doing')
-          .map((i) => i.title)
-          .toList(),
-      overdueItems: items
-          .where(
-            (i) =>
-                i.dueAt != null &&
-                i.dueAt!.isBefore(today) &&
-                i.status != 'doing',
-          )
-          .map((i) => i.title)
-          .toList(),
-      dueTodayItems: items
-          .where(
-            (i) =>
-                i.dueAt != null &&
-                !i.dueAt!.isBefore(today) &&
-                i.dueAt!.isBefore(today.add(const Duration(days: 1))),
-          )
-          .map((i) => i.title)
-          .toList(),
-      blockedItems: items
-          .where((i) => i.blockedReason != null)
-          .map((i) => '${i.title} - ${i.blockedReason}')
-          .toList(),
+    return _trackOllamaRequest(
+      'AI Today summary',
+      svc.summarizeToday(
+        doingItems: items
+            .where((i) => i.status == 'doing')
+            .map((i) => i.title)
+            .toList(),
+        overdueItems: items
+            .where(
+              (i) =>
+                  i.dueAt != null &&
+                  i.dueAt!.isBefore(today) &&
+                  i.status != 'doing',
+            )
+            .map((i) => i.title)
+            .toList(),
+        dueTodayItems: items
+            .where(
+              (i) =>
+                  i.dueAt != null &&
+                  !i.dueAt!.isBefore(today) &&
+                  i.dueAt!.isBefore(today.add(const Duration(days: 1))),
+            )
+            .map((i) => i.title)
+            .toList(),
+        blockedItems: items
+            .where((i) => i.blockedReason != null)
+            .map((i) => '${i.title} - ${i.blockedReason}')
+            .toList(),
+      ),
     );
   }
 
@@ -1848,11 +1899,14 @@ class AppState extends ChangeNotifier {
       );
     }
 
-    return svc.draftEmail(
-      taskTitle: item.title,
-      taskDescription: item.description,
-      blockedReason: item.blockedReason,
-      instruction: instruction,
+    return _trackOllamaRequest(
+      'AI email draft',
+      svc.draftEmail(
+        taskTitle: item.title,
+        taskDescription: item.description,
+        blockedReason: item.blockedReason,
+        instruction: instruction,
+      ),
     );
   }
 
@@ -1868,9 +1922,12 @@ class AppState extends ChangeNotifier {
       db.projects,
     )..where((t) => t.id.equals(projectId))).getSingleOrNull();
 
-    return svc.extractTasksFromNote(
-      rawNote: rawNote,
-      projectTitle: proj?.title ?? projectId,
+    return _trackOllamaRequest(
+      'AI task extraction',
+      svc.extractTasksFromNote(
+        rawNote: rawNote,
+        projectTitle: proj?.title ?? projectId,
+      ),
     );
   }
 
@@ -3737,6 +3794,13 @@ class AppState extends ChangeNotifier {
       if (current != null) _projectEnrichmentProgressCurrent = current;
       if (total != null) _projectEnrichmentProgressTotal = total;
     }
+    _setActiveOperation(
+      title: 'Project scan',
+      message: status,
+      current: _projectEnrichmentProgressCurrent,
+      total: _projectEnrichmentProgressTotal,
+      notify: false,
+    );
     notifyListeners();
   }
 
@@ -7375,6 +7439,10 @@ class AppState extends ChangeNotifier {
       );
     }
     _summaryRefreshRunning = true;
+    _setActiveOperation(
+      title: 'AI summary refresh',
+      message: 'Checking Ollama summary service…',
+    );
     notifyListeners();
     var considered = 0;
     var refreshed = 0;
@@ -7407,6 +7475,14 @@ class AppState extends ChangeNotifier {
         );
       }
       final projects = await db.getSummaryEligibleProjects();
+      _setActiveOperation(
+        title: 'AI summary refresh',
+        message: projects.isEmpty
+            ? 'No summary-eligible projects found.'
+            : 'Refreshing AI summaries…',
+        current: 0,
+        total: projects.length,
+      );
       onStatus?.call(
         projects.isEmpty
             ? 'No summary-eligible projects found.'
@@ -7416,6 +7492,12 @@ class AppState extends ChangeNotifier {
       );
       for (final project in projects) {
         considered++;
+        _setActiveOperation(
+          title: 'AI summary refresh',
+          message: 'Summarizing ${project.title}…',
+          current: considered,
+          total: projects.length,
+        );
         onStatus?.call(
           'Summarizing ${project.title} ($considered/${projects.length}).',
           current: considered,
@@ -7468,6 +7550,14 @@ class AppState extends ChangeNotifier {
       }
       onStatus?.call(
         'AI summaries complete: $refreshed refreshed, $failed failed, $skipped skipped.',
+        current: projects.length,
+        total: projects.length,
+      );
+      _setActiveOperation(
+        title: 'AI summary refresh',
+        message:
+            'AI summaries complete: $refreshed refreshed, $failed failed, $skipped skipped.',
+        state: AtlasOperationState.complete,
         current: projects.length,
         total: projects.length,
       );
@@ -7533,6 +7623,10 @@ class AppState extends ChangeNotifier {
     ProjectSummaryOutcome outcome;
     var usedFallback = false;
     try {
+      _setActiveOperation(
+        title: 'AI project summary',
+        message: 'Waiting for Ollama…',
+      );
       final (:result, :parsed, :validation) = await svc
           .summarizeProjectStructured(context: context);
       outcome = ProjectSummaryOutcome(
@@ -7630,6 +7724,15 @@ class AppState extends ChangeNotifier {
         'rawOutputChars': outcome.rawOutput?.length ?? 0,
         'evidence': packet.toLogJson(model: model, trigger: trigger),
       }),
+    );
+    _setActiveOperation(
+      title: 'AI project summary',
+      message: outcome.isSuccess
+          ? 'Project summary ready.'
+          : 'Project summary completed without usable output.',
+      state: outcome.isSuccess
+          ? AtlasOperationState.complete
+          : AtlasOperationState.failed,
     );
     return outcome;
   }
@@ -7813,13 +7916,16 @@ class AppState extends ChangeNotifier {
           'documentCount': docs.length,
         }),
       );
-      final result = await svc.analyzeWorkItemReadOnly(
-        title: item.title,
-        description: item.description,
-        status: item.status,
-        priority: item.priority,
-        blockedReason: item.blockedReason,
-        linkedDocuments: linkedDocuments,
+      final result = await _trackOllamaRequest(
+        'AI work-item analysis',
+        svc.analyzeWorkItemReadOnly(
+          title: item.title,
+          description: item.description,
+          status: item.status,
+          priority: item.priority,
+          blockedReason: item.blockedReason,
+          linkedDocuments: linkedDocuments,
+        ),
       );
       if (result.isSuccess) {
         await db.saveWorkItemAnalysis(
@@ -8056,9 +8162,12 @@ class AppState extends ChangeNotifier {
       inputJson: jsonEncode(inputPacket),
     );
 
-    final result = await svc.summarizeProjectChanges(
-      projectTitle: project.title,
-      evidencePacket: promptEvidence,
+    final result = await _trackOllamaRequest(
+      'AI project-change summary',
+      svc.summarizeProjectChanges(
+        projectTitle: project.title,
+        evidencePacket: promptEvidence,
+      ),
     );
 
     String? draftId;
@@ -8386,9 +8495,201 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Creates a complete recovery bundle. This never replaces the live Atlas
+  /// instance; recovery must first restore and validate into staging.
+  Future<AtlasFullBackupCreation> createFullBackup(
+    Directory destinationRoot,
+  ) async {
+    if (_fullBackupOperation != null) {
+      throw StateError('A full backup is already running.');
+    }
+    _setFullBackupProgress(
+      const AtlasFullBackupProgress(
+        phase: AtlasFullBackupPhase.preparing,
+        message: 'Preparing recovery backup…',
+      ),
+    );
+    final operation = _runFullBackup(destinationRoot);
+    _fullBackupOperation = operation;
+    return operation;
+  }
+
+  Future<AtlasFullBackupCreation> _runFullBackup(
+    Directory destinationRoot,
+  ) async {
+    try {
+      final service = await AtlasFullBackupService.forCurrentAtlasApp();
+      final result = await service.createBundle(
+        destinationRoot,
+        onProgress: _setFullBackupProgress,
+      );
+      await db.logEvent(
+        area: 'recovery',
+        action: 'full_backup_created',
+        outputJson: jsonEncode({'path': result.bundle.path}),
+      );
+      return result;
+    } catch (error) {
+      _setFullBackupProgress(
+        AtlasFullBackupProgress(
+          phase: AtlasFullBackupPhase.failed,
+          message: 'Full backup failed: $error',
+        ),
+      );
+      await db.logEvent(
+        area: 'recovery',
+        action: 'full_backup_failed',
+        error: '$error',
+      );
+      rethrow;
+    } finally {
+      _fullBackupOperation = null;
+      notifyListeners();
+    }
+  }
+
+  void _setFullBackupProgress(AtlasFullBackupProgress progress) {
+    _fullBackupProgress = progress;
+    _setActiveOperation(
+      title: 'Recovery backup',
+      message: progress.message,
+      state: switch (progress.phase) {
+        AtlasFullBackupPhase.complete => AtlasOperationState.complete,
+        AtlasFullBackupPhase.failed => AtlasOperationState.failed,
+        _ => AtlasOperationState.running,
+      },
+      current: progress.totalFiles > 0 ? progress.copiedFiles : null,
+      total: progress.totalFiles > 0 ? progress.totalFiles : null,
+      notify: false,
+    );
+    notifyListeners();
+  }
+
+  void _setActiveOperation({
+    required String title,
+    required String message,
+    AtlasOperationState state = AtlasOperationState.running,
+    int? current,
+    int? total,
+    bool notify = true,
+  }) {
+    _operationStatuses.remove(title);
+    _operationStatuses[title] = AtlasOperationStatus(
+      title: title,
+      message: message,
+      state: state,
+      current: current,
+      total: total,
+    );
+    while (_operationStatuses.length > 4) {
+      final terminal = _operationStatuses.entries.firstWhere(
+        (entry) => entry.value.state != AtlasOperationState.running,
+        orElse: () => _operationStatuses.entries.first,
+      );
+      _operationStatuses.remove(terminal.key);
+    }
+    if (notify) notifyListeners();
+  }
+
+  Future<T> _trackOperation<T>({
+    required String title,
+    required String startingMessage,
+    required Future<T> Function() run,
+  }) async {
+    _setActiveOperation(title: title, message: startingMessage);
+    try {
+      final result = await run();
+      _setActiveOperation(
+        title: title,
+        message: '$title complete.',
+        state: AtlasOperationState.complete,
+      );
+      return result;
+    } catch (error) {
+      _setActiveOperation(
+        title: title,
+        message: '$title failed: $error',
+        state: AtlasOperationState.failed,
+      );
+      rethrow;
+    }
+  }
+
+  /// Restores a verified recovery bundle into a new staging location only.
+  ///
+  /// No active database or app-owned file is replaced by this method.
+  Future<AtlasFullBackupStagingRestore> restoreFullBackupToStaging(
+    Directory bundle,
+    Directory destinationRoot,
+  ) async {
+    final service = await AtlasFullBackupService.forCurrentAtlasApp();
+    final result = await service.restoreToStaging(bundle, destinationRoot);
+    await db.logEvent(
+      area: 'recovery',
+      action: 'full_backup_staging_restored',
+      outputJson: jsonEncode({'path': result.bundle.path}),
+    );
+    return result;
+  }
+
+  /// Runs the canonical recovery acceptance check in a separate staging root.
+  /// This cannot replace the active Atlas instance.
+  Future<AtlasFullBackupRoundTripReport> verifyFullBackupRoundTrip(
+    Directory bundle,
+    Directory destinationRoot,
+  ) => _trackOperation(
+    title: 'Recovery round-trip verification',
+    startingMessage: 'Restoring and comparing the completed backup…',
+    run: () async {
+      final service = await AtlasFullBackupService.forCurrentAtlasApp();
+      final result = await service.verifyRoundTrip(bundle, destinationRoot);
+      await db.logEvent(
+        area: 'recovery',
+        action: 'full_backup_round_trip_verified',
+        outputJson: jsonEncode({
+          'sourceBundle': result.sourceBundle.path,
+          'stagedBundle': result.stagedBundle.path,
+          'fingerprint': result.sourceFingerprint,
+        }),
+      );
+      return result;
+    },
+  );
+
+  /// Builds a verified restart-only replacement plan. It does not change the
+  /// active instance; the UI must collect a typed confirmation before calling
+  /// [launchConfirmedLiveRecovery].
+  Future<AtlasLiveRecoveryPlan> prepareLiveRecovery(
+    Directory bundle,
+    Directory safetyBackupRoot,
+  ) => _trackOperation(
+    title: 'Live recovery preparation',
+    startingMessage: 'Validating backup and preparing guarded recovery…',
+    run: () => AtlasLiveRecoveryService().preparePlan(
+      sourceBundle: bundle,
+      safetyBackupRoot: safetyBackupRoot,
+      executablePath: Platform.resolvedExecutable,
+    ),
+  );
+
+  /// Starts a fresh recovery process; the current app must immediately exit
+  /// afterwards so SQLite handles are released before replacement begins.
+  Future<void> launchConfirmedLiveRecovery(AtlasLiveRecoveryPlan plan) async {
+    await Process.start(Platform.resolvedExecutable, [
+      '--apply-live-recovery',
+      plan.planFile.path,
+    ]);
+  }
+
   /// Writes a portable archive for inspection and selective transfer. It does
   /// not include every Atlas table and cannot restore an Atlas instance.
-  Future<int> exportPortableDataArchive(String path) async {
+  Future<int> exportPortableDataArchive(String path) => _trackOperation(
+    title: 'Portable export',
+    startingMessage: 'Collecting Atlas records and files…',
+    run: () => _exportPortableDataArchive(path),
+  );
+
+  Future<int> _exportPortableDataArchive(String path) async {
     final allDocs = await db.select(db.documents).get();
     final allMedia = await db.getAllProjectMedia();
 
@@ -8623,6 +8924,32 @@ class AppState extends ChangeNotifier {
   }
 
   Future<int> exportProjectBundleToZip(
+    String projectId,
+    String path, {
+    bool includeFiles = true,
+    bool includeLatestSummary = false,
+    bool includeEventLogs = false,
+    bool includeChangeLog = false,
+    DateTime? eventLogSince,
+    bool includeCleanGitArchive = false,
+    bool includeBootstrapContext = true,
+  }) => _trackOperation(
+    title: 'Project bundle export',
+    startingMessage: 'Building project bundle…',
+    run: () => _exportProjectBundleToZip(
+      projectId,
+      path,
+      includeFiles: includeFiles,
+      includeLatestSummary: includeLatestSummary,
+      includeEventLogs: includeEventLogs,
+      includeChangeLog: includeChangeLog,
+      eventLogSince: eventLogSince,
+      includeCleanGitArchive: includeCleanGitArchive,
+      includeBootstrapContext: includeBootstrapContext,
+    ),
+  );
+
+  Future<int> _exportProjectBundleToZip(
     String projectId,
     String path, {
     bool includeFiles = true,
@@ -9028,6 +9355,33 @@ class AppState extends ChangeNotifier {
     );
     return payload.length;
   }
+
+  /// Verifies a project-scoped recovery ZIP and expands it into a separate
+  /// staging folder. The active Atlas database and app-owned files are never
+  /// modified by this operation.
+  Future<ProjectBundleStagingReport> verifyAndStageProjectRecovery(
+    File bundle,
+    Directory destinationRoot, {
+    String? expectedProjectId,
+  }) => _trackOperation(
+    title: 'Project recovery',
+    startingMessage: 'Validating project recovery package…',
+    run: () async {
+      final report = await ProjectBundleRecoveryService().validateAndStage(
+        bundle,
+        destinationRoot,
+        expectedProjectId: expectedProjectId,
+      );
+      await db.logEvent(
+        area: 'recovery',
+        action: 'project_bundle_staged',
+        entityType: 'project',
+        entityId: report.projectId,
+        outputJson: jsonEncode(report.toJson()),
+      );
+      return report;
+    },
+  );
 
   String _projectBundleReadme({
     required ProjectFull project,

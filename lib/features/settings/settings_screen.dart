@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -1441,6 +1443,172 @@ class _ExportTabState extends State<_ExportTab>
 // Tab 4 — Workforce
 // ─────────────────────────────────────────────────────────────────────────────
 
+class _ProjectRecoveryPanel extends StatefulWidget {
+  const _ProjectRecoveryPanel();
+
+  @override
+  State<_ProjectRecoveryPanel> createState() => _ProjectRecoveryPanelState();
+}
+
+class _ProjectRecoveryPanelState extends State<_ProjectRecoveryPanel> {
+  Future<List<ProjectFull>>? _projects;
+  String? _projectId;
+  bool _working = false;
+  String? _status;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _projects ??= AppStateScope.of(context).getProjectsFull();
+  }
+
+  Future<void> _backup(ProjectFull project) async {
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save project recovery backup',
+      fileName: '${_safeExportStem(project.title)}_project_recovery.zip',
+      type: FileType.custom,
+      allowedExtensions: const ['zip'],
+    );
+    if (path == null || path.trim().isEmpty || !mounted) return;
+    setState(() {
+      _working = true;
+      _status = null;
+    });
+    try {
+      await AppStateScope.of(context).exportProjectBundleToZip(
+        project.id,
+        path.toLowerCase().endsWith('.zip') ? path : '$path.zip',
+        includeFiles: true,
+        includeLatestSummary: true,
+        includeEventLogs: true,
+        includeChangeLog: true,
+        includeBootstrapContext: true,
+      );
+      if (mounted) setState(() => _status = 'Project recovery backup created.');
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Project backup failed: $error');
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _stage(ProjectFull project) async {
+    final picked = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Select project recovery ZIP',
+      type: FileType.custom,
+      allowedExtensions: const ['zip'],
+    );
+    final bundlePath = picked?.files.singleOrNull?.path;
+    if (bundlePath == null || bundlePath.trim().isEmpty) return;
+    final destination = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Choose project recovery staging folder',
+    );
+    if (destination == null || destination.trim().isEmpty || !mounted) return;
+    setState(() {
+      _working = true;
+      _status = null;
+    });
+    try {
+      final report = await AppStateScope.of(context)
+          .verifyAndStageProjectRecovery(
+            File(bundlePath),
+            Directory(destination),
+            expectedProjectId: project.id,
+          );
+      if (mounted) {
+        setState(
+          () => _status = 'Project recovery staged: ${report.stagingPath}',
+        );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Project recovery failed: $error');
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _WizardStepPanel(
+      step: 'Recovery',
+      title: 'Single-project backup & recovery',
+      child: FutureBuilder<List<ProjectFull>>(
+        future: _projects,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const LinearProgressIndicator(minHeight: 2);
+          }
+          if (snapshot.hasError) {
+            return Text('Projects failed to load: ${snapshot.error}');
+          }
+          final projects = snapshot.data ?? const <ProjectFull>[];
+          final selected = projects
+              .where((item) => item.id == _projectId)
+              .firstOrNull;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Create a complete ZIP for one project, or validate a selected project ZIP into a separate staging folder. This never changes the live project.',
+                style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: selected?.id,
+                decoration: const InputDecoration(
+                  labelText: 'Project',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final project in projects)
+                    DropdownMenuItem(
+                      value: project.id,
+                      child: Text(project.title),
+                    ),
+                ],
+                onChanged: _working
+                    ? null
+                    : (value) => setState(() {
+                        _projectId = value;
+                        _status = null;
+                      }),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: selected == null || _working
+                        ? null
+                        : () => _backup(selected),
+                    icon: const Icon(Icons.backup_outlined, size: 16),
+                    label: const Text('Back up selected project'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: selected == null || _working
+                        ? null
+                        : () => _stage(selected),
+                    icon: const Icon(Icons.restore_page_outlined, size: 16),
+                    label: const Text('Validate & stage selected project'),
+                  ),
+                ],
+              ),
+              if (_status != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _status!,
+                  style: const TextStyle(fontSize: 12, color: _text54),
+                ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 enum _ProjectBundlePreset { complete, handoff, audit, cleanGit, custom }
 
 enum _ProjectBundleLogWindow { last7, last30, last90, all }
@@ -2548,6 +2716,102 @@ class _AdminTabState extends State<_AdminTab> {
     return path?.trim().isEmpty == true ? null : path;
   }
 
+  Future<void> _startLiveRecovery() async {
+    final state = AppStateScope.of(context);
+    final selected = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Choose a completed full-backup manifest.json',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+    );
+    final manifestPath = selected?.files.singleOrNull?.path;
+    if (manifestPath == null || manifestPath.trim().isEmpty) return;
+    final safetyRoot = await FilePicker.platform.getDirectoryPath(
+      dialogTitle:
+          'Choose a separate folder for the pre-recovery safety backup',
+    );
+    if (safetyRoot == null || safetyRoot.trim().isEmpty || !mounted) return;
+    try {
+      final plan = await state.prepareLiveRecovery(
+        File(manifestPath).parent,
+        Directory(safetyRoot),
+      );
+      if (!mounted) return;
+      final confirmed = await _confirmLiveReplacement(plan.managedFileCount);
+      if (confirmed != true || !mounted) return;
+      await state.launchConfirmedLiveRecovery(plan);
+      // The child process performs the safety backup and replacement only
+      // after this process exits and releases SQLite file handles.
+      exit(0);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _status = 'Live recovery was not started: $error');
+      }
+    }
+  }
+
+  Future<bool?> _confirmLiveReplacement(int managedFileCount) async {
+    final controller = TextEditingController();
+    var matches = false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: _panel,
+          title: const Text('Replace active Atlas instance?'),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'This is a replacement recovery, not a merge. Atlas will close, create a fresh full safety backup of the current live instance, then replace the active database, documents, and project media from the selected validated backup.',
+                  style: TextStyle(height: 1.45),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '$managedFileCount manifest-managed files will be recovered. A new Atlas window opens only after replacement completes.',
+                  style: const TextStyle(color: _text54, fontSize: 12),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  onChanged: (value) =>
+                      setLocal(() => matches = value.trim() == 'REPLACE ATLAS'),
+                  decoration: const InputDecoration(
+                    labelText: 'Type REPLACE ATLAS to confirm',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Merge is intentionally unavailable: a partial merge of an Atlas-wide SQLite snapshot could silently violate cross-table relationships.',
+                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: matches ? () => Navigator.of(ctx).pop(true) : null,
+              style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+              icon: const Icon(Icons.warning_amber_outlined, size: 16),
+              label: const Text('Close Atlas and replace'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    return confirmed;
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppStateScope.of(context);
@@ -2596,7 +2860,8 @@ class _AdminTabState extends State<_AdminTab> {
                     setState(() => _status = 'Portable export created: $path');
                   }
                 } catch (e) {
-                  if (mounted) setState(() => _status = 'Portable export failed: $e');
+                  if (mounted)
+                    setState(() => _status = 'Portable export failed: $e');
                 }
               },
               icon: const Icon(Icons.save_alt, size: 16),
@@ -2622,6 +2887,109 @@ class _AdminTabState extends State<_AdminTab> {
           'Portable export is not a complete backup and cannot restore an Atlas instance.',
           style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
         ),
+        const SizedBox(height: 22),
+        _SectionTitle(
+          icon: Icons.health_and_safety_outlined,
+          iconColor: Colors.tealAccent,
+          title: 'Recovery backup',
+          subtitle:
+              'Create a complete local backup or restore one into a separate staging folder.',
+        ),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            OutlinedButton.icon(
+              onPressed: state.isFullBackupRunning
+                  ? null
+                  : () async {
+                      final path = await FilePicker.platform.getDirectoryPath(
+                        dialogTitle: 'Choose folder for full Atlas backup',
+                      );
+                      if (path == null || path.trim().isEmpty) return;
+                      // The app-wide status strip owns progress and errors, so
+                      // this work remains visible if this tab is left.
+                      unawaited(
+                        state
+                            .createFullBackup(Directory(path))
+                            .then<void>((_) {}, onError: (_) {}),
+                      );
+                    },
+              icon: const Icon(Icons.backup_outlined, size: 16),
+              label: Text(
+                state.isFullBackupRunning
+                    ? 'Full backup running…'
+                    : 'Create full backup',
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final selected = await FilePicker.platform.pickFiles(
+                  dialogTitle: 'Choose a full-backup manifest.json',
+                  type: FileType.custom,
+                  allowedExtensions: const ['json'],
+                );
+                final manifestPath = selected?.files.singleOrNull?.path;
+                if (manifestPath == null || manifestPath.trim().isEmpty) return;
+                final destination = await FilePicker.platform.getDirectoryPath(
+                  dialogTitle: 'Choose a separate round-trip staging folder',
+                );
+                if (destination == null || destination.trim().isEmpty) return;
+                try {
+                  final result = await state.verifyFullBackupRoundTrip(
+                    File(manifestPath).parent,
+                    Directory(destination),
+                  );
+                  if (mounted) {
+                    setState(
+                      () => _status =
+                          'Canonical round trip verified: ${result.stagedBundle.path}',
+                    );
+                  }
+                } catch (e) {
+                  if (mounted)
+                    setState(
+                      () => _status = 'Round-trip verification failed: $e',
+                    );
+                }
+              },
+              icon: const Icon(Icons.restore_page_outlined, size: 16),
+              label: const Text('Verify round trip & stage restore'),
+            ),
+            FilledButton.icon(
+              onPressed: _startLiveRecovery,
+              style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+              icon: const Icon(Icons.warning_amber_outlined, size: 16),
+              label: const Text('Replace active Atlas from backup'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Round-trip verification restores and re-hashes a separate copy only. It never replaces the active Atlas database or files.',
+          style: TextStyle(fontSize: 12, color: _text54, height: 1.4),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Replacement recovery is restart-only and requires typed confirmation. It creates a fresh safety backup first; merge is intentionally unavailable.',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.orangeAccent,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 18),
+        const _ProjectRecoveryPanel(),
+        if (state.fullBackupProgress case final progress?) ...[
+          const SizedBox(height: 10),
+          Text(
+            progress.message,
+            style: const TextStyle(fontSize: 12, color: _text54),
+          ),
+          if (progress.fileProgressLabel case final label?)
+            Text(label, style: const TextStyle(fontSize: 12, color: _text54)),
+        ],
         if (_status != null) ...[
           const SizedBox(height: 10),
           SelectableText(

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../theme/atlas_colors.dart';
+import '../models/app_state_scope.dart';
+import '../models/atlas_operation_status.dart';
 import 'atlas_shortcuts.dart';
 
 /// Derives a human-readable display label from a route [path].
@@ -21,7 +23,9 @@ String legacyRouteLabel(String path) {
       .replaceAll(RegExp(r'[-_]'), ' ')
       .split(' ')
       .map(
-        (w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}',
+        (w) => w.isEmpty
+            ? ''
+            : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}',
       )
       .join(' ');
 }
@@ -109,6 +113,7 @@ class AtlasShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).uri.toString();
+    final operationStatuses = AppStateScope.of(context).operationStatuses;
 
     final destinations = <_NavDest>[
       _NavDest('Today', Icons.today_outlined, Icons.today, '/today'),
@@ -168,6 +173,10 @@ class AtlasShell extends StatelessWidget {
                       if (selectedIndex == -1 && !settingsSelected)
                         AtlasLegacyRouteBar(path: location),
                       Expanded(child: child),
+                      if (operationStatuses.isNotEmpty)
+                        _AtlasOperationStatusStrip(
+                          operations: operationStatuses,
+                        ),
                     ],
                   ),
                 ),
@@ -175,6 +184,96 @@ class AtlasShell extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Persistent route-independent feedback for long-running Atlas operations.
+class _AtlasOperationStatusStrip extends StatelessWidget {
+  final List<AtlasOperationStatus> operations;
+
+  const _AtlasOperationStatusStrip({required this.operations});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).extension<AtlasColors>()!;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 9, 16, 10),
+      decoration: BoxDecoration(
+        color: colors.panel,
+        border: Border(top: BorderSide(color: colors.line)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final operation in operations)
+            _AtlasOperationStatusRow(operation: operation, colors: colors),
+        ],
+      ),
+    );
+  }
+}
+
+class _AtlasOperationStatusRow extends StatelessWidget {
+  final AtlasOperationStatus operation;
+  final AtlasColors colors;
+
+  const _AtlasOperationStatusRow({
+    required this.operation,
+    required this.colors,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isFailed = operation.state == AtlasOperationState.failed;
+    final isComplete = operation.state == AtlasOperationState.complete;
+    final accent = isFailed
+        ? Colors.redAccent
+        : isComplete
+        ? Colors.greenAccent
+        : colors.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Icon(
+            isFailed
+                ? Icons.error_outline
+                : isComplete
+                ? Icons.verified_outlined
+                : Icons.sync,
+            size: 18,
+            color: accent,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '${operation.title}: ${operation.message}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: accent,
+              ),
+            ),
+          ),
+          if (operation.progressLabel case final label?) ...[
+            const SizedBox(width: 10),
+            Text(label, style: TextStyle(fontSize: 11, color: colors.inactive)),
+          ],
+          const SizedBox(width: 16),
+          SizedBox(
+            width: 180,
+            child: LinearProgressIndicator(
+              value: operation.fraction,
+              minHeight: 5,
+              backgroundColor: colors.bg,
+              valueColor: AlwaysStoppedAnimation<Color>(accent),
+            ),
+          ),
+        ],
       ),
     );
   }
