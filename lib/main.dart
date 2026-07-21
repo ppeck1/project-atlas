@@ -17,9 +17,10 @@ Future<void> main(List<String> args) async {
     final plan = File(args[recoveryIndex + 1]);
     final liveRecovery = AtlasLiveRecoveryService();
     try {
-      final details = await AtlasLiveRecoveryPlan.read(plan);
       await liveRecovery.applyPlan(plan);
-      await Process.start(details.executablePath, const []);
+      // Never execute a path supplied by the mutable handoff plan. Relaunch the
+      // same trusted binary that is currently applying recovery.
+      await Process.start(Platform.resolvedExecutable, const []);
       exit(0);
     } catch (error) {
       await File(

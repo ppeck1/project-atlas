@@ -1,0 +1,307 @@
+Project Atlas main — second-pass audit
+Verdict
+
+The immediate Capsule goal was substantially accomplished. The larger human/LLM operating loop was not.
+
+Capsule is now a real accepted-truth subsystem rather than a conceptual dashboard:
+
+human-authored project truth is editable;
+changes receive field-level review;
+acceptance is explicit;
+revisions are immutable;
+stale saves are rejected;
+agent-originated changes remain proposals.
+
+That design is present in the current README, architecture, database, services, migrations, tests, and UI.
+
+But the product plan correctly says that Workboard orchestration, configurable loops, one closed Codex workflow, compact MCP access, and usefulness measurement remain future phases.
+
+The strongest part is the Capsule truth model. The weakest parts are:
+
+destructive recovery failure handling;
+concurrent LLM queue operation;
+proposal application idempotency;
+Workboard’s fit with the Capsule-centered product;
+formal acceptance and documentation closure.
+
+I found 49 actionable findings below. Several are failure-path defects rather than bugs a single user will hit during ordinary use. They still matter because recovery and agent orchestration are specifically supposed to provide trustworthy boundaries.
+
+Audit basis and limitations
+
+I reviewed the uploaded main bundle and the current public GitHub state through the recent Capsule, recovery, project search, reactive data, and public-documentation merges.
+
+I examined the high-risk paths covering:
+
+Capsule truth and revision history;
+migrations and persistence;
+full backup, staging restore, and live replacement;
+LLM queue leasing and completion;
+proposal creation, approval, and application;
+workload ranking and recommendations;
+runtime command execution;
+local and remote MCP boundaries;
+secret storage;
+Workboard, Capsule, Projects, Operations, and Library UX;
+CI, tests, public docs, and screenshots.
+
+Locally verified:
+
+Python policy/maintenance suite: 30/30 passed.
+Missing relative Markdown links: 0.
+Obvious private-key/API-key patterns in the public tree: 0 found.
+Public PNGs contained only ordinary color/gamma/DPI metadata.
+The Python remote MCP policy suite is one of the strongest parts of the repository.
+
+I could not independently rerun Flutter analysis, Flutter tests, or the Windows release build because this environment lacks the Flutter/Dart/Windows toolchain. The merged PRs report up to 440 tests passed, 1 skipped, and successful Windows release builds.
+
+The uploaded ZIP also has no .git directory, so its exact commit identity cannot be independently matched. Its contents appear consistent with current main.
+
+Goal-completion matrix
+Goal	Status	Assessment
+Resume a dormant project from one coherent surface	Implemented	Capsule combines intent, accepted state, frontier, decisions, risks, evidence posture, and a recommendation.
+Separate live derived state from accepted authored truth	Implemented	The snapshot revision and accepted-truth revision are distinct.
+Edit truth only through review and explicit acceptance	Implemented	The editor produces a field diff before acceptance.
+Preserve immutable accepted history	Implemented and hardened	Schema 25 adds database triggers; reads verify hashes, parents, numbering, and diffs.
+Reject stale human or agent writes	Implemented for Capsule truth	Expected truth revisions prevent stale accepted-state overwrite.
+Keep agent output outside accepted state until review	Implemented conceptually	The proposal boundary exists, but several approval paths are not fully crash-idempotent.
+Make Workboard a shared human/LLM agency dashboard	Not accomplished	It remains a fixed planning board rather than a Capsule-derived attention and agency projection.
+Close one complete Codex/LLM loop safely	Partial	Queue, lease, bootstrap, proposal, and review pieces exist; concurrency and idempotency defects remain.
+Expose compact Capsule context through MCP	Not accomplished	Still identified as a future phase.
+Prove productivity improvement	Not measured	The 30-day resume-time benchmark exists only as a product goal.
+Formally accept Capsule Edit Truth v1	Not closed in documentation	Product plan still says “operator acceptance pending”; work order still says hardening/integration verification.
+
+Conclusion on the original goal: Phase 0 Resume and the technical content of Phase 1 Edit Truth are complete. Phase 1 is not formally closed, and the broader shared human/LLM workflow is still incomplete.
+
+1. Recovery and data-integrity matrix
+ID	Priority	Confidence	Finding and impact	Proposed fix and proof
+R-01	P0	Confirmed	Live recovery begins destructive moves outside its rollback try. atlas_live_recovery_service.dart:149–158 moves the current database, documents, media, WAL, and SHM. The protected try begins only at line 159. If the second rename fails after the database has moved, no rollback runs.	Put every destructive move and copy inside one guarded operation. Record each completed step and reverse it on failure. Add fault-injection tests that fail after each move and sidecar operation.
+R-02	P0	Confirmed	Rollback does not remove newly created partial targets when no old target existed. _ReplacementTarget.restoreFrom, lines 284–295, returns immediately when no saved original exists. A partially copied new documents/media directory can remain after failure.	Store targetExistedBefore. During rollback, delete a newly created target when no original existed. Test empty-live-directory recovery with failures after the first copied file.
+R-03	P1	Confirmed	The final live target is not revalidated after replacement. applyPlan, lines 98–111, writes the completion marker immediately after copying staged data. It does not rerun SQLite checks, inventory checks, or file hashes against the live destination.	Validate the live database and every managed file against the source manifest after replacement. Write the completion marker only after that check; otherwise roll back.
+R-04	P1	Confirmed	The parent exits without confirming that the recovery child successfully consumed the handoff. AppState.launchConfirmedLiveRecovery, lines 8199–8204, starts the process; Settings exits at 2741–2744. Process creation is not proof that the child read and accepted the plan.	Add an acknowledgement file, named pipe, or other readiness handshake. The parent should wait briefly for “plan accepted” before exiting.
+R-05	P1	Confirmed	The recovery plan is mutable unauthenticated JSON containing arbitrary paths and an executable path. AtlasLiveRecoveryPlan.read, lines 219–240; main.dart:20–23 later launches the recorded executable. A same-user process can modify the plan between creation and use.	Restrict plans to an Atlas-owned handoff directory with restrictive ACLs; atomically consume/rename them; validate that the executable is the expected Atlas binary. Protect the payload with DPAPI or an HMAC if the local threat model warrants it.
+R-06	P0	Confirmed	A “full backup” is not a single point-in-time database-plus-files snapshot. atlas_full_backup_service.dart:213–221 inventories files, then lines 229–233 snapshot SQLite, then lines 253–273 copy files while Atlas remains mutable. Database rows and their files can diverge during backup.	Enter a temporary local maintenance/read-only mode for owned-file mutations. Derive the exact owned-file set from the database snapshot, copy that set, and recheck size/hash after reading. Add concurrent document/media mutation tests.
+R-07	P1	Confirmed	Manifest completeness is not exact. validateBundle, lines 364–425, validates listed files and separately validates databaseSnapshot, but does not require the database snapshot to appear exactly once in the checksummed files list. It also permits undeclared extra files.	Require exactly one sqlite_snapshot entry matching databaseSnapshot. Compare actual bundle inventory against the exact allowlisted inventory, excluding only manifest.json and the completion marker.
+R-08	P1	Confirmed	Project bundle recovery decodes the complete ZIP in memory with no limits. project_bundle_recovery_service.dart:23–26. There are no compressed-size, entry-count, per-entry, or total-uncompressed limits.	Reject oversized source files before decode. Enforce maximum entry count, per-entry size, and total expanded size. Prefer streaming extraction. Add ZIP-bomb and high-entry-count tests.
+R-09	P1	Confirmed	Project bundle integrity is count/reference based, not cryptographic. _validateContents, lines 116–143, checks references and counts but not per-file bytes or SHA-256.	Export an exact manifest of path, kind, bytes, and SHA-256 for every entry. Reject missing, duplicate, modified, and undeclared entries.
+R-10	P1	Confirmed	Project bundle path validation is not a canonical destination-containment check. _isSafeArchivePath, lines 145–152, checks slash traversal but not Windows drive prefixes, colons/alternate data streams, reserved names, controls, or trailing-dot/space behavior.	Resolve every output path canonically under the staging root and require p.isWithin(root, target). Reject colons, device names, controls, trailing dots/spaces, and absolute/drive-relative paths.
+R-11	P2	Confirmed	Failed backups and staging restores leave partial artifacts. createBundle and validateAndStage create output directories but do not clean or quarantine them after mid-operation exceptions.	Create outputs under an .incomplete name, write a completion marker at the end, and delete or quarantine incomplete directories on failure. Expose a bounded cleanup action.
+R-12	P2	Confirmed	Recovery and staging artifacts have no retention policy. Safety backups, rollback folders, staging restores, failed plans, and completion markers can accumulate indefinitely.	Add local-only age/size retention with explicit exclusions for the newest safety backup and any active plan. Show cleanup candidates before deletion.
+R-13	P2	Confirmed	Portable export builds the entire archive in memory. app_state.dart:8214–8306 loads every document/media file into byte arrays and then encodes the entire ZIP. Large libraries can exhaust memory or freeze the UI.	Use a streaming ZIP writer in an isolate, with progress, cancellation, per-file errors, and a maximum-export policy.
+R-14	P2	Confirmed	DOCX/HTML extraction uses synchronous whole-file reads with no archive or document-size limits. document_extractor.dart:10–16, 138–175. A large or hostile DOCX can block the UI isolate or consume excessive memory.	Make extraction asynchronous or isolate-based; impose source and expanded-size limits; parse only bounded word/document.xml; report a structured extraction warning instead of silently returning null.
+Recovery assessment
+
+The recovery design has the correct components—SQLite online backup, manifests, hashes, staging, typed confirmation, safety backup, and rollback. PR #25 reported a successful disposable end-to-end acceptance test.
+
+The failure handling is not yet strong enough to support the phrase validated live recovery without qualification. R-01 and R-02 are the highest-priority defects in the repository.
+
+2. Capsule truth, proposals, queue, and workload matrix
+ID	Priority	Confidence	Finding and impact	Proposed fix and proof
+A-01	P0	Confirmed	LLM task claim is a select-then-unconditional-update race. app_db.dart:5880–5921. Two workers can select the same eligible row and both successfully claim it.	Use one atomic compare-and-swap update: UPDATE … WHERE id=? AND eligible-condition RETURNING *, inside a transaction or BEGIN IMMEDIATE. Require exactly one affected row. Test two simultaneous DB connections.
+A-02	P0	Confirmed	Completion and failure do not enforce lease owner or lease expiry. DB updates at 5924–5973 check only status='leased'. Service completeLlmTask/failLlmTask, lines 1009–1069, makes workerId optional. MCP schemas at 322–349 also omit it from required fields.	Require workerId end to end. Complete/fail with a CAS on id, status, leased_by, and unexpired lease_expires_at. Return a typed lease conflict on zero changed rows.
+A-03	P0	Confirmed	Proposal application and proposal approval are not atomic. approveAgentProposal, lines 1113–1153, applies the side effect before marking the draft reviewed. A crash between the two can apply the same task, draft, validation event, or closeout twice.	Add an application ledger with a unique proposal-draft ID and state pending → applying → applied. Put SQLite-only side effects and review status in one transaction. Add crash injection immediately after application.
+A-04	P0	Confirmed	Task-update proposals have no base task revision or hash. proposeTaskUpdate, lines 1235–1295, records current values but no concurrency token. Approval at 1565–1579 overwrites whatever currently exists.	Add a work-item revision number or canonical hash. Store it in the proposal; approval must CAS against it and reject stale proposals. Include the tag set in the concurrency contract.
+A-05	P0	Confirmed	LLM completion creates a review draft before completion state is committed. atlas_agent_service.dart:1027–1042. A completion failure or retry can leave duplicate/orphan handoff proposals.	Make task completion and handoff-draft creation one idempotent operation. Use a deterministic key such as taskId + attempt; retries return the existing draft.
+A-06	P1	Confirmed	The accepted-truth service can mutate fields that are not in accepted truth. acceptPatch, lines 262–278, constructs truthPatch but passes all normalizedFields to updateProjectMeta. Identity enrichment sends lessonsLearned, which is not a Capsule truth field.	Reject unknown/non-truth keys in ProjectCapsuleTruthService. Route non-truth metadata through a separate service, or formally add it to the accepted contract and revision schema.
+A-07	P1	Confirmed	findAcceptedRevisionBySource bypasses full ledger-chain validation. Lines 201–217 validate one row’s content hash but not its parent chain or recorded diff. It is used for proposal-recovery decisions.	Resolve source matches from a previously verified chain, or validate the chain up to the matching row before treating it as acceptance evidence.
+A-08	P2	Confirmed	Every truth load and history page verifies the entire revision chain. load, listRevisions, and _verifiedRevisions, lines 176–199 and 366–410. History cost grows linearly, and paginated UI requests repeatedly re-read all history.	Verify on write and migration, store a verified head/checkpoint, page with SQL, and retain an explicit full-ledger audit operation.
+A-09	P2	Confirmed	An explicit empty tag list cannot clear task tags. _applyTaskProposal, lines 1547–1579, calls setWorkItemTags only when tagNames.isNotEmpty.	Distinguish “field absent” from “present but empty.” Apply an empty set when the proposal explicitly includes tagNames: [].
+A-10	P1	Confirmed	Manifest truth and project tags are accepted in separate operations. _applyManifestProposal, lines 1607–1630, accepts metadata, then updates tags outside the truth transaction and without a base tag revision.	Include tags in the accepted contract or create an atomic metadata-plus-tags acceptance service with a tag-set hash/revision.
+A-11	P1	Confirmed	The raw llm_task_queue table lacks foreign keys and enum/check constraints. app_db.dart:3758–3788. Invalid project IDs, work-item links, statuses, actors, risks, attempts, and lease combinations can be inserted through raw SQL or future regressions.	Migrate it to a Drift table or rebuild it with FKs and CHECK constraints. Add foreign_key_check and invalid-state migration tests.
+A-12	P1	Confirmed	Malformed planning values fail open. normalizeWorkloadReadiness defaults invalid input to ready; actor defaults to user; risk defaults to low_code, lines 47–62 and 93–96. Corrupt or unknown data can become execution-ready.	Introduce unknown or invalid; never map malformed readiness to ready. Surface a validation finding and place the item in a review/decision lane.
+A-13	P1	Confirmed	Stale work is promoted rather than gated. scoreCard, line 723, subtracts points for stale items, and lower scores rank first. An item with no review date is always stale, so unreviewed work rises in execution ranking.	Move stale execution candidates to “needs revalidation,” or add a positive score penalty. Require explicit review before stale items become agent-ready.
+A-14	P2	Confirmed	Invalid workload filters silently become valid filters. applyFilters, lines 621–637, normalizes unsupported values to defaults instead of rejecting them. A typo such as an invalid readiness value can return the ready set.	Validate filters at the service boundary and MCP schema. Return invalid_argument with the allowed values.
+A-15	P2	Design	Recommendation semantics do not yet match a shared human/LLM operating model. _recommend, lines 650–744, chooses new ready work before existing in-progress work, uses accountable owner where the needed field is often suggestedActor, and emits a generic transition rather than preserving item identity. Decisions/risks are capped at five without an explicit ordering contract; currentActiveTask exposes only the first WIP item.	Return a structured recommendation containing item ID/title, accountable owner, next actor, gate, verification, and rationale. Default to advancing WIP before starting more work. Define explicit decision/risk ordering and expose WIP count plus selected-primary rationale.
+Agent-loop assessment
+
+The current queue and proposal path is suitable for a single operator, one worker, no-crash happy path.
+
+It is not yet safe for:
+
+multiple simultaneous workers;
+retries after partial failure;
+unattended agent completion;
+stale task proposals;
+strong exactly-once mutation claims.
+
+That distinction is important. The product thesis is not wrong; the implementation needs transactional closure.
+
+3. Runtime, MCP, security, and operations matrix
+ID	Priority	Confidence	Finding and impact	Proposed fix and proof
+O-01	P1	Confirmed	Runtime command timeouts do not terminate the child process. project_runtime_service.dart:625–679 wraps Process.run with Future.timeout. Timeout stops waiting; it does not reliably kill the process or its children.	Use Process.start, drain bounded streams, and terminate the process tree on timeout. On Windows, use a Job Object or taskkill /PID /T /F. Record whether termination succeeded.
+O-02	P1	Confirmed	Runtime stdout/stderr is unbounded. Process.run collects all output in memory and the result can then be stored in SQLite. A noisy command can exhaust memory or bloat the database.	Use bounded ring buffers with explicit truncation. Write optional full logs to a retained local file after path/credential redaction.
+O-03	P2	Confirmed	Health URLs suppress port checks. _waitForReadiness, lines 517–543, uses if healthUrls … else ports. Profiles with both configured never validate ports. It also accepts every status from 200 through 499 as healthy at line 565.	Evaluate both sets. Add an explicit all/any policy and configurable accepted HTTP statuses, defaulting to 200–399.
+O-04	P2	Confirmed	stopCommand and autostart are modeled, imported, persisted, and displayed but have no runtime action. The service provides launch, test, and Capsule actions only.	Implement reviewed stop/autostart execution with the same audit and timeout controls, or remove/hide these fields and correct the README’s launch/stop claim.
+O-05	P1	Confirmed	Windows launch commands are written as plaintext persistent PowerShell files in the system temp directory. project_runtime_service.dart:455–500. Inline tokens or private paths remain after execution.	Use secret references rather than inline values, apply restrictive ACLs, delete wrappers after bounded retention, and redact command/log presentation.
+O-06	P2	Confirmed	MCP autostart creates stdout/stderr files but does not redirect into them. mcp_connector_autostart_service.dart:564–566 creates files, then invokes Start-Process without redirect arguments. Autostart result is also ignored at app startup.	Wire -RedirectStandardOutput/-RedirectStandardError, or remove the misleading files. Persist and display last autostart state in Settings or Sources & Health.
+O-07	P1	Confirmed	The DPAPI secret file is not written atomically, and malformed JSON is treated as an empty store. windows_secret_store.dart:54–70. A later write after corruption can erase all previously stored credentials.	Write to a temp file, flush, and atomically replace; retain one backup. Quarantine malformed files and expose an explicit corruption state rather than returning {}.
+O-08	P1	Confirmed	Capsule identity inspection performs synchronous filesystem operations on the UI isolate. project_identity_resolver.dart:186–228, 268–363 uses existsSync, readAsStringSync, and listSync. Slow network, disconnected, or large paths can freeze Capsule.	Use asynchronous filesystem calls or an isolate, with cancellation, timeouts, and bounded directory inspection. Cache results by source revision.
+O-09	P2	Confirmed	Refresh failures are not represented consistently. _applyLocalProjectRefreshPreview, lines 5763–5799, records per-action exceptions only as warnings; the failed count remains zero. The 12-hour timer at app_state.dart:715–719 launches an async refresh without a top-level error handler.	Return structured action outcomes including failed; propagate partial-failure status to events/UI. Wrap scheduled work with unawaited(...catchError(...)), backoff, and last-run state.
+O-10	P2	Confirmed	Local MCP contracts are permissive and the JSON-RPC envelope is only partially validated. All 35 local tools lack additionalProperties: false, enums, string limits, and numeric ranges. The stdio server does not validate jsonrpc, replies to most no-ID notifications, maps all tool exceptions to -32603, and has no request-size cap.	Add strict schemas and central validation. Validate JSON-RPC 2.0 structure, suppress notification responses, map invalid parameters/domain errors correctly, cap input bytes, and derive the reported server version from the package.
+MCP assessment
+
+The remote MCP projection is materially stronger than the trusted-local server:
+
+allowlisted;
+read-only;
+deny-by-default;
+semantically projected;
+size constrained;
+tested against malformed and hidden data.
+
+The local Python policy suite passed all 30 tests. The O-10 findings concern the broader trusted local MCP interface and do not imply that the remote gateway is currently leaking private data. The README’s separation between trusted-local and narrower remote access is sound.
+
+4. Product and UI matrix
+ID	Priority	Confidence	Finding and impact	Proposed fix and proof
+U-01	P1	Design	Workboard has not yet become the Capsule-derived shared human/LLM dashboard. It still uses Ready, Needs Decision, Blocked, In Progress, and Review Needed. These describe task state, not agency and acceptance.	Derive lanes from Capsule: Human Decision, Human Action, Agent Action, In Flight, Evidence/Waiting, Acceptance, and Deferred. Workboard should project Capsule truth, not become a second authority.
+U-02	P1	Confirmed	Capsule and Workboard are one-shot snapshots. capsule_screen.dart:162–179 caches one Future; work_screen.dart:24–72 does the same. Updates from MCP, another screen, a background refresh, or a proposal review do not automatically appear.	Add a project-scoped change/revision stream and debounced reload, or show an explicit “newer state available” banner keyed to a source revision.
+U-03	P2	Visual	Workboard is horizontally dependent and top-heavy. At the documented 1266×713 capture, In Progress is clipped and Review is off-screen. Filters, metrics, candidate summaries, and bulk controls consume substantial vertical space before the board. Cards show too many metadata chips at once.	Add compact and detailed modes, collapsible summary/bulk regions, lane tabs or a responsive 2–3-column view, sticky lane navigation, and progressive card disclosure. Prioritize next actor, blocker/gate, and verification.
+U-04	P2	Visual	Capsule’s flagship presentation exposes implementation identifiers and begins with a failure state. Snapshot hash, truth version, confidence, and protocol-error recommendation are useful for Audit, but weak as the first product demonstration.	Show plain-language “Accepted truth vN” and “Live snapshot changed” in Act; place hashes in Audit/copy details. Use a healthy resume example as the primary screenshot and the fail-closed case as secondary evidence.
+U-05	P2	Visual	Operations and Library still read as internal-tool surfaces. Operations exposes terms such as remote_url_legacy, blocked_unresolved, and authority codes. Library opens with a large empty right pane.	Add a plain-language per-project Sources & Health summary, with raw topology under Audit. Auto-select the first/recent Library item or use the empty pane for evidence posture, recent context, and keyboard guidance.
+U-06	P2	Design	The central productivity claim is not measured. The stated benchmark is time from opening Capsule to choosing meaningful work after 30 days, but no local measurement or structured usability test exists.	Run a small local benchmark across real dormant projects: resume time, recommendation accepted/rejected, context lookup count, delegation outcome, acceptance time, and rework. Keep data local and separate from outbound telemetry.
+5. Documentation, CI, testing, and maintainability matrix
+ID	Priority	Confidence	Finding and impact	Proposed fix and proof
+D-01	P1	Confirmed	The repository contradicts itself about the current schema. Runtime code reports schema 25. DATA_MODEL.md says current schema 24 while describing the 24→25 migration; HANDOFF.md also identifies 24 as current.	Update all current-state docs to 25. Add a test/script that reads schemaVersion and verifies the documented current schema. This is especially important in a product centered on accepted truth.
+D-02	P1	Confirmed	Capsule Edit Truth v1 is merged and presented as current, but formal acceptance is still open. Product plan says “operator acceptance pending”; the work order says “Hardening and integration verification.”	Run the final acceptance checklist against the current schema-25/v1.4.2 build and a copied real database. Record build, fixture, migration, UI review, and decision. Mark Accepted, Rejected, or Accepted with follow-ups.
+D-03	P1	Confirmed	The real migration test is stale, internally inconsistent, and normally skipped. schema21_real_migration_test.dart still says schema 19→21; evidence checks migratedUserVersionIs23, while the assertion expects 25. It omits project_capsule_revisions and requires a private external database. schema23_soft_delete_migration_test.dart still names v24 though it expects 25.	Add a sanitized committed schema-19/22/23 fixture or generate deterministic old schemas in test. Assert v25, Capsule baselines, immutable triggers, chain validity, document soft-delete, and row preservation. Rename tests and evidence schemas.
+D-04	P2	Confirmed	CI is broad but not reproducible or fully self-auditing. It uses windows-latest, an unspecified Flutter stable version, and unpinned Python dependencies. It lacks a format gate, does not fail if build-runner changes committed generated files, and does not run the public freshness/privacy/artifact scan despite the README claiming artifact scanning.	Pin Windows, Flutter, Python, and Python dependency versions or hashes. Add dart format --set-exit-if-changed, git diff --exit-code after generation, freshness/privacy scans, screenshot checks when relevant, and release-artifact scanning.
+D-05	P2	Confirmed	Several architectural concentrations remain large enough to increase regression risk. app_state.dart ≈9,495 lines; app_db.dart ≈5,975; Operations ≈3,961; Settings ≈3,487; Project Detail ≈3,027; Projects ≈2,950; Agent Service ≈2,438. Several silent/near-silent catches also remain.	Continue extract-as-you-touch rather than a big-bang rewrite. Highest-value extractions: queue/lease service, proposal-application coordinator, recovery coordinator, operation scheduler/status store, Operations tab modules, and Settings integration modules. Replace silent catches with typed expected-failure handling or diagnostics.
+D-06	P3	Confirmed	Public metadata and assets have minor stale residue. pubspec.yaml still describes “local-first personal project management”; the MCP server reports version 0.1.0; old JPG screenshots coexist with current PNG captures; openEncryptedExecutor opens plaintext SQLite.	Update the package description, derive MCP version from package metadata, delete or clearly archive old captures, add a capture manifest with app/schema/fixture hash, and rename the database opener to reflect plaintext behavior.
+What is working well
+1. The accepted-truth model is coherent
+
+The implementation has one mutable accepted source—the project columns—and a separate immutable history. That avoids two competing mutable truths. Revisions include:
+
+project-scoped sequence;
+parent;
+canonical content hash;
+truth JSON;
+field diff;
+actor/source/reason;
+acceptance timestamp.
+
+Schema 25 adds update/delete prevention, while reads validate the complete chain. That is a meaningful implementation of the acceptance thesis, not merely terminology.
+
+2. Capsule has a clearer product role
+
+The current product sentence—resuming projects, choosing the next justified action, and collaborating with review-gated AI—is substantially better than presenting Atlas as an omnibus project dashboard.
+
+The Act / Understand / Audit decomposition is also appropriate:
+
+Act reduces the immediate decision surface.
+Understand provides the contract and project context.
+Audit exposes provenance, freshness, warnings, and verification.
+3. The remote disclosure boundary is serious
+
+The remote MCP path is narrow, read-only, allowlisted, deny-by-default, and tested against hidden projects, malformed output, response caps, unsafe policy rows, and semantic field leakage. That is stronger than the average local-first AI tool.
+
+4. Public repository discipline is good
+
+The current repository has:
+
+real application screenshots;
+an isolated public-safe fixture;
+no broken relative documentation links;
+no obvious public credential pattern;
+deterministic verification commands;
+explicit limitations;
+a current Windows release path;
+privacy-aware handoff material.
+5. The recent refactoring strategy is correct
+
+Incremental extraction from Project Detail and AppState is safer than a large architectural rewrite. The recent work on reactive people/risks/decisions, search, theme tokens, and separated services improves the product without replacing everything at once.
+
+Recommended repair order
+PR 1 — Recovery fault atomicity
+
+Resolve:
+
+R-01
+R-02
+R-03
+R-04
+R-05
+R-06
+
+Required proof:
+
+fault injection after every destructive operation;
+missing-original-target rollback;
+final live database/hash validation;
+child acknowledgement;
+concurrent owned-file mutation during backup;
+existing success-path test retained.
+
+This is the only current area I would treat as a potential stop-ship boundary.
+
+PR 2 — Queue lease and proposal idempotency
+
+Resolve:
+
+A-01 through A-05;
+A-09 and A-10.
+
+Required proof:
+
+two concurrent claimers, one winner;
+wrong worker rejected;
+expired lease rejected;
+simulated crash after side effect but before approval;
+repeated approval returns the same entity;
+stale task proposal rejected;
+empty tag list clears tags;
+metadata and tags accepted atomically.
+PR 3 — Truth/documentation closure
+
+Resolve:
+
+D-01
+D-02
+D-03
+A-06
+A-07
+
+Then formally accept Capsule Edit Truth v1 on schema 25.
+
+PR 4 — Runtime and local MCP hardening
+
+Resolve:
+
+O-01 through O-10.
+
+The remote MCP projection does not need a redesign; preserve its current narrow policy.
+
+PR 5 — Workboard Agency v1
+
+Only after the integrity work:
+
+derive lanes from Capsule;
+distinguish accountable owner from next actor;
+prefer finishing WIP;
+expose evidence and acceptance gates;
+add project-scoped revision refresh;
+make the board responsive and less chip-dense.
+Final assessment
+
+Project Atlas has crossed an important threshold: the central thesis now exists in code.
+
+The Capsule goal was accomplished in the meaningful technical sense:
+
+accepted truth is distinct from generated or derived state;
+history is immutable;
+stale acceptance is blocked;
+human review is explicit;
+agent changes remain proposals.
+
+It has not yet accomplished the complete product goal because:
+
+Workboard is not yet the shared agency surface;
+the agent loop is not transactionally safe under concurrency or failure;
+recovery contains critical rollback holes;
+usefulness has not been measured;
+formal Phase 1 acceptance remains undocumented.
+
+The correct characterization is:
+
+Capsule Phase 0/1 is implemented and conceptually successful. Project Atlas as a complete human/LLM operating system is still in the integration and product-validation stage.
+
+The next work should be integrity hardening first, Workboard agency second, and measurement third.

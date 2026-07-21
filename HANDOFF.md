@@ -1,5 +1,18 @@
 # Public Maintainer Handoff
 
+## Live audit follow-up
+
+The canonical status ledger for the July 21 second-pass audit is
+[`docs/PROJECT_ATLAS_FOLLOW_UP_MATRIX.md`](docs/PROJECT_ATLAS_FOLLOW_UP_MATRIX.md).
+It tracks all 51 findings and supersedes the parent-folder July 20 assessment
+matrix for operational status. The uploaded audit is preserved unchanged under
+[`docs/audits/`](docs/audits/README.md). The supported local security boundary
+for the guarded worker is recorded in the
+[`live recovery handoff threat model`](docs/RECOVERY_HANDOFF_THREAT_MODEL.md).
+
+Until the P0 rows close, guarded live replacement is experimental and the LLM
+queue is restricted to an attended single-worker operating assumption.
+
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
 contact data, machine-specific paths, and unrelated project references.
