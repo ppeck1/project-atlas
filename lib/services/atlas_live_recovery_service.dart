@@ -15,13 +15,39 @@ import '../db/db_open.dart';
 /// after the UI process exits.
 class AtlasLiveRecoveryService {
   static const planSchema = 'project_atlas_live_recovery_plan_v1';
+  final Future<AtlasFullBackupService> Function()? _backupService;
+  final Future<AtlasLiveRecoveryPaths> Function()? _paths;
+  final Future<void> Function(Duration) _delay;
+
+  AtlasLiveRecoveryService({
+    Future<AtlasFullBackupService> Function()? backupService,
+    Future<AtlasLiveRecoveryPaths> Function()? paths,
+    Future<void> Function(Duration)? delay,
+  }) : _backupService = backupService,
+       _paths = paths,
+       _delay = delay ?? Future<void>.delayed;
+
+  Future<AtlasFullBackupService> _backup() =>
+      _backupService?.call() ?? AtlasFullBackupService.forCurrentAtlasApp();
+
+  Future<AtlasLiveRecoveryPaths> _managedPaths() async {
+    final override = _paths;
+    if (override != null) return override();
+    final support = await getApplicationSupportDirectory();
+    final documents = await getApplicationDocumentsDirectory();
+    return AtlasLiveRecoveryPaths(
+      database: await resolveAtlasDatabaseFile(),
+      documents: Directory(p.join(documents.path, 'atlas_documents')),
+      media: Directory(p.join(support.path, 'project_media')),
+    );
+  }
 
   Future<AtlasLiveRecoveryPlan> preparePlan({
     required Directory sourceBundle,
     required Directory safetyBackupRoot,
     required String executablePath,
   }) async {
-    final backup = await AtlasFullBackupService.forCurrentAtlasApp();
+    final backup = await _backup();
     final validation = await backup.validateBundle(sourceBundle);
     if (!validation.isValid) {
       throw AtlasFullBackupException(
@@ -53,7 +79,7 @@ class AtlasLiveRecoveryService {
   /// Called before Flutter opens the database in a fresh process.
   Future<void> applyPlan(File planFile) async {
     final plan = await AtlasLiveRecoveryPlan.read(planFile);
-    final backup = await AtlasFullBackupService.forCurrentAtlasApp();
+    final backup = await _backup();
     final validation = await backup.validateBundle(plan.sourceBundle);
     if (!validation.isValid) {
       throw AtlasFullBackupException(
@@ -62,7 +88,7 @@ class AtlasLiveRecoveryService {
     }
     // The current UI has just exited. A small delay allows Windows to release
     // its SQLite handles before the safety snapshot and replacement begin.
-    await Future<void>.delayed(const Duration(seconds: 2));
+    await _delay(const Duration(seconds: 2));
     final safety = await backup.createBundle(plan.safetyBackupRoot);
     final handoffRoot = Directory(p.join(plan.planFile.parent.path, 'staging'));
     final staged = await backup.restoreToStaging(
@@ -89,9 +115,8 @@ class AtlasLiveRecoveryService {
     Directory stagedBundle,
     Directory handoffRoot,
   ) async {
-    final support = await getApplicationSupportDirectory();
-    final documents = await getApplicationDocumentsDirectory();
-    final liveDatabase = await resolveAtlasDatabaseFile();
+    final paths = await _managedPaths();
+    final liveDatabase = paths.database;
     final replacements = <_ReplacementTarget>[
       _ReplacementTarget(
         source: File(
@@ -100,12 +125,14 @@ class AtlasLiveRecoveryService {
         target: liveDatabase,
       ),
       _ReplacementTarget(
-        source: Directory(p.join(stagedBundle.path, 'atlas_documents')),
-        target: Directory(p.join(documents.path, 'atlas_documents')),
+        source: Directory(
+          p.join(stagedBundle.path, 'files', 'atlas_documents'),
+        ),
+        target: paths.documents,
       ),
       _ReplacementTarget(
-        source: Directory(p.join(stagedBundle.path, 'project_media')),
-        target: Directory(p.join(support.path, 'project_media')),
+        source: Directory(p.join(stagedBundle.path, 'files', 'project_media')),
+        target: paths.media,
       ),
     ];
     final rollback = Directory(
@@ -144,6 +171,18 @@ class AtlasLiveRecoveryService {
       rethrow;
     }
   }
+}
+
+class AtlasLiveRecoveryPaths {
+  final File database;
+  final Directory documents;
+  final Directory media;
+
+  const AtlasLiveRecoveryPaths({
+    required this.database,
+    required this.documents,
+    required this.media,
+  });
 }
 
 class AtlasLiveRecoveryPlan {
