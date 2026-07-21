@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+
 import '../db/app_db.dart';
 import '../shared/models/app_state.dart';
 import '../shared/models/project_metadata.dart' as project_meta;
@@ -401,6 +403,43 @@ class AtlasProposalApplyResult {
     'message': message,
     'entityId': entityId,
   };
+}
+
+class AtlasLlmTaskTransitionException implements Exception {
+  final String taskId;
+  final LlmTaskTerminalResult result;
+
+  const AtlasLlmTaskTransitionException({
+    required this.taskId,
+    required this.result,
+  });
+
+  String get code => switch (result.conflictReason) {
+    LlmTaskLeaseConflictReason.wrongOwner ||
+    LlmTaskLeaseConflictReason.expiredLease ||
+    LlmTaskLeaseConflictReason.staleAttempt => 'llm_task_lease_conflict',
+    LlmTaskLeaseConflictReason.idempotencyMismatch =>
+      'llm_task_idempotency_conflict',
+    LlmTaskLeaseConflictReason.invalidStatus => 'llm_task_transition_conflict',
+    null when result.outcome == LlmTaskTerminalOutcome.notFound =>
+      'llm_task_not_found',
+    null => 'llm_task_transition_conflict',
+  };
+
+  Map<String, Object?> toJson() => {
+    'code': code,
+    'taskId': taskId,
+    'reason': result.conflictReason?.name ?? result.outcome.name,
+    'status': result.task?.status,
+    'leasedBy': result.task?.leasedBy,
+    'leaseAttempt': result.task?.attempts,
+    'leaseExpiresAt': result.task?.leaseExpiresAt?.toIso8601String(),
+  };
+
+  @override
+  String toString() =>
+      'LLM task transition rejected for $taskId: '
+      '${result.conflictReason?.name ?? result.outcome.name}.';
 }
 
 class AtlasAgentService {
@@ -1008,7 +1047,8 @@ class AtlasAgentService {
 
   Future<LlmTaskQueueItem> completeLlmTask({
     required String taskId,
-    String? workerId,
+    required String workerId,
+    required int leaseAttempt,
     required Map<String, Object?> result,
     String? proposalTitle,
     String? proposalBody,
@@ -1016,57 +1056,96 @@ class AtlasAgentService {
     final task = await state.getLlmTask(taskId);
     if (task == null) throw StateError('LLM task not found: $taskId');
     final worker = _clean(workerId);
-    if (worker != null && task.leasedBy != null && task.leasedBy != worker) {
-      throw StateError('Task is leased by ${task.leasedBy}, not $worker.');
-    }
-    if (task.status != 'leased') {
-      throw StateError(
-        'Task must be leased before completion: ${task.status}.',
-      );
-    }
-    String? reviewDraftId;
+    if (worker == null) throw StateError('Worker ID is required.');
+    if (leaseAttempt <= 0) throw StateError('Lease attempt is required.');
+
+    LlmTaskCompletionDraftPayload? handoffDraft;
+    Map<String, Object?>? proposalEnvelope;
     final body = _clean(proposalBody);
     if (body != null) {
-      final proposal = await recordHandoff(
+      final project = await state.getProjectFull(task.projectId);
+      if (project == null) {
+        throw StateError('Project not found: ${task.projectId}');
+      }
+      final taskAttemptKey = '${task.id}:$leaseAttempt';
+      final digest = sha256.convert(utf8.encode(taskAttemptKey)).toString();
+      final payload = <String, Object?>{
+        'title': _clean(proposalTitle) ?? 'LLM result: ${task.title}',
+        'body': body,
+      };
+      final draftTitle = 'Handoff for queued task: ${task.title}';
+      proposalEnvelope = <String, Object?>{
+        'schema': 'atlas.agent.proposal.v1',
+        'proposalId': 'proposal_llm_$digest',
+        'type': 'handoff_record',
+        'projectId': task.projectId,
+        'taskAttemptKey': taskAttemptKey,
+        'payload': payload,
+        'validationErrors': const <String>[],
+        'warnings': const <String>[],
+        'createdAt': (task.leasedAt ?? task.updatedAt).toIso8601String(),
+      };
+      handoffDraft = LlmTaskCompletionDraftPayload(
+        id: 'llm_completion_$digest',
+        kind: proposalDraftKind,
+        title: draftTitle,
+        body: _proposalBody('handoff_record', draftTitle, payload, const []),
+        inputJson: jsonEncode(proposalEnvelope),
         projectId: task.projectId,
-        title: _clean(proposalTitle) ?? 'LLM result: ${task.title}',
-        body: body,
       );
-      reviewDraftId = proposal.draftId;
     }
-    final completed = await state.completeLlmTask(
+
+    final transition = await state.completeLlmTask(
       taskId: taskId,
+      workerId: worker,
+      leaseAttempt: leaseAttempt,
       result: result,
-      reviewDraftId: reviewDraftId,
+      handoffDraft: handoffDraft,
     );
-    if (completed == null) throw StateError('LLM task disappeared: $taskId');
+    final completed = _terminalTaskOrThrow(taskId, transition);
+    if (transition.applied && proposalEnvelope != null) {
+      await state.db.logEvent(
+        area: 'agent',
+        action: 'propose_handoff_record',
+        entityType: 'project',
+        entityId: task.projectId,
+        inputJson: jsonEncode(proposalEnvelope),
+      );
+    }
     return completed;
   }
 
   Future<LlmTaskQueueItem> failLlmTask({
     required String taskId,
-    String? workerId,
+    required String workerId,
+    required int leaseAttempt,
     required String error,
     Map<String, Object?> result = const {},
   }) async {
-    final task = await state.getLlmTask(taskId);
-    if (task == null) throw StateError('LLM task not found: $taskId');
     final worker = _clean(workerId);
-    if (worker != null && task.leasedBy != null && task.leasedBy != worker) {
-      throw StateError('Task is leased by ${task.leasedBy}, not $worker.');
-    }
-    if (task.status != 'leased') {
-      throw StateError('Task must be leased before failure: ${task.status}.');
-    }
+    if (worker == null) throw StateError('Worker ID is required.');
+    if (leaseAttempt <= 0) throw StateError('Lease attempt is required.');
     final cleanError = _clean(error);
     if (cleanError == null) throw StateError('Failure reason is required.');
-    final failed = await state.failLlmTask(
+    final transition = await state.failLlmTask(
       taskId: taskId,
+      workerId: worker,
+      leaseAttempt: leaseAttempt,
       error: cleanError,
       result: result,
     );
-    if (failed == null) throw StateError('LLM task disappeared: $taskId');
-    return failed;
+    return _terminalTaskOrThrow(taskId, transition);
+  }
+
+  LlmTaskQueueItem _terminalTaskOrThrow(
+    String taskId,
+    LlmTaskTerminalResult result,
+  ) {
+    final task = result.task;
+    if ((result.applied || result.idempotentReplay) && task != null) {
+      return task;
+    }
+    throw AtlasLlmTaskTransitionException(taskId: taskId, result: result);
   }
 
   Future<LlmTaskQueueItem> cancelLlmTask({

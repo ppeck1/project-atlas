@@ -327,11 +327,12 @@ class AtlasMcpAdapter {
         'properties': {
           'taskId': {'type': 'string'},
           'workerId': {'type': 'string'},
+          'leaseAttempt': {'type': 'integer'},
           'result': {'type': 'object'},
           'proposalTitle': {'type': 'string'},
           'proposalBody': {'type': 'string'},
         },
-        'required': ['taskId', 'result'],
+        'required': ['taskId', 'workerId', 'leaseAttempt', 'result'],
       },
     ),
     AtlasMcpTool(
@@ -342,10 +343,11 @@ class AtlasMcpAdapter {
         'properties': {
           'taskId': {'type': 'string'},
           'workerId': {'type': 'string'},
+          'leaseAttempt': {'type': 'integer'},
           'error': {'type': 'string'},
           'result': {'type': 'object'},
         },
-        'required': ['taskId', 'error'],
+        'required': ['taskId', 'workerId', 'leaseAttempt', 'error'],
       },
     ),
     AtlasMcpTool(
@@ -478,6 +480,11 @@ class AtlasMcpAdapter {
   ]) async {
     try {
       return AtlasMcpCallResult(data: await _dispatch(name, arguments));
+    } on AtlasLlmTaskTransitionException catch (error) {
+      return AtlasMcpCallResult(
+        data: {...error.toJson(), 'tool': name},
+        isError: true,
+      );
     } catch (error) {
       return AtlasMcpCallResult(
         data: {'error': error.toString(), 'tool': name},
@@ -589,14 +596,16 @@ class AtlasMcpAdapter {
       ))?.toJson(),
       'complete_llm_task' => (await agent.completeLlmTask(
         taskId: _requiredString(args, 'taskId'),
-        workerId: _string(args, 'workerId'),
+        workerId: _requiredString(args, 'workerId'),
+        leaseAttempt: _requiredInt(args, 'leaseAttempt'),
         result: _objectMap(args['result']),
         proposalTitle: _string(args, 'proposalTitle'),
         proposalBody: _string(args, 'proposalBody'),
       )).toJson(),
       'fail_llm_task' => (await agent.failLlmTask(
         taskId: _requiredString(args, 'taskId'),
-        workerId: _string(args, 'workerId'),
+        workerId: _requiredString(args, 'workerId'),
+        leaseAttempt: _requiredInt(args, 'leaseAttempt'),
         error: _requiredString(args, 'error'),
         result: _objectMap(args['result']),
       )).toJson(),
@@ -715,6 +724,12 @@ class AtlasMcpAdapter {
   bool _requiredBool(Map<String, Object?> args, String key) {
     final value = _bool(args, key);
     if (value == null) throw ArgumentError('Missing required boolean: $key');
+    return value;
+  }
+
+  int _requiredInt(Map<String, Object?> args, String key) {
+    final value = _int(args, key);
+    if (value == null) throw ArgumentError('Missing required integer: $key');
     return value;
   }
 

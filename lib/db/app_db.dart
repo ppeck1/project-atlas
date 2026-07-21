@@ -644,6 +644,70 @@ class LlmTaskQueueItem {
   };
 }
 
+enum LlmTaskTerminalOutcome { applied, idempotentReplay, conflict, notFound }
+
+enum LlmTaskLeaseConflictReason {
+  wrongOwner,
+  expiredLease,
+  staleAttempt,
+  invalidStatus,
+  idempotencyMismatch,
+}
+
+class LlmTaskTerminalResult {
+  final LlmTaskTerminalOutcome outcome;
+  final LlmTaskQueueItem? task;
+  final LlmTaskLeaseConflictReason? conflictReason;
+
+  const LlmTaskTerminalResult._({
+    required this.outcome,
+    this.task,
+    this.conflictReason,
+  });
+
+  const LlmTaskTerminalResult.applied(LlmTaskQueueItem task)
+    : this._(outcome: LlmTaskTerminalOutcome.applied, task: task);
+
+  const LlmTaskTerminalResult.idempotentReplay(LlmTaskQueueItem task)
+    : this._(outcome: LlmTaskTerminalOutcome.idempotentReplay, task: task);
+
+  const LlmTaskTerminalResult.conflict(
+    LlmTaskQueueItem task,
+    LlmTaskLeaseConflictReason reason,
+  ) : this._(
+        outcome: LlmTaskTerminalOutcome.conflict,
+        task: task,
+        conflictReason: reason,
+      );
+
+  const LlmTaskTerminalResult.notFound()
+    : this._(outcome: LlmTaskTerminalOutcome.notFound);
+
+  bool get applied => outcome == LlmTaskTerminalOutcome.applied;
+  bool get idempotentReplay =>
+      outcome == LlmTaskTerminalOutcome.idempotentReplay;
+}
+
+class LlmTaskCompletionDraftPayload {
+  final String id;
+  final String kind;
+  final String title;
+  final String body;
+  final String? inputJson;
+  final String? projectId;
+  final String? workItemId;
+
+  const LlmTaskCompletionDraftPayload({
+    required this.id,
+    required this.kind,
+    required this.title,
+    required this.body,
+    this.inputJson,
+    this.projectId,
+    this.workItemId,
+  });
+}
+
 /// Logs a tolerated schema-setup failure, staying quiet for the expected
 /// idempotency case (table/column/index already exists) so routine DB opens
 /// don't flood the log with known-benign errors.
@@ -5902,93 +5966,313 @@ class AppDb extends _$AppDb {
     DateTime? now,
     Duration leaseDuration = const Duration(hours: 1),
   }) async {
+    if (leasedBy.trim().isEmpty) {
+      throw ArgumentError.value(leasedBy, 'leasedBy', 'must not be blank');
+    }
     await _ensureLlmTaskQueueTable();
     final claimedAt = now ?? DateTime.now();
+    final claimedAtMillis = claimedAt.millisecondsSinceEpoch;
+    final expiresAtMillis = claimedAt.add(leaseDuration).millisecondsSinceEpoch;
     final rows = await customSelect(
       taskId == null
-          ? '''SELECT * FROM llm_task_queue
-               WHERE status = 'pending' OR (status = 'leased' AND lease_expires_at < ?)
-               ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
-                        created_at ASC
-               LIMIT 1'''
-          : '''SELECT * FROM llm_task_queue
-               WHERE id = ? AND (status = 'pending' OR (status = 'leased' AND lease_expires_at < ?))
-               LIMIT 1''',
+          ? '''UPDATE llm_task_queue
+               SET status = 'leased', leased_by = ?, leased_at = ?,
+                   lease_expires_at = ?, attempts = attempts + 1,
+                   updated_at = ?, error = NULL
+               WHERE id = (
+                 SELECT id FROM llm_task_queue
+                 WHERE status = 'pending'
+                    OR (status = 'leased' AND lease_expires_at <= ?)
+                 ORDER BY CASE priority
+                   WHEN 'urgent' THEN 0 WHEN 'high' THEN 1
+                   WHEN 'normal' THEN 2 ELSE 3 END,
+                   created_at ASC
+                 LIMIT 1
+               )
+               AND (status = 'pending'
+                 OR (status = 'leased' AND lease_expires_at <= ?))
+               RETURNING *'''
+          : '''UPDATE llm_task_queue
+               SET status = 'leased', leased_by = ?, leased_at = ?,
+                   lease_expires_at = ?, attempts = attempts + 1,
+                   updated_at = ?, error = NULL
+               WHERE id = ?
+                 AND (status = 'pending'
+                   OR (status = 'leased' AND lease_expires_at <= ?))
+               RETURNING *''',
       variables: taskId == null
-          ? [Variable<int>(claimedAt.millisecondsSinceEpoch)]
+          ? [
+              Variable<String>(leasedBy),
+              Variable<int>(claimedAtMillis),
+              Variable<int>(expiresAtMillis),
+              Variable<int>(claimedAtMillis),
+              Variable<int>(claimedAtMillis),
+              Variable<int>(claimedAtMillis),
+            ]
           : [
+              Variable<String>(leasedBy),
+              Variable<int>(claimedAtMillis),
+              Variable<int>(expiresAtMillis),
+              Variable<int>(claimedAtMillis),
               Variable<String>(taskId),
-              Variable<int>(claimedAt.millisecondsSinceEpoch),
+              Variable<int>(claimedAtMillis),
             ],
     ).get();
     if (rows.isEmpty) return null;
-    final task = _llmTaskQueueItemFromRow(rows.single);
-    final expiresAt = claimedAt.add(leaseDuration);
-    await customStatement(
-      '''UPDATE llm_task_queue SET status = 'leased', leased_by = ?, leased_at = ?,
-         lease_expires_at = ?, attempts = attempts + 1, updated_at = ?, error = NULL
-         WHERE id = ?''',
-      [
-        leasedBy,
-        claimedAt.millisecondsSinceEpoch,
-        expiresAt.millisecondsSinceEpoch,
-        claimedAt.millisecondsSinceEpoch,
-        task.id,
-      ],
-    );
     _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
-    return getLlmTask(task.id);
+    return _llmTaskQueueItemFromRow(rows.single);
   }
 
-  Future<LlmTaskQueueItem?> completeLlmTask({
+  Future<LlmTaskTerminalResult> completeLlmTask({
     required String id,
+    required String workerId,
+    required int leaseAttempt,
     required String resultJson,
-    String? reviewDraftId,
-    DateTime? completedAt,
+    LlmTaskCompletionDraftPayload? handoffDraft,
+    required DateTime now,
+    @visibleForTesting Future<void> Function()? afterQueueTransitionForTesting,
+    @visibleForTesting Future<void> Function()? afterDraftInsertForTesting,
   }) async {
-    final existing = await getLlmTask(id);
-    if (existing == null) return null;
-    if (existing.status != 'leased') return existing;
-    final doneAt = completedAt ?? DateTime.now();
-    await customStatement(
-      '''UPDATE llm_task_queue SET status = 'completed', result_json = ?, review_draft_id = ?,
-         completed_at = ?, updated_at = ?, lease_expires_at = NULL
-         WHERE id = ? AND status = 'leased' ''',
-      [
-        resultJson,
-        reviewDraftId,
-        doneAt.millisecondsSinceEpoch,
-        doneAt.millisecondsSinceEpoch,
-        id,
-      ],
-    );
-    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
-    return getLlmTask(id);
+    _validateLlmTerminalIdentity(workerId, leaseAttempt);
+    await _ensureLlmTaskQueueTable();
+    final result = await transaction(() async {
+      final rows = await customSelect(
+        '''UPDATE llm_task_queue
+           SET status = 'completed', result_json = ?, review_draft_id = ?,
+               completed_at = ?, updated_at = ?, lease_expires_at = NULL
+           WHERE id = ? AND status = 'leased' AND leased_by = ?
+             AND attempts = ? AND lease_expires_at IS NOT NULL
+             AND lease_expires_at > ?
+           RETURNING *''',
+        variables: [
+          Variable<String>(resultJson),
+          Variable<String>(handoffDraft?.id),
+          Variable<int>(now.millisecondsSinceEpoch),
+          Variable<int>(now.millisecondsSinceEpoch),
+          Variable<String>(id),
+          Variable<String>(workerId),
+          Variable<int>(leaseAttempt),
+          Variable<int>(now.millisecondsSinceEpoch),
+        ],
+      ).get();
+      if (rows.isEmpty) {
+        return _classifyTerminalMiss(
+          id: id,
+          workerId: workerId,
+          leaseAttempt: leaseAttempt,
+          terminalStatus: 'completed',
+          resultJson: resultJson,
+          expectedError: null,
+          handoffDraft: handoffDraft,
+          now: now,
+        );
+      }
+      if (afterQueueTransitionForTesting != null) {
+        await afterQueueTransitionForTesting();
+      }
+      if (handoffDraft != null) {
+        await _insertOrValidateCompletionDraft(handoffDraft, now);
+      }
+      if (afterDraftInsertForTesting != null) {
+        await afterDraftInsertForTesting();
+      }
+      return LlmTaskTerminalResult.applied(
+        _llmTaskQueueItemFromRow(rows.single),
+      );
+    });
+    if (result.applied) {
+      _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
+    }
+    return result;
   }
 
-  Future<LlmTaskQueueItem?> failLlmTask({
+  Future<LlmTaskTerminalResult> failLlmTask({
     required String id,
+    required String workerId,
+    required int leaseAttempt,
     required String error,
     String? resultJson,
-    DateTime? completedAt,
+    required DateTime now,
   }) async {
-    final existing = await getLlmTask(id);
-    if (existing == null) return null;
-    if (existing.status != 'leased') return existing;
-    final failedAt = completedAt ?? DateTime.now();
-    await customStatement(
-      '''UPDATE llm_task_queue SET status = 'failed', error = ?, result_json = ?,
-         completed_at = ?, updated_at = ?, lease_expires_at = NULL
-         WHERE id = ? AND status = 'leased' ''',
-      [
-        error,
-        resultJson,
-        failedAt.millisecondsSinceEpoch,
-        failedAt.millisecondsSinceEpoch,
-        id,
+    _validateLlmTerminalIdentity(workerId, leaseAttempt);
+    await _ensureLlmTaskQueueTable();
+    final rows = await customSelect(
+      '''UPDATE llm_task_queue
+         SET status = 'failed', error = ?, result_json = ?, completed_at = ?,
+             updated_at = ?, lease_expires_at = NULL
+         WHERE id = ? AND status = 'leased' AND leased_by = ?
+           AND attempts = ? AND lease_expires_at IS NOT NULL
+           AND lease_expires_at > ?
+         RETURNING *''',
+      variables: [
+        Variable<String>(error),
+        Variable<String>(resultJson),
+        Variable<int>(now.millisecondsSinceEpoch),
+        Variable<int>(now.millisecondsSinceEpoch),
+        Variable<String>(id),
+        Variable<String>(workerId),
+        Variable<int>(leaseAttempt),
+        Variable<int>(now.millisecondsSinceEpoch),
       ],
+    ).get();
+    final result = rows.isNotEmpty
+        ? LlmTaskTerminalResult.applied(_llmTaskQueueItemFromRow(rows.single))
+        : await _classifyTerminalMiss(
+            id: id,
+            workerId: workerId,
+            leaseAttempt: leaseAttempt,
+            terminalStatus: 'failed',
+            resultJson: resultJson,
+            expectedError: error,
+            handoffDraft: null,
+            now: now,
+          );
+    if (result.applied) {
+      _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
+    }
+    return result;
+  }
+
+  Future<LlmTaskTerminalResult> _classifyTerminalMiss({
+    required String id,
+    required String workerId,
+    required int leaseAttempt,
+    required String terminalStatus,
+    required String? resultJson,
+    required String? expectedError,
+    required LlmTaskCompletionDraftPayload? handoffDraft,
+    required DateTime now,
+  }) async {
+    final row = await customSelect(
+      'SELECT * FROM llm_task_queue WHERE id = ? LIMIT 1',
+      variables: [Variable<String>(id)],
+    ).getSingleOrNull();
+    if (row == null) return const LlmTaskTerminalResult.notFound();
+    final task = _llmTaskQueueItemFromRow(row);
+
+    if (task.status == terminalStatus &&
+        task.leasedBy == workerId &&
+        task.attempts == leaseAttempt) {
+      final payloadMatches =
+          _jsonPayloadMatches(task.resultJson, resultJson) &&
+          task.error == expectedError &&
+          task.reviewDraftId == handoffDraft?.id;
+      final draftMatches = handoffDraft == null
+          ? task.reviewDraftId == null
+          : await _completionDraftMatches(handoffDraft);
+      if (payloadMatches && draftMatches) {
+        return LlmTaskTerminalResult.idempotentReplay(task);
+      }
+      return LlmTaskTerminalResult.conflict(
+        task,
+        LlmTaskLeaseConflictReason.idempotencyMismatch,
+      );
+    }
+    if (task.status != 'leased') {
+      return LlmTaskTerminalResult.conflict(
+        task,
+        LlmTaskLeaseConflictReason.invalidStatus,
+      );
+    }
+    if (task.attempts != leaseAttempt) {
+      return LlmTaskTerminalResult.conflict(
+        task,
+        LlmTaskLeaseConflictReason.staleAttempt,
+      );
+    }
+    if (task.leasedBy != workerId) {
+      return LlmTaskTerminalResult.conflict(
+        task,
+        LlmTaskLeaseConflictReason.wrongOwner,
+      );
+    }
+    final expiresAt = task.leaseExpiresAt;
+    if (expiresAt == null || !expiresAt.isAfter(now)) {
+      return LlmTaskTerminalResult.conflict(
+        task,
+        LlmTaskLeaseConflictReason.expiredLease,
+      );
+    }
+    return LlmTaskTerminalResult.conflict(
+      task,
+      LlmTaskLeaseConflictReason.invalidStatus,
     );
-    _notifyLlmTaskQueueChanged(kind: UpdateKind.update);
-    return getLlmTask(id);
+  }
+
+  Future<void> _insertOrValidateCompletionDraft(
+    LlmTaskCompletionDraftPayload payload,
+    DateTime now,
+  ) async {
+    await into(drafts).insert(
+      DraftsCompanion(
+        id: Value(payload.id),
+        kind: Value(payload.kind),
+        title: Value(payload.title),
+        body: Value(payload.body),
+        inputJson: Value(payload.inputJson),
+        projectId: Value(payload.projectId),
+        workItemId: Value(payload.workItemId),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+    if (!await _completionDraftMatches(payload)) {
+      throw StateError(
+        'Completion draft ${payload.id} conflicts with an existing draft.',
+      );
+    }
+  }
+
+  Future<bool> _completionDraftMatches(
+    LlmTaskCompletionDraftPayload payload,
+  ) async {
+    final existing = await getDraft(payload.id);
+    return existing != null &&
+        existing.kind == payload.kind &&
+        existing.title == payload.title &&
+        existing.body == payload.body &&
+        existing.inputJson == payload.inputJson &&
+        existing.projectId == payload.projectId &&
+        existing.workItemId == payload.workItemId;
+  }
+
+  void _validateLlmTerminalIdentity(String workerId, int leaseAttempt) {
+    if (workerId.trim().isEmpty) {
+      throw ArgumentError.value(workerId, 'workerId', 'must not be blank');
+    }
+    if (leaseAttempt <= 0) {
+      throw ArgumentError.value(
+        leaseAttempt,
+        'leaseAttempt',
+        'must be greater than zero',
+      );
+    }
+  }
+
+  bool _jsonPayloadMatches(String? left, String? right) {
+    if (left == right) return true;
+    if (left == null || right == null) return false;
+    try {
+      return jsonEncode(_canonicalJsonValue(jsonDecode(left))) ==
+          jsonEncode(_canonicalJsonValue(jsonDecode(right)));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Object? _canonicalJsonValue(Object? value) {
+    if (value is List) {
+      return value.map(_canonicalJsonValue).toList(growable: false);
+    }
+    if (value is Map) {
+      final entries = value.entries.toList()
+        ..sort((left, right) => '${left.key}'.compareTo('${right.key}'));
+      return <String, Object?>{
+        for (final entry in entries)
+          '${entry.key}': _canonicalJsonValue(entry.value),
+      };
+    }
+    return value;
   }
 }

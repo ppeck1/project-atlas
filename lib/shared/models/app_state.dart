@@ -5026,37 +5026,39 @@ class AppState extends ChangeNotifier {
     return item;
   }
 
-  Future<LlmTaskQueueItem?> completeLlmTask({
+  Future<LlmTaskTerminalResult> completeLlmTask({
     required String taskId,
+    required String workerId,
+    required int leaseAttempt,
     required Map<String, Object?> result,
-    String? reviewDraftId,
-  }) async {
-    final existing = await db.getLlmTask(taskId);
-    if (existing == null) return null;
-    if (existing.status != 'leased') {
-      throw StateError('Only leased LLM tasks can be completed.');
-    }
+    LlmTaskCompletionDraftPayload? handoffDraft,
+    DateTime? now,
+  }) {
     return db.completeLlmTask(
       id: taskId,
+      workerId: workerId,
+      leaseAttempt: leaseAttempt,
       resultJson: jsonEncode(result),
-      reviewDraftId: reviewDraftId,
+      handoffDraft: handoffDraft,
+      now: now ?? DateTime.now(),
     );
   }
 
-  Future<LlmTaskQueueItem?> failLlmTask({
+  Future<LlmTaskTerminalResult> failLlmTask({
     required String taskId,
+    required String workerId,
+    required int leaseAttempt,
     required String error,
     Map<String, Object?> result = const {},
-  }) async {
-    final existing = await db.getLlmTask(taskId);
-    if (existing == null) return null;
-    if (existing.status != 'leased') {
-      throw StateError('Only leased LLM tasks can be failed.');
-    }
+    DateTime? now,
+  }) {
     return db.failLlmTask(
       id: taskId,
+      workerId: workerId,
+      leaseAttempt: leaseAttempt,
       error: error,
       resultJson: result.isEmpty ? null : jsonEncode(result),
+      now: now ?? DateTime.now(),
     );
   }
 
