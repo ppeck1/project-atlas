@@ -43,11 +43,11 @@ reproduction or design disposition before implementation.
 
 | ID | Pri | Disposition | Status | Package | Finding | Owner | Target PR | Required proof / closure evidence |
 |---|---:|---|---|---|---|---|---|---|
-| SPA-20260721-R-01 | P0 | Accepted | In progress | WP1 | Destructive recovery moves precede the rollback guard. | Codex | Local working tree | Implemented guarded move/copy/verify transaction; fault tests pass at every move boundary. Awaiting commit/PR and post-merge proof. |
-| SPA-20260721-R-02 | P0 | Accepted | In progress | WP1 | Rollback retains a partial new target when no original existed. | Codex | Local working tree | Original-presence tracking removes partial new targets; missing-original fault test passes. Awaiting commit/PR and post-merge proof. |
-| SPA-20260721-R-03 | P1 | Accepted | In progress | WP1 | The replaced live target is not revalidated before completion. | Codex | Local working tree | Exact staged/live inventory, length, and SHA-256 verification now precedes completion; corruption test proves rollback. Awaiting commit/PR. |
-| SPA-20260721-R-04 | P1 | Accepted | In progress | WP1 | Parent exits without child plan-acceptance acknowledgement. | Codex | Local working tree | Validated acknowledgement handshake and early-worker-exit tests pass; Settings waits before exiting. Awaiting commit/PR. |
-| SPA-20260721-R-05 | P1 | Accepted | In progress | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Codex | `fix/recovery-atomicity-audit-followup` | V2 plan removes executable paths; owned-root enforcement, atomic write/consume, strict schema/checksum and path-boundary tests pass. Threat boundary is recorded in `docs/RECOVERY_HANDOFF_THREAT_MODEL.md`. Awaiting PR/post-merge proof. |
+| SPA-20260721-R-01 | P0 | Accepted | In progress | WP1 | Destructive recovery moves precede the rollback guard. | Codex | PR #30 | Implemented guarded move/copy/verify transaction; fault tests pass at every move boundary. Hosted CI passed; awaiting review, merge, and post-merge proof. |
+| SPA-20260721-R-02 | P0 | Accepted | In progress | WP1 | Rollback retains a partial new target when no original existed. | Codex | PR #30 | Original-presence tracking removes partial new targets; missing-original fault test passes. Hosted CI passed; awaiting review, merge, and post-merge proof. |
+| SPA-20260721-R-03 | P1 | Accepted | In progress | WP1 | The replaced live target is not revalidated before completion. | Codex | PR #30 | Exact staged/live inventory, length, and SHA-256 verification now precedes completion; corruption test proves rollback. Hosted CI passed; awaiting review and merge. |
+| SPA-20260721-R-04 | P1 | Accepted | In progress | WP1 | Parent exits without child plan-acceptance acknowledgement. | Codex | PR #30 | Validated acknowledgement handshake and early-worker-exit tests pass; Settings waits before exiting. Hosted CI passed; awaiting review and merge. |
+| SPA-20260721-R-05 | P1 | Accepted | In progress | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Codex | PR #30 | V2 plan removes executable paths; owned-root enforcement, atomic write/consume, strict schema/checksum and path-boundary tests pass. Threat boundary is recorded in `docs/RECOVERY_HANDOFF_THREAT_MODEL.md`; hosted CI passed. Awaiting review and merge. |
 | SPA-20260721-R-06 | P0 | Needs verification | Open | WP2 | Full backup may mix database and file states during concurrent mutation. | Unassigned | TBD | Concurrent mutation test proves one point-in-time ownership contract. |
 | SPA-20260721-R-07 | P1 | Needs verification | Open | WP2 | Bundle manifest inventory is not exact. | Unassigned | TBD | Missing, duplicate, and undeclared files all fail validation. |
 | SPA-20260721-R-08 | P1 | Needs verification | Open | WP2 | Project recovery decodes unbounded ZIP content in memory. | Unassigned | TBD | Source, entry-count, per-entry, and expanded-size limits with hostile fixtures. |
@@ -113,6 +113,8 @@ reproduction or design disposition before implementation.
 - MCP smoke: not verified in this local slice. A second isolated database-path
   rebuild was terminated after roughly four silent minutes without producing
   a smoke result; no live Atlas database was used.
+- Hosted PR #30 CI passed on 2026-07-21, including the seeded isolated MCP
+  gateway smoke.
 - `R-05` is implemented on the follow-up branch with its supported threat model
   documented. WP1 remains in progress and the experimental-recovery constraint
   remains active. No row is `Verified` or `Closed` until PR and post-merge proof.
