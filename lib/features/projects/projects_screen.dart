@@ -13,9 +13,11 @@ import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
 import '../../shared/models/project_metadata.dart';
 import '../../shared/widgets/create_project_dialog.dart';
+import '../../shared/widgets/atlas_shortcuts.dart';
 import '../../shared/theme/atlas_colors.dart';
 import 'project_metadata_dialog.dart';
 import '../work/status_priority_helpers.dart';
+
 const _projectsTabCategorySortKey = 'projects_tab::category_sort';
 const _projectsTabProjectSortKey = 'projects_tab::project_sort';
 const _projectsTabPinnedCategoriesKey = 'projects_tab::pinned_categories';
@@ -80,6 +82,9 @@ class ProjectsScreen extends StatefulWidget {
 }
 
 class _ProjectsScreenState extends State<ProjectsScreen> {
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
+  String _searchQuery = '';
   String? _tagFilterId;
   String? _statusFilter;
   String? _phaseFilter;
@@ -102,11 +107,26 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   Stream<Project?>? _activeProject;
 
   bool get _hasFilters =>
+      _searchQuery.isNotEmpty ||
       _tagFilterId != null ||
       _statusFilter != null ||
       _phaseFilter != null ||
       _priorityFilter != null ||
       _visibleCategories.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    AtlasSearchFocusRegistry.register(_searchFocus);
+  }
+
+  @override
+  void dispose() {
+    AtlasSearchFocusRegistry.unregister(_searchFocus);
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -786,7 +806,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               error: error.toString(),
             );
           } catch (e) {
-            debugPrint('[Atlas] _queueProjectSummaryRefresh: logEvent failed: $e');
+            debugPrint(
+              '[Atlas] _queueProjectSummaryRefresh: logEvent failed: $e',
+            );
           }
         }
       })(),
@@ -1027,6 +1049,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                           return Column(
                             children: [
                               _FilterBar(
+                                searchController: _searchController,
+                                searchFocus: _searchFocus,
+                                searchQuery: _searchQuery,
                                 tags: tags,
                                 tagFilterId: _tagFilterId,
                                 statusFilter: _statusFilter,
@@ -1045,11 +1070,15 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                     setState(() => _phaseFilter = v),
                                 onPriorityChanged: (v) =>
                                     setState(() => _priorityFilter = v),
+                                onSearchChanged: (value) =>
+                                    setState(() => _searchQuery = value),
                                 onCategoriesChanged: _setVisibleCategories,
                                 onCategorySortChanged: _setCategorySort,
                                 onProjectSortChanged: _setProjectSort,
                                 onClear: () {
                                   setState(() {
+                                    _searchController.clear();
+                                    _searchQuery = '';
                                     _tagFilterId = null;
                                     _statusFilter = null;
                                     _phaseFilter = null;
@@ -1267,6 +1296,17 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           }
           if (_visibleCategories.isNotEmpty &&
               !_visibleCategories.contains(projectCategoryLabel(p.category))) {
+            return false;
+          }
+          final query = _searchQuery.trim().toLowerCase();
+          if (query.isNotEmpty &&
+              ![
+                p.title,
+                p.description,
+                p.owner,
+                p.category,
+                p.phase,
+              ].whereType<String>().join(' ').toLowerCase().contains(query)) {
             return false;
           }
           return true;
@@ -1766,6 +1806,9 @@ class _ProjectUploadProgressOverlay extends StatelessWidget {
 }
 
 class _FilterBar extends StatelessWidget {
+  final TextEditingController searchController;
+  final FocusNode searchFocus;
+  final String searchQuery;
   final List<Tag> tags;
   final String? tagFilterId;
   final String? statusFilter;
@@ -1780,6 +1823,7 @@ class _FilterBar extends StatelessWidget {
   final ValueChanged<String?> onStatusChanged;
   final ValueChanged<String?> onPhaseChanged;
   final ValueChanged<String?> onPriorityChanged;
+  final ValueChanged<String> onSearchChanged;
   final ValueChanged<Set<String>> onCategoriesChanged;
   final ValueChanged<String?> onCategorySortChanged;
   final ValueChanged<String?> onProjectSortChanged;
@@ -1788,6 +1832,9 @@ class _FilterBar extends StatelessWidget {
   final int filteredCount;
 
   const _FilterBar({
+    required this.searchController,
+    required this.searchFocus,
+    required this.searchQuery,
     required this.tags,
     required this.tagFilterId,
     required this.statusFilter,
@@ -1802,6 +1849,7 @@ class _FilterBar extends StatelessWidget {
     required this.onStatusChanged,
     required this.onPhaseChanged,
     required this.onPriorityChanged,
+    required this.onSearchChanged,
     required this.onCategoriesChanged,
     required this.onCategorySortChanged,
     required this.onProjectSortChanged,
@@ -1821,6 +1869,29 @@ class _FilterBar extends StatelessWidget {
         runSpacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
+          SizedBox(
+            width: 230,
+            child: TextField(
+              controller: searchController,
+              focusNode: searchFocus,
+              onChanged: onSearchChanged,
+              decoration: InputDecoration(
+                hintText: 'Search projects',
+                prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIcon: searchQuery.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          searchController.clear();
+                          onSearchChanged('');
+                        },
+                      ),
+                isDense: true,
+              ),
+            ),
+          ),
           _Dropdown<String?>(
             value: tagFilterId,
             width: 150,
@@ -2250,10 +2321,7 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
       _runtimeProjectId = widget.project.id;
       final state = AppStateScope.of(context);
       _runtimeProfile = state.watchProjectRuntimeProfile(widget.project.id);
-      _runtimeRuns = state.watchProjectRuntimeRuns(
-        widget.project.id,
-        limit: 5,
-      );
+      _runtimeRuns = state.watchProjectRuntimeRuns(widget.project.id, limit: 5);
     }
   }
 
@@ -2264,10 +2332,7 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
       _runtimeProjectId = widget.project.id;
       final state = AppStateScope.of(context);
       _runtimeProfile = state.watchProjectRuntimeProfile(widget.project.id);
-      _runtimeRuns = state.watchProjectRuntimeRuns(
-        widget.project.id,
-        limit: 5,
-      );
+      _runtimeRuns = state.watchProjectRuntimeRuns(widget.project.id, limit: 5);
     }
   }
 
@@ -2295,7 +2360,10 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
                   tooltip: 'Launch project',
                   busy: _launching,
                   icon: Icons.rocket_launch_outlined,
-                  color: _runtimeRunColor(_latestRuntimeRun(runs, 'launch'), primary: colors.primary),
+                  color: _runtimeRunColor(
+                    _latestRuntimeRun(runs, 'launch'),
+                    primary: colors.primary,
+                  ),
                   onPressed: () => _runRuntimeAction(
                     action: 'launch',
                     body: () => AppStateScope.of(
@@ -2324,7 +2392,10 @@ class _RuntimeProjectActionsState extends State<_RuntimeProjectActions> {
                       : 'Capsule disabled',
                   busy: _checkingCapsule,
                   icon: Icons.health_and_safety_outlined,
-                  color: _runtimeRunColor(latestCapsule, primary: colors.primary),
+                  color: _runtimeRunColor(
+                    latestCapsule,
+                    primary: colors.primary,
+                  ),
                   onPressed: profile.capsuleEnabled
                       ? () => _runRuntimeAction(
                           action: 'capsule',
@@ -2842,7 +2913,9 @@ List<String> _decodeStringList(String raw) {
       return decoded.map((item) => '$item').toList(growable: false);
     }
   } catch (e) {
-    debugPrint('[Atlas] _decodeStringList (projects_screen): JSON decode failed: $e');
+    debugPrint(
+      '[Atlas] _decodeStringList (projects_screen): JSON decode failed: $e',
+    );
   }
   return const [];
 }
@@ -2855,7 +2928,9 @@ String _observationDisplayName(ProjectObservation observation) {
       if (displayName.isNotEmpty) return displayName;
     }
   } catch (e) {
-    debugPrint('[Atlas] _observationDisplayName (projects_screen): JSON decode failed: $e');
+    debugPrint(
+      '[Atlas] _observationDisplayName (projects_screen): JSON decode failed: $e',
+    );
   }
   final normalized = observation.observedPath.replaceAll('/', r'\');
   final parts = normalized
