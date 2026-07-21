@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -18,14 +19,20 @@ class AtlasLiveRecoveryService {
   final Future<AtlasFullBackupService> Function()? _backupService;
   final Future<AtlasLiveRecoveryPaths> Function()? _paths;
   final Future<void> Function(Duration) _delay;
+  final Future<void> Function(String step)? _replacementStepHook;
+  final DateTime Function() _clock;
 
   AtlasLiveRecoveryService({
     Future<AtlasFullBackupService> Function()? backupService,
     Future<AtlasLiveRecoveryPaths> Function()? paths,
     Future<void> Function(Duration)? delay,
+    Future<void> Function(String step)? replacementStepHook,
+    DateTime Function()? clock,
   }) : _backupService = backupService,
        _paths = paths,
-       _delay = delay ?? Future<void>.delayed;
+       _delay = delay ?? Future<void>.delayed,
+       _replacementStepHook = replacementStepHook,
+       _clock = clock ?? DateTime.now;
 
   Future<AtlasFullBackupService> _backup() =>
       _backupService?.call() ?? AtlasFullBackupService.forCurrentAtlasApp();
@@ -86,6 +93,7 @@ class AtlasLiveRecoveryService {
         'Confirmed recovery stopped: source backup is no longer valid.',
       );
     }
+    await plan.writeAcceptance();
     // The current UI has just exited. A small delay allows Windows to release
     // its SQLite handles before the safety snapshot and replacement begin.
     await _delay(const Duration(seconds: 2));
@@ -109,6 +117,34 @@ class AtlasLiveRecoveryService {
       flush: true,
     );
     await plan.planFile.delete();
+    if (await plan.acceptanceFile.exists()) {
+      await plan.acceptanceFile.delete();
+    }
+  }
+
+  Future<void> awaitPlanAcceptance(
+    AtlasLiveRecoveryPlan plan, {
+    required Future<int> workerExitCode,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    int? exitedWith;
+    workerExitCode.then((code) => exitedWith = code);
+    final deadline = _clock().add(timeout);
+    while (_clock().isBefore(deadline)) {
+      if (await plan.acceptanceFile.exists()) {
+        await plan.validateAcceptance();
+        return;
+      }
+      if (exitedWith != null) {
+        throw AtlasFullBackupException(
+          'Recovery worker exited with code $exitedWith before accepting the plan.',
+        );
+      }
+      await _delay(const Duration(milliseconds: 50));
+    }
+    throw const AtlasFullBackupException(
+      'Recovery worker did not acknowledge the plan before timeout.',
+    );
   }
 
   Future<void> _replaceManagedAtlasFiles(
@@ -147,28 +183,86 @@ class AtlasLiveRecoveryService {
       File('${liveDatabase.path}-shm'),
     ];
     for (final replacement in replacements) {
-      await replacement.moveCurrentTo(rollback);
+      await replacement.captureOriginalState();
     }
-    // A recovered database must never see the WAL/SHM pair from the replaced
-    // instance. Keep them for rollback rather than deleting them.
-    for (final sidecar in sqliteSidecars) {
-      if (await sidecar.exists()) {
-        await sidecar.rename(p.join(rollback.path, p.basename(sidecar.path)));
-      }
-    }
+    final sidecarExistedBefore = <String, bool>{
+      for (final sidecar in sqliteSidecars)
+        sidecar.path: await sidecar.exists(),
+    };
     try {
+      await _replacementStepHook?.call('begin-replacement');
       for (final replacement in replacements) {
-        await replacement.copyIntoPlace();
+        await replacement.moveCurrentTo(rollback);
+        await _replacementStepHook?.call('move:${replacement.name}');
       }
-    } catch (_) {
-      for (final replacement in replacements.reversed) {
-        await replacement.restoreFrom(rollback);
-      }
+      // A recovered database must never see the WAL/SHM pair from the replaced
+      // instance. Keep them for rollback rather than deleting them.
       for (final sidecar in sqliteSidecars) {
-        final saved = File(p.join(rollback.path, p.basename(sidecar.path)));
-        if (await saved.exists()) await saved.rename(sidecar.path);
+        if (await sidecar.exists()) {
+          await sidecar.rename(p.join(rollback.path, p.basename(sidecar.path)));
+          await _replacementStepHook?.call('move:${p.basename(sidecar.path)}');
+        }
       }
-      rethrow;
+      for (final replacement in replacements) {
+        await replacement.copyIntoPlace(_replacementStepHook);
+        await _replacementStepHook?.call('copy:${replacement.name}');
+      }
+      // The staged bundle has already passed SQLite and manifest validation.
+      // Byte-for-byte verification here proves that the final live targets are
+      // the same validated database and exact managed-file inventory.
+      for (final replacement in replacements) {
+        await replacement.verifyCopy();
+        await _replacementStepHook?.call('verify:${replacement.name}');
+      }
+    } catch (error, stackTrace) {
+      final rollbackErrors = <Object>[];
+      for (final replacement in replacements.reversed) {
+        try {
+          await replacement.restoreFrom(rollback);
+        } catch (rollbackError) {
+          rollbackErrors.add(rollbackError);
+        }
+      }
+      for (final sidecar in sqliteSidecars.reversed) {
+        try {
+          await _restoreSidecar(
+            sidecar,
+            rollback,
+            existedBefore: sidecarExistedBefore[sidecar.path]!,
+          );
+        } catch (rollbackError) {
+          rollbackErrors.add(rollbackError);
+        }
+      }
+      if (rollbackErrors.isNotEmpty) {
+        throw AtlasFullBackupException(
+          'Live recovery failed ($error) and rollback was incomplete: '
+          '${rollbackErrors.join('; ')}',
+        );
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  Future<void> _restoreSidecar(
+    File sidecar,
+    Directory rollback, {
+    required bool existedBefore,
+  }) async {
+    final saved = File(p.join(rollback.path, p.basename(sidecar.path)));
+    if (await saved.exists()) {
+      if (await sidecar.exists()) await sidecar.delete();
+      await saved.rename(sidecar.path);
+      return;
+    }
+    if (!existedBefore) {
+      if (await sidecar.exists()) await sidecar.delete();
+      return;
+    }
+    if (!await sidecar.exists()) {
+      throw AtlasFullBackupException(
+        'Rollback could not restore SQLite sidecar ${sidecar.path}.',
+      );
     }
   }
 }
@@ -202,6 +296,8 @@ class AtlasLiveRecoveryPlan {
     required this.databaseInventory,
   });
 
+  File get acceptanceFile => File('${planFile.path}.accepted.json');
+
   Map<String, Object?> toJson() => {
     'schema': AtlasLiveRecoveryService.planSchema,
     'sourceBundle': sourceBundle.path,
@@ -215,6 +311,30 @@ class AtlasLiveRecoveryPlan {
     const JsonEncoder.withIndent('  ').convert(toJson()),
     flush: true,
   );
+
+  Future<void> writeAcceptance() async {
+    final temporary = File('${acceptanceFile.path}.tmp-$pid');
+    await temporary.writeAsString(
+      const JsonEncoder.withIndent('  ').convert({
+        'schema': 'project_atlas_live_recovery_acceptance_v1',
+        'planFile': planFile.path,
+        'acceptedAt': DateTime.now().toUtc().toIso8601String(),
+      }),
+      flush: true,
+    );
+    await temporary.rename(acceptanceFile.path);
+  }
+
+  Future<void> validateAcceptance() async {
+    final decoded = jsonDecode(await acceptanceFile.readAsString());
+    if (decoded is! Map ||
+        decoded['schema'] != 'project_atlas_live_recovery_acceptance_v1' ||
+        decoded['planFile'] != planFile.path) {
+      throw const AtlasFullBackupException(
+        'Recovery worker wrote an invalid plan acknowledgement.',
+      );
+    }
+  }
 
   static Future<AtlasLiveRecoveryPlan> read(File file) async {
     final decoded = jsonDecode(await file.readAsString());
@@ -244,14 +364,19 @@ class AtlasLiveRecoveryPlan {
 class _ReplacementTarget {
   final FileSystemEntity source;
   final FileSystemEntity target;
+  bool? _targetExistedBefore;
 
-  const _ReplacementTarget({required this.source, required this.target});
+  _ReplacementTarget({required this.source, required this.target});
 
-  String get _name => p.basename(target.path);
+  String get name => p.basename(target.path);
+
+  Future<void> captureOriginalState() async {
+    _targetExistedBefore = await target.exists();
+  }
 
   Future<void> moveCurrentTo(Directory rollback) async {
     if (!await target.exists()) return;
-    final destination = p.join(rollback.path, _name);
+    final destination = p.join(rollback.path, name);
     if (target is File) {
       await (target as File).rename(destination);
     } else {
@@ -259,11 +384,14 @@ class _ReplacementTarget {
     }
   }
 
-  Future<void> copyIntoPlace() async {
+  Future<void> copyIntoPlace(
+    Future<void> Function(String step)? stepHook,
+  ) async {
     if (source is File) {
       final output = target as File;
       await output.parent.create(recursive: true);
       await (source as File).copy(output.path);
+      await stepHook?.call('copy-file:$name');
       return;
     }
     final sourceDirectory = source as Directory;
@@ -278,20 +406,105 @@ class _ReplacementTarget {
       final destination = File(p.join(output.path, relative));
       await destination.parent.create(recursive: true);
       await entity.copy(destination.path);
+      await stepHook?.call('copy-file:$name:$relative');
+    }
+  }
+
+  Future<void> verifyCopy() async {
+    final sourceType = await FileSystemEntity.type(source.path);
+    final targetType = await FileSystemEntity.type(target.path);
+    if (sourceType != targetType) {
+      throw AtlasFullBackupException(
+        'Live recovery target type differs from staging for $name.',
+      );
+    }
+    if (sourceType == FileSystemEntityType.notFound) return;
+    if (sourceType == FileSystemEntityType.file) {
+      await _verifyFile(source as File, target as File, name);
+      return;
+    }
+    if (sourceType != FileSystemEntityType.directory) {
+      throw AtlasFullBackupException(
+        'Unsupported staged recovery entity for $name.',
+      );
+    }
+    final sourceFiles = await _directoryFiles(source as Directory);
+    final targetFiles = await _directoryFiles(target as Directory);
+    if (sourceFiles.keys.join('\n') != targetFiles.keys.join('\n')) {
+      throw AtlasFullBackupException(
+        'Live recovery inventory differs from staging for $name.',
+      );
+    }
+    for (final relative in sourceFiles.keys) {
+      await _verifyFile(
+        sourceFiles[relative]!,
+        targetFiles[relative]!,
+        '$name/$relative',
+      );
     }
   }
 
   Future<void> restoreFrom(Directory rollback) async {
-    final saved = FileSystemEntity.typeSync(p.join(rollback.path, _name));
-    if (saved == FileSystemEntityType.notFound) return;
+    final existedBefore = _targetExistedBefore;
+    if (existedBefore == null) {
+      throw StateError('Replacement state was not captured for $name.');
+    }
+    final savedPath = p.join(rollback.path, name);
+    final saved = await FileSystemEntity.type(savedPath);
+    if (saved == FileSystemEntityType.notFound) {
+      if (!existedBefore) {
+        await _deleteTargetIfPresent();
+        return;
+      }
+      if (!await target.exists()) {
+        throw AtlasFullBackupException(
+          'Rollback could not restore original target ${target.path}.',
+        );
+      }
+      return;
+    }
+    await _deleteTargetIfPresent();
     if (target is File) {
-      final current = target as File;
-      if (await current.exists()) await current.delete();
-      await File(p.join(rollback.path, _name)).rename(current.path);
+      await File(savedPath).rename(target.path);
     } else {
-      final current = target as Directory;
-      if (await current.exists()) await current.delete(recursive: true);
-      await Directory(p.join(rollback.path, _name)).rename(current.path);
+      await Directory(savedPath).rename(target.path);
     }
   }
+
+  Future<void> _deleteTargetIfPresent() async {
+    final type = await FileSystemEntity.type(target.path);
+    if (type == FileSystemEntityType.file) {
+      await File(target.path).delete();
+    } else if (type == FileSystemEntityType.directory) {
+      await Directory(target.path).delete(recursive: true);
+    }
+  }
+
+  static Future<Map<String, File>> _directoryFiles(Directory root) async {
+    final entries = <String, File>{};
+    if (!await root.exists()) return entries;
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      entries[p.relative(entity.path, from: root.path)] = entity;
+    }
+    return Map.fromEntries(
+      entries.entries.toList()..sort((a, b) => a.key.compareTo(b.key)),
+    );
+  }
+
+  static Future<void> _verifyFile(
+    File source,
+    File target,
+    String label,
+  ) async {
+    if (await source.length() != await target.length() ||
+        await _sha256(source) != await _sha256(target)) {
+      throw AtlasFullBackupException(
+        'Live recovery bytes differ from staging for $label.',
+      );
+    }
+  }
+
+  static Future<String> _sha256(File file) async =>
+      (await sha256.bind(file.openRead()).first).toString();
 }

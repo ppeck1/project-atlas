@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -113,7 +114,263 @@ void main() {
       );
     },
   );
+
+  for (final failedStep in [
+    'move:project_atlas.sqlite',
+    'move:atlas_documents',
+    'move:project_media',
+    'move:project_atlas.sqlite-wal',
+    'move:project_atlas.sqlite-shm',
+    'copy-file:project_atlas.sqlite',
+    'copy-file:atlas_documents:brief.txt',
+    'copy-file:project_media:image.txt',
+  ]) {
+    test(
+      'restores the exact live state after failure at $failedStep',
+      () async {
+        final fixture = await _RecoveryFixture.create();
+        addTearDown(fixture.dispose);
+        var injected = false;
+        final service = fixture.service(
+          stepHook: (step) async {
+            if (!injected && step == failedStep) {
+              injected = true;
+              throw StateError('Injected failure at $step');
+            }
+          },
+        );
+
+        await expectLater(
+          service.applyPlan(fixture.plan.planFile),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(injected, isTrue);
+        await fixture.expectMutatedLiveState();
+        expect(await fixture.plan.planFile.exists(), isTrue);
+        expect(await fixture.completionMarker.exists(), isFalse);
+      },
+    );
+  }
+
+  test(
+    'removes a partial copied target when that target did not exist before',
+    () async {
+      final fixture = await _RecoveryFixture.create();
+      addTearDown(fixture.dispose);
+      await fixture.documents.delete(recursive: true);
+      await fixture.media.delete(recursive: true);
+      var injected = false;
+      final service = fixture.service(
+        stepHook: (step) async {
+          if (!injected && step == 'copy-file:atlas_documents:brief.txt') {
+            injected = true;
+            throw StateError('Injected partial-directory failure');
+          }
+        },
+      );
+
+      await expectLater(
+        service.applyPlan(fixture.plan.planFile),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(injected, isTrue);
+      expect(_readTitle(fixture.live), 'Mutated live Atlas');
+      expect(await fixture.documents.exists(), isFalse);
+      expect(await fixture.media.exists(), isFalse);
+      await fixture.expectSidecarsRestored();
+    },
+  );
+
+  test('live-byte verification failure rolls back before completion', () async {
+    final fixture = await _RecoveryFixture.create();
+    addTearDown(fixture.dispose);
+    var corrupted = false;
+    final service = fixture.service(
+      stepHook: (step) async {
+        if (!corrupted && step == 'copy:project_media') {
+          corrupted = true;
+          await File(
+            p.join(fixture.documents.path, 'brief.txt'),
+          ).writeAsString('corrupted after copy');
+        }
+      },
+    );
+
+    await expectLater(
+      service.applyPlan(fixture.plan.planFile),
+      throwsA(
+        isA<AtlasFullBackupException>().having(
+          (error) => error.message,
+          'message',
+          contains('bytes differ from staging'),
+        ),
+      ),
+    );
+
+    expect(corrupted, isTrue);
+    await fixture.expectMutatedLiveState();
+    expect(await fixture.completionMarker.exists(), isFalse);
+  });
+
+  test('parent observes a valid child plan acknowledgement', () async {
+    final fixture = await _RecoveryFixture.create();
+    addTearDown(fixture.dispose);
+    final service = fixture.service();
+    await fixture.plan.writeAcceptance();
+
+    await service.awaitPlanAcceptance(
+      fixture.plan,
+      workerExitCode: Completer<int>().future,
+    );
+  });
+
+  test('parent rejects worker exit before plan acknowledgement', () async {
+    final fixture = await _RecoveryFixture.create();
+    addTearDown(fixture.dispose);
+    final service = fixture.service();
+
+    await expectLater(
+      service.awaitPlanAcceptance(
+        fixture.plan,
+        workerExitCode: Future<int>.value(7),
+      ),
+      throwsA(
+        isA<AtlasFullBackupException>().having(
+          (error) => error.message,
+          'message',
+          contains('exited with code 7'),
+        ),
+      ),
+    );
+  });
 }
+
+class _RecoveryFixture {
+  final Directory root;
+  final File live;
+  final Directory documents;
+  final Directory media;
+  final AtlasLiveRecoveryPlan plan;
+  List<int>? _walAtReplacement;
+  List<int>? _shmAtReplacement;
+
+  _RecoveryFixture({
+    required this.root,
+    required this.live,
+    required this.documents,
+    required this.media,
+    required this.plan,
+  });
+
+  File get completionMarker =>
+      File(p.join(root.path, 'handoff', 'live_recovery_complete.json'));
+
+  static Future<_RecoveryFixture> create() async {
+    final root = await Directory.systemTemp.createTemp(
+      'atlas_live_recovery_fault_',
+    );
+    final live = File(p.join(root.path, 'live', 'project_atlas.sqlite'));
+    final documents = Directory(p.join(root.path, 'live', 'atlas_documents'));
+    final media = Directory(p.join(root.path, 'live', 'project_media'));
+    await live.parent.create(recursive: true);
+    await documents.create(recursive: true);
+    await media.create(recursive: true);
+    _writeDatabase(live, 'Recovered Atlas');
+    await File(
+      p.join(documents.path, 'brief.txt'),
+    ).writeAsString('recovered document');
+    await File(
+      p.join(media.path, 'image.txt'),
+    ).writeAsString('recovered media');
+
+    final source = await _backupService(
+      root,
+      live,
+      documents,
+      media,
+    ).createBundle(Directory(p.join(root.path, 'source_backups')));
+
+    _writeDatabase(live, 'Mutated live Atlas');
+    await File(
+      p.join(documents.path, 'brief.txt'),
+    ).writeAsString('mutated document');
+    await File(p.join(media.path, 'image.txt')).writeAsString('mutated media');
+    await File('${live.path}-wal').writeAsString('old wal');
+    await File('${live.path}-shm').writeAsString('old shm');
+    final plan = AtlasLiveRecoveryPlan(
+      planFile: File(p.join(root.path, 'handoff', 'plan.json')),
+      sourceBundle: source.bundle,
+      safetyBackupRoot: Directory(p.join(root.path, 'safety_backups')),
+      executablePath: 'test.exe',
+      managedFileCount: 3,
+      databaseInventory: null,
+    );
+    await plan.planFile.parent.create(recursive: true);
+    await plan.write();
+    return _RecoveryFixture(
+      root: root,
+      live: live,
+      documents: documents,
+      media: media,
+      plan: plan,
+    );
+  }
+
+  AtlasLiveRecoveryService service({
+    Future<void> Function(String step)? stepHook,
+  }) => AtlasLiveRecoveryService(
+    backupService: () async => _backupService(root, live, documents, media),
+    paths: () async => AtlasLiveRecoveryPaths(
+      database: live,
+      documents: documents,
+      media: media,
+    ),
+    delay: (_) async {},
+    replacementStepHook: (step) async {
+      if (step == 'begin-replacement') {
+        _walAtReplacement = await File('${live.path}-wal').readAsBytes();
+        _shmAtReplacement = await File('${live.path}-shm').readAsBytes();
+      }
+      await stepHook?.call(step);
+    },
+  );
+
+  Future<void> expectMutatedLiveState() async {
+    await expectSidecarsRestored();
+    expect(_readTitle(live), 'Mutated live Atlas');
+    expect(
+      await File(p.join(documents.path, 'brief.txt')).readAsString(),
+      'mutated document',
+    );
+    expect(
+      await File(p.join(media.path, 'image.txt')).readAsString(),
+      'mutated media',
+    );
+  }
+
+  Future<void> expectSidecarsRestored() async {
+    expect(_walAtReplacement, isNotNull);
+    expect(_shmAtReplacement, isNotNull);
+    expect(await File('${live.path}-wal').readAsBytes(), _walAtReplacement);
+    expect(await File('${live.path}-shm').readAsBytes(), _shmAtReplacement);
+  }
+
+  Future<void> dispose() => root.delete(recursive: true);
+}
+
+AtlasFullBackupService _backupService(
+  Directory root,
+  File live,
+  Directory documents,
+  Directory media,
+) => AtlasFullBackupService(
+  sourceDatabase: live,
+  appOwnedRoots: {'atlas_documents': documents, 'project_media': media},
+  clock: () => DateTime.utc(2026, 7, 21, 9),
+  random: Random(31),
+);
 
 void _writeDatabase(File file, String title) {
   final database = sqlite3.open(file.path);

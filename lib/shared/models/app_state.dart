@@ -8194,13 +8194,19 @@ class AppState extends ChangeNotifier {
     ),
   );
 
-  /// Starts a fresh recovery process; the current app must immediately exit
-  /// afterwards so SQLite handles are released before replacement begins.
+  /// Starts a fresh recovery process and waits until it validates and accepts
+  /// the handoff. The current app must exit immediately after this returns so
+  /// SQLite handles are released before replacement begins.
   Future<void> launchConfirmedLiveRecovery(AtlasLiveRecoveryPlan plan) async {
-    await Process.start(Platform.resolvedExecutable, [
+    final recovery = AtlasLiveRecoveryService();
+    if (await plan.acceptanceFile.exists()) {
+      await plan.acceptanceFile.delete();
+    }
+    final worker = await Process.start(Platform.resolvedExecutable, [
       '--apply-live-recovery',
       plan.planFile.path,
     ]);
+    await recovery.awaitPlanAcceptance(plan, workerExitCode: worker.exitCode);
   }
 
   /// Writes a portable archive for inspection and selective transfer. It does
