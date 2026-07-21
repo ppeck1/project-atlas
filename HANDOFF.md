@@ -4,7 +4,7 @@ This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
 contact data, machine-specific paths, and unrelated project references.
 
-Last updated: 2026-07-20.
+Last updated: 2026-07-21.
 
 ## Current public state
 
@@ -130,7 +130,9 @@ For public changes, also verify:
 ## Known limitations
 
 - Windows is the supported desktop target.
-- The local SQLite database and saved integration secrets are plaintext.
+- The local SQLite database remains plaintext. Telegram bot tokens are stored
+  separately with Windows DPAPI protection; other project data and SQLite
+  metadata are not encrypted at rest.
 - The capture database override is a build-time definition, not a runtime
   profile switch.
 - Historical Git objects are not rewritten by normal public-tree cleanup.
@@ -142,10 +144,10 @@ For public changes, also verify:
 - The Today screen's midnight rollover uses a wall-clock `Timer`; wall-clock
   timers do not reliably survive OS sleep/resume, so the date header may lag
   until the next rebuild after a resume.
-- Some `AppState.notifyListeners()` calls remain load-bearing for data with
-  no Drift watcher (project people/risks/decisions) and for `projects`-table
-  writes (`watchActiveProject` watches only `app_meta`). Do not remove those
-  notifies until stream coverage exists for the consumers. Tag data and the
+- Some `AppState.notifyListeners()` calls remain load-bearing for
+  `projects`-table writes (`watchActiveProject` watches only `app_meta`).
+  Project Detail people, risks, and decisions now use Drift watchers; audit
+  other consumers before removing their mutation notifications. Tag data and the
   LLM task queue are fully stream-backed; both are hand-managed (raw DDL)
   tables whose mutations signal drift via explicit `notifyUpdates`, watched
   through a controller-based helper (an `async*` generator parked in
