@@ -165,6 +165,9 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
   bool _didLoad = false;
 
   Stream<Project?>? _watchProject;
+  StreamSubscription<List<ProjectPerson>>? _peopleSubscription;
+  StreamSubscription<List<ProjectRisk>>? _risksSubscription;
+  StreamSubscription<List<ProjectDecision>>? _decisionsSubscription;
   // Cached stream: the LLM queue is a hand-managed table whose watcher
   // re-runs on notifyUpdates('llm_task_queue'), so queue mutations render
   // here without notifyListeners or a _loadAll round-trip.
@@ -176,6 +179,7 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     final state = AppStateScope.of(context);
     _watchProject ??= state.watchProject(widget.projectId);
     _llmQueue ??= state.watchLlmTasksForProject(widget.projectId, limit: 50);
+    if (_peopleSubscription == null) _bindProjectDetailWatchers(state);
     if (!_didLoad) {
       _didLoad = true;
       _loadAll();
@@ -189,8 +193,56 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
       final state = AppStateScope.read(context);
       _watchProject = state.watchProject(widget.projectId);
       _llmQueue = state.watchLlmTasksForProject(widget.projectId, limit: 50);
+      _bindProjectDetailWatchers(state);
       _loadAll();
     }
+  }
+
+  void _bindProjectDetailWatchers(AppState state) {
+    _peopleSubscription?.cancel();
+    _risksSubscription?.cancel();
+    _decisionsSubscription?.cancel();
+    _peopleSubscription = state
+        .watchProjectPeople(widget.projectId)
+        .listen(
+          (people) {
+            if (mounted) setState(() => _people = people);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            debugPrint('[Atlas] project people watcher failed: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          },
+        );
+    _risksSubscription = state
+        .watchProjectRisks(widget.projectId)
+        .listen(
+          (risks) {
+            if (mounted) setState(() => _risks = risks);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            debugPrint('[Atlas] project risks watcher failed: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          },
+        );
+    _decisionsSubscription = state
+        .watchProjectDecisions(widget.projectId)
+        .listen(
+          (decisions) {
+            if (mounted) setState(() => _decisions = decisions);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            debugPrint('[Atlas] project decisions watcher failed: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          },
+        );
+  }
+
+  @override
+  void dispose() {
+    _peopleSubscription?.cancel();
+    _risksSubscription?.cancel();
+    _decisionsSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadAll() async {
@@ -201,23 +253,6 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     final items = await state.getWorkItemsForProject(widget.projectId);
     // LLM queue rows are no longer loaded here: the header panel reads them
     // from the cached _llmQueue stream.
-    final people = await state.getProjectPeople(widget.projectId);
-    List<ProjectRisk> risks = _risks;
-    try {
-      risks = await state.getProjectRisks(widget.projectId);
-    } catch (e) {
-      debugPrint(
-        '[Atlas] _loadProjectDetail: getProjectRisks failed (continuing with cached): $e',
-      );
-    }
-    List<ProjectDecision> decisions = _decisions;
-    try {
-      decisions = await state.getProjectDecisions(widget.projectId);
-    } catch (e) {
-      debugPrint(
-        '[Atlas] _loadProjectDetail: getProjectDecisions failed (continuing with cached): $e',
-      );
-    }
     final summarySettings = await state.loadProjectAiSummarySettings();
     final sectionVisibility = await state.loadProjectDetailSectionVisibility(
       widget.projectId,
@@ -240,9 +275,6 @@ class _ProjectDetailScreenState extends State<ProjectDetailScreen> {
     if (!mounted) return;
     setState(() {
       _workItems = items;
-      _people = people;
-      _risks = risks;
-      _decisions = decisions;
       _includeLibrary = summarySettings.includeLibrary;
       _visibleSectionIds = sectionVisibility.visibleSectionIds;
       _summaryEvidenceLoading = summarySettings.enabled;

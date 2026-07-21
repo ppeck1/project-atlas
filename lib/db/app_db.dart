@@ -885,14 +885,20 @@ class AppDb extends _$AppDb {
           try {
             await m.addColumn(projects, col);
           } catch (e) {
-            _logToleratedSchemaError('migration v5 addColumn projects.${col.name}', e);
+            _logToleratedSchemaError(
+              'migration v5 addColumn projects.${col.name}',
+              e,
+            );
           }
         }
         for (final col in [stages.bottleneckOwner, stages.isBottleneck]) {
           try {
             await m.addColumn(stages, col);
           } catch (e) {
-            _logToleratedSchemaError('migration v5 addColumn stages.${col.name}', e);
+            _logToleratedSchemaError(
+              'migration v5 addColumn stages.${col.name}',
+              e,
+            );
           }
         }
       }
@@ -908,7 +914,10 @@ class AppDb extends _$AppDb {
           try {
             await m.addColumn(projects, col);
           } catch (e) {
-            _logToleratedSchemaError('migration v6 addColumn projects.${col.name}', e);
+            _logToleratedSchemaError(
+              'migration v6 addColumn projects.${col.name}',
+              e,
+            );
           }
         }
       }
@@ -967,7 +976,10 @@ class AppDb extends _$AppDb {
         try {
           await m.createTable(localProjectRefreshItems);
         } catch (e) {
-          _logToleratedSchemaError('migration v12 createTable localProjectRefreshItems', e);
+          _logToleratedSchemaError(
+            'migration v12 createTable localProjectRefreshItems',
+            e,
+          );
         }
       }
       // Intentional gap: there are no `from < 13` … `from < 17` steps.
@@ -979,7 +991,10 @@ class AppDb extends _$AppDb {
         try {
           await m.addColumn(projects, projects.category);
         } catch (e) {
-          _logToleratedSchemaError('migration v18 addColumn projects.category', e);
+          _logToleratedSchemaError(
+            'migration v18 addColumn projects.category',
+            e,
+          );
         }
         try {
           await m.createTable(mediaLinks);
@@ -1013,7 +1028,10 @@ class AppDb extends _$AppDb {
           try {
             await m.addColumn(workItems, col);
           } catch (e) {
-            _logToleratedSchemaError('migration v20 addColumn work_items.${col.name}', e);
+            _logToleratedSchemaError(
+              'migration v20 addColumn work_items.${col.name}',
+              e,
+            );
           }
         }
       }
@@ -1219,7 +1237,10 @@ class AppDb extends _$AppDb {
       try {
         await customStatement(stmt);
       } catch (e) {
-        _logToleratedSchemaError('_ensureProjectRegistrySourceColumns: addColumn', e);
+        _logToleratedSchemaError(
+          '_ensureProjectRegistrySourceColumns: addColumn',
+          e,
+        );
       }
     }
 
@@ -1325,7 +1346,10 @@ class AppDb extends _$AppDb {
         await customStatement(stmt);
       } catch (e) {
         // Expected when column already exists — ignore.
-        _logToleratedSchemaError('_ensureProjectCompatibilityColumns: addColumn', e);
+        _logToleratedSchemaError(
+          '_ensureProjectCompatibilityColumns: addColumn',
+          e,
+        );
       }
     }
 
@@ -1403,7 +1427,10 @@ class AppDb extends _$AppDb {
       try {
         await customStatement(stmt);
       } catch (e) {
-        _logToleratedSchemaError('_ensureProjectCompatibilityColumns: createTable', e);
+        _logToleratedSchemaError(
+          '_ensureProjectCompatibilityColumns: createTable',
+          e,
+        );
       }
     }
 
@@ -1412,7 +1439,10 @@ class AppDb extends _$AppDb {
         'ALTER TABLE project_media ADD COLUMN is_cover INTEGER NOT NULL DEFAULT 0',
       );
     } catch (e) {
-      _logToleratedSchemaError('_ensureProjectCompatibilityColumns: addColumn project_media.is_cover', e);
+      _logToleratedSchemaError(
+        '_ensureProjectCompatibilityColumns: addColumn project_media.is_cover',
+        e,
+      );
     }
 
     // If project_people came from an alternate schema branch (role_type / authority_level),
@@ -1468,7 +1498,9 @@ class AppDb extends _$AppDb {
       }
     } catch (e) {
       // If table doesn't exist yet or pragma fails, regular migrations handle creation.
-      debugPrint('[Atlas] _ensureProjectCompatibilityColumns: project_people schema rebuild failed (continuing): $e');
+      debugPrint(
+        '[Atlas] _ensureProjectCompatibilityColumns: project_people schema rebuild failed (continuing): $e',
+      );
     }
     // Backfill any rows where non-nullable columns ended up NULL due to
     // partial migrations or SQLite schema-default edge cases.
@@ -1489,7 +1521,9 @@ class AppDb extends _$AppDb {
       try {
         await customStatement(stmt);
       } catch (e) {
-        debugPrint('[Atlas] _ensureProjectCompatibilityColumns: backfill UPDATE failed (continuing): $e');
+        debugPrint(
+          '[Atlas] _ensureProjectCompatibilityColumns: backfill UPDATE failed (continuing): $e',
+        );
       }
     }
   }
@@ -2258,9 +2292,11 @@ class AppDb extends _$AppDb {
   Future<Map<String, String?>> getDocumentPathsForProject(
     String projectId,
   ) async {
-    final docs = await (select(documents)..where(
-          (t) => t.projectId.equals(projectId) & t.deletedAt.isNull(),
-        )).get();
+    final docs =
+        await (select(documents)..where(
+              (t) => t.projectId.equals(projectId) & t.deletedAt.isNull(),
+            ))
+            .get();
     return {for (final d in docs) d.id: d.storedPath};
   }
 
@@ -2353,6 +2389,12 @@ class AppDb extends _$AppDb {
             ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
           .get();
 
+  Stream<List<ProjectPerson>> watchProjectPeople(String projectId) =>
+      (select(projectPeople)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+          .watch();
+
   Future<void> addProjectPerson(
     String projectId,
     String name,
@@ -2396,6 +2438,12 @@ class AppDb extends _$AppDb {
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .get();
 
+  Stream<List<ProjectRisk>> watchProjectRisks(String projectId) =>
+      (select(projectRisks)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
+
   Future<String> addProjectRisk(
     String projectId,
     String title,
@@ -2437,6 +2485,12 @@ class AppDb extends _$AppDb {
             ..where((t) => t.projectId.equals(projectId))
             ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
           .get();
+
+  Stream<List<ProjectDecision>> watchProjectDecisions(String projectId) =>
+      (select(projectDecisions)
+            ..where((t) => t.projectId.equals(projectId))
+            ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          .watch();
 
   Future<String> addProjectDecision(
     String projectId,
@@ -2585,11 +2639,9 @@ class AppDb extends _$AppDb {
   /// Watches every project-tag assignment at once, keyed by project id.
   /// Projects without tags simply have no entry; read with `?? const []`.
   Stream<Map<String, List<Tag>>> watchTagsByProject() {
-    final query =
-        select(
-            tags,
-          ).join([innerJoin(projectTags, projectTags.tagId.equalsExp(tags.id))])
-          ..orderBy([OrderingTerm.asc(tags.name)]);
+    final query = select(tags).join([
+      innerJoin(projectTags, projectTags.tagId.equalsExp(tags.id)),
+    ])..orderBy([OrderingTerm.asc(tags.name)]);
     return query.watch().map((rows) {
       final result = <String, List<Tag>>{};
       for (final row in rows) {
@@ -3020,7 +3072,9 @@ class AppDb extends _$AppDb {
       }
     } catch (e) {
       // Extraction failure must not prevent the DB record from being created.
-      debugPrint('[Atlas] importDocument: text extraction failed (continuing without extracted text): $e');
+      debugPrint(
+        '[Atlas] importDocument: text extraction failed (continuing without extracted text): $e',
+      );
       extractedTextValue = null;
       renderedMarkdownValue = null;
     }
@@ -3056,7 +3110,9 @@ class AppDb extends _$AppDb {
         final copied = File(destPath);
         if (await copied.exists()) await copied.delete();
       } catch (e) {
-        debugPrint('[Atlas] importDocument: cleanup of copied file after insert failure failed: $e');
+        debugPrint(
+          '[Atlas] importDocument: cleanup of copied file after insert failure failed: $e',
+        );
       }
       rethrow;
     }
@@ -3100,9 +3156,9 @@ class AppDb extends _$AppDb {
           .getSingleOrNull();
 
   Future<bool> documentExists(String id) async =>
-      (await (select(documents)..where(
-            (t) => t.id.equals(id) & t.deletedAt.isNull(),
-          )).getSingleOrNull()) !=
+      (await (select(documents)
+            ..where((t) => t.id.equals(id) & t.deletedAt.isNull()))
+          .getSingleOrNull()) !=
       null;
 
   Future<String> importGeneratedDocument({
