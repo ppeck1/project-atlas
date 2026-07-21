@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../shared/models/project_metadata.dart';
 import '../shared/models/project_capsule_truth.dart';
+import '../shared/atlas_owned_file_snapshot_coordinator.dart';
 import 'document_extractor.dart';
 
 import 'db_open.dart';
@@ -3007,6 +3008,24 @@ class AppDb extends _$AppDb {
           .watch();
 
   Future<String> importDocumentFromPath(
+    String path, {
+    String? projectId,
+    String? title,
+    String? displayTitle,
+    String? source,
+    String? metadataJson,
+  }) => AtlasOwnedFileSnapshotCoordinator.instance.runMutation(
+    () => _importDocumentFromPathWithSnapshotCoordination(
+      path,
+      projectId: projectId,
+      title: title,
+      displayTitle: displayTitle,
+      source: source,
+      metadataJson: metadataJson,
+    ),
+  );
+
+  Future<String> _importDocumentFromPathWithSnapshotCoordination(
     String path, {
     String? projectId,
     String? title,
