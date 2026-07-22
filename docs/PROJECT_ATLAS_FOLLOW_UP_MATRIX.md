@@ -108,8 +108,9 @@ and 32 Open findings.
 
 ### WP4 A-06/A-07/A-10 closure — 2026-07-22
 
-PR #41 merged as `393ab6b`. A-06, A-07, and A-10 are closed after focused and
-full post-merge proof passed on exact clean `main`.
+PR #41 merged as `393ab6b`; PR #42 records the canonical closure. A-06, A-07,
+and A-10 are closed after focused and full post-merge proof passed on exact
+clean `main`.
 
 - Canonical accepted-truth routing rejects unknown and supplemental keys;
   mixed truth, supplemental metadata, derived tags, and audits are atomic.
@@ -128,6 +129,9 @@ full post-merge proof passed on exact clean `main`.
 - Windows release build: passed.
 - Hosted PR #41 CI passed, including generation, policy, analysis, full tests,
   Windows release, seeded MCP fixture, and gateway smoke.
+- PR #42 scopes a two-minute test bound to the four intentional
+  two-connection proposal contention proofs whose SQLite busy wait is 30
+  seconds; production behavior and assertions are unchanged.
 - The package-specific attended single-worker constraint is retired only after
   this exact-main proof. A-08 and A-09 remain open, so WP4 remains open.
 

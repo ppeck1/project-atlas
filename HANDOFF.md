@@ -59,6 +59,8 @@ completed integrity sequence is:
 - PR #40 / `f8fed5f`: A-11 evidence-only closure and WP3 completion.
 - PR #41 / `393ab6b`: A-06/A-07/A-10 accepted-truth, supplemental metadata,
   verified-source, and composite manifest/tag integrity plus exact-main proof.
+- PR #42: A-06/A-07/A-10 canonical closure evidence plus scoped Windows CI
+  bounds for the four intentional two-connection proposal contention tests.
 
 Current verification baseline on merged `main`:
 
