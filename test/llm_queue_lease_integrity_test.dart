@@ -70,29 +70,38 @@ void main() {
       }
     });
 
-    test('two SQLite connections produce one claim-next winner', () async {
-      for (var round = 0; round < 10; round++) {
-        final taskId = await _enqueue(dbA, suffix: 'claim-next-$round');
-        final now = DateTime.utc(2026, 7, 21, 12, 30, round);
-        final start = Completer<void>();
+    test(
+      'two SQLite connections produce one claim-next winner',
+      () async {
+        for (var round = 0; round < 10; round++) {
+          final taskId = await _enqueue(dbA, suffix: 'claim-next-$round');
+          final now = DateTime.utc(2026, 7, 21, 12, 30, round);
+          final start = Completer<void>();
 
-        Future<LlmTaskQueueItem?> claimNext(AppDb db, String workerId) async {
-          await start.future;
-          return db.claimLlmTask(leasedBy: workerId, now: now);
+          Future<LlmTaskQueueItem?> claimNext(AppDb db, String workerId) async {
+            await start.future;
+            return db.claimLlmTask(leasedBy: workerId, now: now);
+          }
+
+          final claims = [
+            claimNext(dbA, 'worker-a'),
+            claimNext(dbB, 'worker-b'),
+          ];
+          start.complete();
+          final results = await Future.wait(claims);
+          final winners = results.whereType<LlmTaskQueueItem>().toList();
+
+          expect(winners, hasLength(1), reason: 'claim-next round $round');
+          expect(winners.single.id, taskId);
+          final stored = await dbA.getLlmTask(taskId);
+          expect(stored!.leasedBy, winners.single.leasedBy);
+          expect(stored.attempts, 1);
         }
-
-        final claims = [claimNext(dbA, 'worker-a'), claimNext(dbB, 'worker-b')];
-        start.complete();
-        final results = await Future.wait(claims);
-        final winners = results.whereType<LlmTaskQueueItem>().toList();
-
-        expect(winners, hasLength(1), reason: 'claim-next round $round');
-        expect(winners.single.id, taskId);
-        final stored = await dbA.getLlmTask(taskId);
-        expect(stored!.leasedBy, winners.single.leasedBy);
-        expect(stored.attempts, 1);
-      }
-    });
+      },
+      // Background SQLite contention can exceed Flutter's default 30-second
+      // per-test limit when the complete Windows suite is CPU-saturated.
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
 
     test(
       'blank worker identities are rejected before queue mutation',
