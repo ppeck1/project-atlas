@@ -15,8 +15,8 @@ The database-plus-owned-files consistency boundary is defined in the
 Recovery findings R-01 through R-10 and agent-integrity findings A-01 through
 A-05 are closed. R-11 through R-14 remain open, so WP2 is not fully closed.
 The attended single-worker operating constraint was retired only after
-A-03/A-04 merged and their post-merge proof passed. A-11 remains open, so WP3
-is not fully closed.
+A-03/A-04 merged and their post-merge proof passed. A-11 is in progress, so
+WP3 is not fully closed.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
@@ -26,12 +26,12 @@ Last updated: 2026-07-22.
 
 ## Audit resume checkpoint
 
-Start from current `main` at `9d0e792` (`Harden bundle validation and recovery
-(#37)`). The working tree was clean and synchronized with
+Start from current `main` at `008ed8d` (`Close bundle integrity findings after
+proof (#38)`). The working tree was clean and synchronized with
 `origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 15 Closed and 36 Open. The
-completed integrity sequence is:
+The canonical matrix contains 51 findings: 15 Closed, 1 In progress, and 35
+Open. The completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
   rollback, final verification, child acknowledgement, and handoff security.
@@ -51,6 +51,8 @@ completed integrity sequence is:
 - PR #37 / `9d0e792`: R-07 through R-10 exact full-backup inventory, bounded
   two-pass ZIP recovery, project-manifest v2 integrity, and Windows-safe
   staging validation.
+- PR #38 / `008ed8d`: R-07 through R-10 post-merge proof and canonical
+  closure evidence.
 
 Current verification baseline on merged `main`:
 
@@ -64,8 +66,9 @@ Current verification baseline on merged `main`:
 
 ### Closed bundle-integrity package
 
-R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
-post-merge proof passed. The implementation provides two explicit
+R-07 through R-10 closed after PR #37 merged as `9d0e792`, exact-main
+post-merge proof passed, and PR #38 merged as `008ed8d`. The implementation
+provides two explicit
 subcontracts: exact full-backup v1 directory inventory, and bounded,
 checksummed, Windows-safe project-bundle v2 recovery. Historical valid
 full-backup v1 bundles remain supported. Project manifest v1 cannot provide
@@ -78,7 +81,7 @@ R-11 through R-14 remain open, so WP2 is not closed. The recommended next
 package is A-11 to finish WP3's queue schema constraints, followed by
 A-06/A-07/A-10.
 
-Post-merge proof on exact `main` at `9d0e792`:
+Post-merge proof on exact implementation `main` at `9d0e792`:
 
 - focused full-backup and hostile project-recovery suite: 28/28;
 - production project-export suite, including export-to-staging recovery: 5/5;
@@ -115,8 +118,29 @@ Primary inspection points:
 Atomic claims, worker-plus-attempt terminal CAS, typed conflicts, and
 transactional deterministic handoff drafts are implemented end to end through
 AppState and trusted-local MCP. A-01, A-02, and A-05 closed after PR #33 merged
-and post-merge proof passed on `8a90d6e`. A-11 remains open, so WP3 is not
+and post-merge proof passed on `8a90d6e`. A-11 is in progress, so WP3 is not
 fully closed.
+
+### Active queue-schema integrity package
+
+A-11 is active on `fix/queue-schema-integrity`. Schema v26 rebuilds the raw
+LLM queue with foreign keys, exact enum/scalar/JSON/state/chronology checks,
+and database triggers that preserve project/work-item ownership across raw
+writes and reparenting. Invalid v25 rows fail closed without advancing the
+schema or replacing the original queue table.
+
+The boundary is specified in the
+[`queue schema integrity contract`](docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md).
+A-11 remains In progress until merge and exact-main post-merge proof. A-06,
+A-07, and A-10 remain the recommended next accepted-truth package.
+
+Current focused proof:
+
+- queue schema, lease, and stream suite: 26/26;
+- schema and migration regression suite: 77 passed with 1 intentional skip;
+- independent final hostile and legacy-migration review: GO, 15/15; and
+- full Flutter suite: 521 passed with 1 intentional skip; and
+- full static analysis: clean.
 
 ## Current public state
 
@@ -128,11 +152,12 @@ fully closed.
 - Public authorship: Paul Peck / `ppeck1`
 - README images: captures of the real Windows application using an isolated
   public-safe demo database
-- Current database line: schema `25`. Version 23 added
+- Current database line: schema `26`. Version 23 added
   `documents.deleted_at` soft delete with undo and deferred purge; version 24
   adds the immutable accepted Project Capsule revision ledger and baseline
   migration; version 25 enforces update/delete immutability guards on that
-  ledger. Project Sources retains reconciliation preview, local/remote source
+  ledger; version 26 adds foreign-key, enum, and state constraints for the LLM
+  task queue. Project Sources retains reconciliation preview, local/remote source
   roles, and Atlas-only source bookkeeping updates.
 - Capsule Resume is the fourth primary navigation surface. It derives Act,
   Understand, and Audit views from one versioned project snapshot; Operations

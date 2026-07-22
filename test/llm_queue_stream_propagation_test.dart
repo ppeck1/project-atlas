@@ -11,8 +11,10 @@ import 'package:project_atlas/db/app_db.dart';
 void main() {
   late AppDb db;
 
-  setUp(() {
+  setUp(() async {
     db = AppDb.withExecutor(NativeDatabase.memory());
+    await db.createProject('proj_a', 'Project A', DateTime(2026, 1, 1));
+    await db.createProject('proj_b', 'Project B', DateTime(2026, 1, 1));
   });
 
   tearDown(() async {
@@ -36,6 +38,7 @@ void main() {
       title: 'Stream check',
       objective: 'Prove the watcher re-runs on queue mutations.',
       contextJson: '{}',
+      createdAt: DateTime.utc(2026, 7, 21),
     );
     await pumpEventQueue();
     expect(emissions.last.map((task) => task.id), [id]);
@@ -90,6 +93,7 @@ void main() {
         title: 'Complete me',
         objective: 'Completion must reach the completed-status watcher.',
         contextJson: '{}',
+        createdAt: DateTime.utc(2026, 7, 21),
       );
       final claimedAt = DateTime.utc(2026, 7, 21, 13);
       final claimed = await db.claimLlmTask(
@@ -126,6 +130,7 @@ void main() {
       title: 'Keep lease',
       objective: 'A rejected terminal transition must not notify watchers.',
       contextJson: '{}',
+      createdAt: DateTime.utc(2026, 7, 21),
     );
     final claimedAt = DateTime.utc(2026, 7, 21, 14);
     final claimed = await db.claimLlmTask(

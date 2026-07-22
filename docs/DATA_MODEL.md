@@ -1,6 +1,6 @@
 # Data model
 
-Project Atlas uses SQLite through Drift. The current schema version is `24`.
+Project Atlas uses SQLite through Drift. The current schema version is `26`.
 
 ## Core records
 
@@ -57,6 +57,11 @@ The v24-to-v25 migration installs SQLite triggers that reject ordinary
 `UPDATE` and `DELETE` operations on accepted revisions. Ledger reads strictly
 validate hashes, parent links, contiguous revision numbers, and recorded
 parent-to-child diffs before exposing history.
+
+The v25-to-v26 migration rebuilds the hand-managed LLM task queue with
+foreign-key, enum, scalar, lease-state, and project/work-item ownership
+constraints. Invalid legacy rows fail migration without replacing the v25
+table or advancing its schema version.
 
 The database is local and currently plaintext. The Settings portable export is
 not a complete backup and cannot restore an Atlas instance; full backup and

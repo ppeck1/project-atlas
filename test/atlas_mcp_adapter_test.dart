@@ -499,9 +499,10 @@ void main() {
         final expired = await db.claimLlmTask(
           taskId: expiredId,
           leasedBy: 'worker-a',
-          now: DateTime.now().subtract(const Duration(minutes: 2)),
-          leaseDuration: const Duration(minutes: 1),
+          now: DateTime.now(),
+          leaseDuration: const Duration(milliseconds: 1),
         );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
         final expiredResult = await adapter.callTool('complete_llm_task', {
           'taskId': expiredId,
           'workerId': 'worker-a',

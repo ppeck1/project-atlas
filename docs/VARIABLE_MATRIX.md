@@ -64,7 +64,7 @@ server, and exactly one token-validation mechanism: JWKS or introspection.
 
 `tools/seed_portfolio_capture.py` takes an explicit `--db` argument instead of
 an environment variable. It refuses paths that do not contain
-`portfolio-capture`, requires an Atlas-initialized current schema (schema 25 at
+`portfolio-capture`, requires an Atlas-initialized current schema (schema 26 at
 this review), and refuses to seed a database that already contains projects,
 work items, or documents. The fixture also seeds public-safe Project Sources
 rows for Operations screenshots. Treat the schema number as a verification

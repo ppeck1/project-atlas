@@ -43,7 +43,7 @@ void main() {
 
       final migrated = AppDb.withExecutor(NativeDatabase(File(path)));
       try {
-        expect(migrated.schemaVersion, 25);
+        expect(migrated.schemaVersion, 26);
         final project = await migrated.getProjectFull('atlas');
         final truth = await ProjectCapsuleTruthService(migrated).load('atlas');
         final revisions = await ProjectCapsuleTruthService(
@@ -77,7 +77,7 @@ void main() {
 
       final after = sqlite3.sqlite3.open(path);
       try {
-        expect(after.userVersion, 25);
+        expect(after.userVersion, 26);
         expect(
           after
               .select(
