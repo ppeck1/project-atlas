@@ -37,6 +37,11 @@ reproduction or design disposition before implementation.
 | 10 | WP10 — usefulness measurement | U-06 | A local benchmark records resume and delegation outcomes without outbound telemetry. |
 | 11 | WP11 — CI and maintainability | D-04–D-06 | Reproducibility gates and bounded extract-as-you-touch cleanup are delivered. |
 
+Current active slice: WP3 findings A-01, A-02, and A-05 are in progress on
+`fix/llm-queue-lease-integrity`. A-11 remains open, so this slice does not close
+WP3. The attended single-worker constraint remains in force through post-merge
+proof for A-01 through A-05.
+
 ## Finding ledger
 
 | ID | Pri | Disposition | Status | Package | Finding | Owner | Target PR | Required proof / closure evidence |
@@ -55,11 +60,11 @@ reproduction or design disposition before implementation.
 | SPA-20260721-R-12 | P2 | Needs verification | Open | WP2 | Recovery artifacts have no retention policy. | Unassigned | TBD | Local previewed retention preserves newest safety backup and active plan. |
 | SPA-20260721-R-13 | P2 | Needs verification | Open | WP2 | Portable export builds the full archive in memory. | Unassigned | TBD | Streaming/isolate export with progress, cancellation, and bounds. |
 | SPA-20260721-R-14 | P2 | Needs verification | Open | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Unassigned | TBD | Async/isolate extraction with source and expanded-size limits. |
-| SPA-20260721-A-01 | P0 | Accepted | Open | WP3 | LLM claim is a select-then-unconditional-update race. | Unassigned | TBD | Two simultaneous connections produce exactly one winner. |
-| SPA-20260721-A-02 | P0 | Accepted | Open | WP3 | Complete/fail does not enforce lease owner or expiry. | Unassigned | TBD | Wrong and expired workers receive typed lease conflicts. |
+| SPA-20260721-A-01 | P0 | Accepted | In progress | WP3 | LLM claim is a select-then-unconditional-update race. | Codex | `fix/llm-queue-lease-integrity` | Two simultaneous connections produce exactly one winner. |
+| SPA-20260721-A-02 | P0 | Accepted | In progress | WP3 | Complete/fail does not enforce lease owner or expiry. | Codex | `fix/llm-queue-lease-integrity` | Wrong, expired, and stale-attempt workers receive typed lease conflicts. |
 | SPA-20260721-A-03 | P0 | Accepted | Open | WP4 | Proposal side effect and review approval are not atomic/idempotent. | Unassigned | TBD | Crash after side effect plus retry applies exactly once. |
 | SPA-20260721-A-04 | P0 | Needs verification | Open | WP4 | Task proposals lack a base revision/hash. | Unassigned | TBD | CAS rejects stale task and tag-set proposals. |
-| SPA-20260721-A-05 | P0 | Accepted | Open | WP3 | Completion can create an orphan/duplicate handoff draft. | Unassigned | TBD | Deterministic task-attempt key makes completion retry-idempotent. |
+| SPA-20260721-A-05 | P0 | Accepted | In progress | WP3 | Completion can create an orphan/duplicate handoff draft. | Codex | `fix/llm-queue-lease-integrity` | One completion/draft transaction plus an enforced unique, stable task-attempt key makes retries idempotent without orphans or duplicates. |
 | SPA-20260721-A-06 | P1 | Needs verification | Open | WP4 | Accepted-truth service may mutate non-truth fields. | Unassigned | TBD | Unknown truth keys fail closed or move to a separate contract. |
 | SPA-20260721-A-07 | P1 | Needs verification | Open | WP4 | Source revision lookup bypasses complete ledger verification. | Unassigned | TBD | Source matches are resolved only from a verified chain. |
 | SPA-20260721-A-08 | P2 | Needs verification | Open | WP4 | Repeated history reads verify the entire chain. | Unassigned | TBD | Write/checkpoint verification plus paged audit behavior and performance proof. |
@@ -94,6 +99,27 @@ reproduction or design disposition before implementation.
 | SPA-20260721-D-06 | P3 | Needs verification | Open | WP11 | Public metadata, captures, reported version, and database opener have stale residue. | Unassigned | TBD | Metadata/version/capture manifest and truthful database opener naming. |
 
 ## Progress evidence
+
+### WP3 A-01/A-02/A-05 local slice — 2026-07-21
+
+The queue-integrity implementation is locally verified on
+`fix/llm-queue-lease-integrity`. These rows remain In progress until merge and
+post-merge proof on current `main`.
+
+- Focused queue, service, MCP, and stream suite: 52 tests passed.
+- Two independent SQLite connections prove exactly one winner for both a
+  specific-task claim and claim-next selection.
+- Worker ID, lease attempt, status, and strict lease expiry are enforced in the
+  terminal CAS; wrong-owner, expired, stale-attempt, invalid-state, and
+  idempotency conflicts are typed.
+- Completion and deterministic handoff-draft insertion share one transaction;
+  post-insert fault injection rolls both back, concurrent/retried completion
+  creates one draft, and replay survives mutable project-title changes.
+- Full Flutter suite: 477 tests passed with 1 intentional skip.
+- Static analysis: clean.
+- Python policy/maintenance suite: 30 tests passed.
+- Windows release build: passed.
+- Hosted CI and post-merge proof: pending.
 
 ### WP2 R-06 local slice — 2026-07-21
 

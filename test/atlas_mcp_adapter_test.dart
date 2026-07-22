@@ -56,6 +56,12 @@ void main() {
       expect(names, isNot(contains('refresh_project_summaries')));
       expect(names, isNot(contains('delete_project')));
       expect(names, isNot(contains('push_to_github')));
+
+      final tools = {for (final tool in adapter.listTools()) tool.name: tool};
+      for (final name in ['complete_llm_task', 'fail_llm_task']) {
+        final required = tools[name]!.inputSchema['required'] as List;
+        expect(required, containsAll(['taskId', 'workerId', 'leaseAttempt']));
+      }
     });
 
     test('dispatches read tools with JSON-safe results', () async {
@@ -448,6 +454,106 @@ void main() {
       },
     );
 
+    test(
+      'returns typed MCP lease conflicts and requires lease identity',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final taskId = await db.enqueueLlmTask(
+          projectId: 'atlas',
+          title: 'Lease boundary',
+          objective: 'Reject stale terminal writers.',
+          contextJson: '{}',
+        );
+        final claimed = await db.claimLlmTask(
+          taskId: taskId,
+          leasedBy: 'worker-a',
+        );
+
+        final missingWorker = await adapter.callTool('complete_llm_task', {
+          'taskId': taskId,
+          'leaseAttempt': claimed!.attempts,
+          'result': {'summary': 'missing identity'},
+        });
+        final wrongOwner = await adapter.callTool('fail_llm_task', {
+          'taskId': taskId,
+          'workerId': 'worker-b',
+          'leaseAttempt': claimed.attempts,
+          'error': 'late result',
+        });
+        final unchanged = await db.getLlmTask(taskId);
+
+        expect(missingWorker.isError, isTrue);
+        expect(missingWorker.data.toString(), contains('workerId'));
+        expect(wrongOwner.isError, isTrue);
+        expect((wrongOwner.data as Map)['code'], 'llm_task_lease_conflict');
+        expect((wrongOwner.data as Map)['reason'], 'wrongOwner');
+        expect(unchanged!.status, 'leased');
+        expect(unchanged.error, isNull);
+
+        final expiredId = await db.enqueueLlmTask(
+          projectId: 'atlas',
+          title: 'Expired lease',
+          objective: 'Reject terminal writes at expiry.',
+          contextJson: '{}',
+        );
+        final expired = await db.claimLlmTask(
+          taskId: expiredId,
+          leasedBy: 'worker-a',
+          now: DateTime.now().subtract(const Duration(minutes: 2)),
+          leaseDuration: const Duration(minutes: 1),
+        );
+        final expiredResult = await adapter.callTool('complete_llm_task', {
+          'taskId': expiredId,
+          'workerId': 'worker-a',
+          'leaseAttempt': expired!.attempts,
+          'result': {'summary': 'too late'},
+        });
+
+        expect(expiredResult.isError, isTrue);
+        expect((expiredResult.data as Map)['reason'], 'expiredLease');
+        expect((await db.getLlmTask(expiredId))!.status, 'leased');
+      },
+    );
+
+    test(
+      'fails an LLM task idempotently and rejects changed MCP replay',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final taskId = await db.enqueueLlmTask(
+          projectId: 'atlas',
+          title: 'Failure replay',
+          objective: 'Prove the MCP failure transition is idempotent.',
+          contextJson: '{}',
+        );
+        final claimed = await db.claimLlmTask(
+          taskId: taskId,
+          leasedBy: 'worker-a',
+        );
+        final arguments = <String, Object?>{
+          'taskId': taskId,
+          'workerId': 'worker-a',
+          'leaseAttempt': claimed!.attempts,
+          'error': 'Provider unavailable',
+          'result': {'retryable': true, 'code': 503},
+        };
+
+        final first = await adapter.callTool('fail_llm_task', arguments);
+        final replay = await adapter.callTool('fail_llm_task', arguments);
+        final mismatch = await adapter.callTool('fail_llm_task', {
+          ...arguments,
+          'error': 'Different failure',
+        });
+
+        expect(first.isError, isFalse);
+        expect((first.data as Map)['status'], 'failed');
+        expect(replay.isError, isFalse);
+        expect((replay.data as Map)['id'], taskId);
+        expect(mismatch.isError, isTrue);
+        expect((mismatch.data as Map)['code'], 'llm_task_idempotency_conflict');
+        expect((mismatch.data as Map)['reason'], 'idempotencyMismatch');
+      },
+    );
+
     test('dispatches Atlas-only project enrichment tools', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
 
@@ -600,9 +706,11 @@ void main() {
           'taskId': taskId,
           'workerId': 'sample-worker',
         });
+        final leaseAttempt = (claim.data as Map)['attempts'] as int;
         final complete = await adapter.callTool('complete_llm_task', {
           'taskId': taskId,
           'workerId': 'sample-worker',
+          'leaseAttempt': leaseAttempt,
           'result': {'summary': 'Review me'},
           'proposalTitle': 'Queued result',
           'proposalBody': 'This result should be reviewed by a human.',

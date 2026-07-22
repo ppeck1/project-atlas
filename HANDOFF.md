@@ -12,8 +12,9 @@ for the guarded worker is recorded in the
 The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
-Until the P0 rows close, guarded live replacement is experimental and the LLM
-queue is restricted to an attended single-worker operating assumption.
+Recovery findings R-01 through R-06 are closed. The LLM queue remains
+restricted to an attended single-worker operating assumption until A-01
+through A-05 have merged and passed post-merge proof.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
@@ -21,21 +22,96 @@ contact data, machine-specific paths, and unrelated project references.
 
 Last updated: 2026-07-21.
 
+## Audit resume checkpoint
+
+Start from current `main` at `3b75760` (`Close R06 after post-merge proof
+(#32)`). The working tree was clean and synchronized with `origin/main` when
+this handoff was written.
+
+The canonical matrix contains 51 findings: 6 Closed and 45 Open. The completed
+recovery sequence is:
+
+- PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
+  rollback, final verification, child acknowledgement, and handoff security.
+- PR #31 / `31f966c`: R-06 point-in-time database-plus-owned-files backup
+  coordination and source-stability checks.
+- PR #32 / `3b75760`: R-06 post-merge closure evidence.
+
+Current verification baseline after R-06:
+
+- focused recovery suite: 18/18;
+- focused full-backup suite: 10/10 on merged `main`;
+- full Flutter suite: 460 passed with 1 intentional skip;
+- static analysis: clean;
+- Python policy/maintenance suite: 30/30;
+- Windows release build: passed; and
+- hosted CI, including seeded isolated MCP smoke: passed.
+
+### Recommended next implementation
+
+Take A-01, A-02, and A-05 as one queue-integrity package on a branch such as
+`fix/llm-queue-lease-integrity`. Do not relax the attended single-worker
+constraint until A-01 through A-05 have merged and passed post-merge proof.
+This slice does not close WP3: A-11 remains a separate open WP3 finding.
+
+1. Replace `AppDb.claimLlmTask`'s select-then-update sequence with one atomic
+   compare-and-swap claim and prove exactly one winner across two SQLite
+   connections.
+2. Require `workerId` and the claimed lease-attempt token end to end for
+   complete/fail. Use a conditional update on task id, `leased` status,
+   matching lease owner and attempt, and an unexpired lease; return a typed
+   lease-conflict result when no row changes.
+3. Make completion plus handoff-draft creation one transaction with an enforced
+   unique, stable task-attempt key. A retry must return the existing draft and
+   must not create an orphan or duplicate.
+4. Update trusted-local MCP schemas and every AppState/service call site so the
+   worker identity and claimed lease-attempt token cannot be omitted.
+5. Add contention, wrong-owner, expired-lease, crash/retry, and stream
+   propagation tests before changing the matrix rows from Open.
+
+Primary inspection points:
+
+- `lib/db/app_db.dart` around the LLM queue claim and terminal transitions;
+- `lib/services/atlas_agent_service.dart` around claim, complete, fail, and
+  handoff-draft creation;
+- `lib/shared/models/app_state.dart` queue wrappers;
+- `lib/mcp/` tool schemas and dispatch;
+- `test/atlas_agent_service_test.dart`, `test/atlas_mcp_adapter_test.dart`, and
+  `test/llm_queue_stream_propagation_test.dart`.
+
+Keep A-03 and A-04 separate until the queue lease/idempotency boundary above
+is closed; they concern proposal-application atomicity and stale base
+revisions rather than worker ownership.
+
+### Current local queue-integrity slice
+
+`fix/llm-queue-lease-integrity` now contains the local A-01/A-02/A-05
+implementation and proof package. Atomic claims, worker-plus-attempt terminal
+CAS, typed conflicts, and transactional deterministic handoff drafts are
+implemented end to end through AppState and trusted-local MCP.
+
+Local verification passes: 52 focused queue/service/MCP tests, 477 Flutter
+tests with 1 intentional skip, clean static analysis, 30 Python policy tests,
+and the Windows release build. The three findings remain In progress—not
+Closed—until merge and post-merge proof on `main`. The broader attended
+single-worker constraint through A-01 to A-05 remains unchanged.
+
 ## Current public state
 
 - Repository: `ppeck1/project-atlas`
-- Default and only public branch: `main`
+- Default branch: `main`
 - Current release line: `v1.4.2` (`1.4.2+3` application build)
 - Merge policy: pull request, passing `build` check, linear history, resolved
   conversations, and squash merge
 - Public authorship: Paul Peck / `ppeck1`
 - README images: captures of the real Windows application using an isolated
   public-safe demo database
-- Current database line: schema `24`. Version 23 added
+- Current database line: schema `25`. Version 23 added
   `documents.deleted_at` soft delete with undo and deferred purge; version 24
   adds the immutable accepted Project Capsule revision ledger and baseline
-  migration. Project Sources retains reconciliation preview, local/remote
-  source roles, and Atlas-only source bookkeeping updates.
+  migration; version 25 enforces update/delete immutability guards on that
+  ledger. Project Sources retains reconciliation preview, local/remote source
+  roles, and Atlas-only source bookkeeping updates.
 - Capsule Resume is the fourth primary navigation surface. It derives Act,
   Understand, and Audit views from one versioned project snapshot; Operations
   remains available at `/operations` as Sources & Health.

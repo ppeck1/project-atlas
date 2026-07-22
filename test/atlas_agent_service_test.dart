@@ -590,6 +590,7 @@ void main() {
         final completed = await service.completeLlmTask(
           taskId: queued.id,
           workerId: 'sample-worker',
+          leaseAttempt: claimed!.attempts,
           result: {'summary': 'Ready for review'},
           proposalTitle: 'Harness handoff',
           proposalBody: 'Reviewable handoff body.',
@@ -599,7 +600,7 @@ void main() {
 
         expect(queued.status, 'pending');
         expect((detail!['media'] as List).single['id'], mediaId);
-        expect(claimed!.status, 'leased');
+        expect(claimed.status, 'leased');
         expect(claimed.leasedBy, 'sample-worker');
         expect(completed.status, 'completed');
         expect(completed.reviewDraftId, isNotNull);
@@ -607,6 +608,50 @@ void main() {
         expect(tasks.single.id, queued.id);
         expect(reviews.single.type, 'handoff_record');
         expect(reviews.single.isPending, isTrue);
+      },
+    );
+
+    test(
+      'completion replay survives a project rename without duplicate draft',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final queued = await service.enqueueLlmTask(
+          projectId: 'atlas',
+          title: 'Draft durable handoff',
+          objective: 'Return the same handoff after response loss.',
+        );
+        final claimed = await service.claimLlmTask(
+          taskId: queued.id,
+          workerId: 'worker-a',
+        );
+
+        final first = await service.completeLlmTask(
+          taskId: queued.id,
+          workerId: 'worker-a',
+          leaseAttempt: claimed!.attempts,
+          result: {'summary': 'Ready for durable review'},
+          proposalTitle: 'Durable handoff',
+          proposalBody: 'This body must be reused after response loss.',
+        );
+        await db.updateProjectMeta('atlas', {'title': 'Atlas Renamed'});
+        final replay = await service.completeLlmTask(
+          taskId: queued.id,
+          workerId: 'worker-a',
+          leaseAttempt: claimed.attempts,
+          result: {'summary': 'Ready for durable review'},
+          proposalTitle: 'Durable handoff',
+          proposalBody: 'This body must be reused after response loss.',
+        );
+        final reviews = await service.listRecentAgentProposalReviews();
+
+        expect(replay.reviewDraftId, first.reviewDraftId);
+        expect(reviews, hasLength(1));
+        expect(reviews.single.draft.id, first.reviewDraftId);
+        expect(reviews.single.type, 'handoff_record');
+        expect(
+          reviews.single.envelope['taskAttemptKey'],
+          '${queued.id}:${claimed.attempts}',
+        );
       },
     );
 
@@ -679,9 +724,16 @@ void main() {
         service.completeLlmTask(
           taskId: queued.id,
           workerId: 'sample-worker',
+          leaseAttempt: 1,
           result: {'summary': 'stale result'},
         ),
-        throwsStateError,
+        throwsA(
+          isA<AtlasLlmTaskTransitionException>().having(
+            (error) => error.result.conflictReason,
+            'reason',
+            LlmTaskLeaseConflictReason.invalidStatus,
+          ),
+        ),
       );
     });
 
@@ -716,9 +768,16 @@ void main() {
           service.completeLlmTask(
             taskId: queued.id,
             workerId: 'sample-worker',
+            leaseAttempt: 1,
             result: {'summary': 'stale result'},
           ),
-          throwsStateError,
+          throwsA(
+            isA<AtlasLlmTaskTransitionException>().having(
+              (error) => error.result.conflictReason,
+              'reason',
+              LlmTaskLeaseConflictReason.invalidStatus,
+            ),
+          ),
         );
 
         final requeued = await service.requeueLlmTask(taskId: queued.id);
@@ -774,6 +833,7 @@ void main() {
       await service.completeLlmTask(
         taskId: queued.id,
         workerId: 'worker-1',
+        leaseAttempt: claimed.attempts,
         result: {'summary': 'done'},
       );
       await expectLater(
