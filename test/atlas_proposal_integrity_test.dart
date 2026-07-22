@@ -1061,286 +1061,310 @@ void main() {
     });
   });
 
-  test('two database connections apply one proposal exactly once', () async {
-    final tempDir = await Directory.systemTemp.createTemp(
-      'atlas_proposal_integrity_',
-    );
-    final file = File(p.join(tempDir.path, 'proposal.sqlite'));
-    final initializer = _openProposalDb(file);
-    await initializer.customSelect('SELECT 1').get();
-    await initializer.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
-    await initializer.close();
-    final dbA = _openProposalDb(file);
-    final dbB = _openProposalDb(file);
-    final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
-    final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
-    try {
-      final serviceA = AtlasAgentService(stateA);
-      final serviceB = AtlasAgentService(stateB);
-      final proposal = await serviceA.proposeTaskUpdate(
-        projectId: 'atlas',
-        title: 'Contended proposal task',
+  _contentionTest(
+    'two database connections apply one proposal exactly once',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'atlas_proposal_integrity_',
       );
-      final start = Completer<void>();
+      final file = File(p.join(tempDir.path, 'proposal.sqlite'));
+      await _initializeProposalDb(file);
+      final dbA = _openProposalDb(file);
+      final dbB = _openProposalDb(file);
+      final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
+      final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
+      try {
+        final serviceA = AtlasAgentService(stateA);
+        final serviceB = AtlasAgentService(stateB);
+        final proposal = await serviceA.proposeTaskUpdate(
+          projectId: 'atlas',
+          title: 'Contended proposal task',
+        );
+        final start = Completer<void>();
 
-      Future<AtlasProposalApplyResult> approve(
-        AtlasAgentService service,
-      ) async {
-        await start.future;
-        return service.approveAgentProposal(proposal.draftId!);
-      }
-
-      final approvals = [approve(serviceA), approve(serviceB)];
-      start.complete();
-      final results = await Future.wait(approvals);
-
-      expect(results.map((result) => result.entityId).toSet(), hasLength(1));
-      expect(await dbA.getWorkItemsForProject('atlas'), hasLength(1));
-      expect(
-        (await dbA.getRecentEvents()).where(
-          (event) => event.action == 'proposal_approved',
-        ),
-        hasLength(1),
-      );
-    } finally {
-      stateA.dispose();
-      stateB.dispose();
-      await Future.wait([dbA.close(), dbB.close()]);
-      await tempDir.delete(recursive: true);
-    }
-  });
-
-  test('same-base task proposals have one concurrent CAS winner', () async {
-    final tempDir = await Directory.systemTemp.createTemp(
-      'atlas_task_proposal_cas_',
-    );
-    final file = File(p.join(tempDir.path, 'proposal.sqlite'));
-    final initializer = _openProposalDb(file);
-    await initializer.customSelect('SELECT 1').get();
-    await initializer.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
-    await initializer.close();
-    final dbA = _openProposalDb(file);
-    final dbB = _openProposalDb(file);
-    final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
-    final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
-    try {
-      final serviceA = AtlasAgentService(stateA);
-      final serviceB = AtlasAgentService(stateB);
-      final workItemId = await stateA.addWorkItemToProject(
-        'atlas',
-        'Shared base task',
-      );
-      final proposalA = await serviceA.proposeTaskUpdate(
-        projectId: 'atlas',
-        workItemId: workItemId,
-        title: 'Winner A',
-        tagNames: const ['tag-a'],
-      );
-      final proposalB = await serviceB.proposeTaskUpdate(
-        projectId: 'atlas',
-        workItemId: workItemId,
-        title: 'Winner B',
-        tagNames: const ['tag-b'],
-      );
-      final start = Completer<void>();
-
-      Future<Object> capture(AtlasAgentService service, String draftId) async {
-        await start.future;
-        try {
-          return await service.approveAgentProposal(draftId);
-        } catch (error) {
-          return error;
+        Future<AtlasProposalApplyResult> approve(
+          AtlasAgentService service,
+        ) async {
+          await start.future;
+          return service.approveAgentProposal(proposal.draftId!);
         }
+
+        final approvals = [approve(serviceA), approve(serviceB)];
+        start.complete();
+        final results = await Future.wait(approvals);
+
+        expect(results.map((result) => result.entityId).toSet(), hasLength(1));
+        expect(await dbA.getWorkItemsForProject('atlas'), hasLength(1));
+        expect(
+          (await dbA.getRecentEvents()).where(
+            (event) => event.action == 'proposal_approved',
+          ),
+          hasLength(1),
+        );
+      } finally {
+        stateA.dispose();
+        stateB.dispose();
+        await Future.wait([dbA.close(), dbB.close()]);
+        await tempDir.delete(recursive: true);
       }
+    },
+  );
 
-      final attempts = [
-        capture(serviceA, proposalA.draftId!),
-        capture(serviceB, proposalB.draftId!),
-      ];
-      start.complete();
-      final outcomes = await Future.wait(attempts);
-      final winners = outcomes.whereType<AtlasProposalApplyResult>().toList();
-      final conflicts = outcomes.whereType<AtlasProposalConflict>().toList();
+  _contentionTest(
+    'same-base task proposals have one concurrent CAS winner',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'atlas_task_proposal_cas_',
+      );
+      final file = File(p.join(tempDir.path, 'proposal.sqlite'));
+      await _initializeProposalDb(file);
+      final dbA = _openProposalDb(file);
+      final dbB = _openProposalDb(file);
+      final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
+      final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
+      try {
+        final serviceA = AtlasAgentService(stateA);
+        final serviceB = AtlasAgentService(stateB);
+        final workItemId = await stateA.addWorkItemToProject(
+          'atlas',
+          'Shared base task',
+        );
+        final proposalA = await serviceA.proposeTaskUpdate(
+          projectId: 'atlas',
+          workItemId: workItemId,
+          title: 'Winner A',
+          tagNames: const ['tag-a'],
+        );
+        final proposalB = await serviceB.proposeTaskUpdate(
+          projectId: 'atlas',
+          workItemId: workItemId,
+          title: 'Winner B',
+          tagNames: const ['tag-b'],
+        );
+        final start = Completer<void>();
 
-      expect(winners, hasLength(1));
-      expect(conflicts, hasLength(1));
-      expect(conflicts.single.reason, AtlasProposalConflictReason.staleTask);
-      final item = await dbA.getWorkItem(workItemId);
-      final winningA = item!.title == 'Winner A';
-      expect(item.title, anyOf('Winner A', 'Winner B'));
-      expect(
-        (await dbA.getTagsForWorkItem(workItemId)).map((tag) => tag.name),
-        [winningA ? 'tag-a' : 'tag-b'],
-      );
-      final losingDraftId = winningA ? proposalB.draftId! : proposalA.draftId!;
-      expect(
-        (await serviceA.getAgentProposalReview(losingDraftId))!.isPending,
-        true,
-      );
-      expect(
-        (await dbA.getRecentEvents()).where(
-          (event) => event.action == 'proposal_approved',
-        ),
-        hasLength(1),
-      );
-    } finally {
-      stateA.dispose();
-      stateB.dispose();
-      await Future.wait([dbA.close(), dbB.close()]);
-      await tempDir.delete(recursive: true);
-    }
-  });
+        Future<Object> capture(
+          AtlasAgentService service,
+          String draftId,
+        ) async {
+          await start.future;
+          try {
+            return await service.approveAgentProposal(draftId);
+          } catch (error) {
+            return error;
+          }
+        }
 
-  test('same-base manifest tag proposals have one concurrent winner', () async {
-    final tempDir = await Directory.systemTemp.createTemp(
-      'atlas_manifest_proposal_cas_',
-    );
-    final file = File(p.join(tempDir.path, 'proposal.sqlite'));
-    final initializer = _openProposalDb(file);
+        final attempts = [
+          capture(serviceA, proposalA.draftId!),
+          capture(serviceB, proposalB.draftId!),
+        ];
+        start.complete();
+        final outcomes = await Future.wait(attempts);
+        final winners = outcomes.whereType<AtlasProposalApplyResult>().toList();
+        final conflicts = outcomes.whereType<AtlasProposalConflict>().toList();
+
+        expect(winners, hasLength(1));
+        expect(conflicts, hasLength(1));
+        expect(conflicts.single.reason, AtlasProposalConflictReason.staleTask);
+        final item = await dbA.getWorkItem(workItemId);
+        final winningA = item!.title == 'Winner A';
+        expect(item.title, anyOf('Winner A', 'Winner B'));
+        expect(
+          (await dbA.getTagsForWorkItem(workItemId)).map((tag) => tag.name),
+          [winningA ? 'tag-a' : 'tag-b'],
+        );
+        final losingDraftId = winningA
+            ? proposalB.draftId!
+            : proposalA.draftId!;
+        expect(
+          (await serviceA.getAgentProposalReview(losingDraftId))!.isPending,
+          true,
+        );
+        expect(
+          (await dbA.getRecentEvents()).where(
+            (event) => event.action == 'proposal_approved',
+          ),
+          hasLength(1),
+        );
+      } finally {
+        stateA.dispose();
+        stateB.dispose();
+        await Future.wait([dbA.close(), dbB.close()]);
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  _contentionTest(
+    'same-base manifest tag proposals have one concurrent winner',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'atlas_manifest_proposal_cas_',
+      );
+      final file = File(p.join(tempDir.path, 'proposal.sqlite'));
+      await _initializeProposalDb(file);
+
+      final dbA = _openProposalDb(file);
+      final dbB = _openProposalDb(file);
+      final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
+      final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
+      try {
+        final serviceA = AtlasAgentService(stateA);
+        final serviceB = AtlasAgentService(stateB);
+        final proposalA = await serviceA.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {
+            'tags': ['winner-a'],
+          },
+        );
+        final proposalB = await serviceB.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {
+            'tags': ['winner-b'],
+          },
+        );
+        final start = Completer<void>();
+
+        Future<Object> capture(
+          AtlasAgentService service,
+          String draftId,
+        ) async {
+          await start.future;
+          try {
+            return await service.approveAgentProposal(draftId);
+          } catch (error) {
+            return error;
+          }
+        }
+
+        final attempts = [
+          capture(serviceA, proposalA.draftId!),
+          capture(serviceB, proposalB.draftId!),
+        ];
+        start.complete();
+        final outcomes = await Future.wait(attempts);
+        final winners = outcomes.whereType<AtlasProposalApplyResult>().toList();
+        final conflicts = outcomes.whereType<AtlasProposalConflict>().toList();
+
+        expect(winners, hasLength(1));
+        expect(conflicts, hasLength(1));
+        expect(
+          conflicts.single.reason,
+          AtlasProposalConflictReason.staleProjectTagSet,
+        );
+        final winningA = winners.single.draftId == proposalA.draftId;
+        expect((await dbA.getTagsForProject('atlas')).map((tag) => tag.name), [
+          winningA ? 'winner-a' : 'winner-b',
+        ]);
+        expect(
+          await dbA.findTagByName(winningA ? 'winner-b' : 'winner-a'),
+          isNull,
+        );
+        final losingDraft = winningA ? proposalB.draftId! : proposalA.draftId!;
+        expect(
+          (await serviceA.getAgentProposalReview(losingDraft))!.isPending,
+          isTrue,
+        );
+        expect(await stateA.getProjectCapsuleRevisions('atlas'), hasLength(1));
+        expect(
+          (await dbA.getRecentEvents()).where(
+            (event) => event.action == 'proposal_approved',
+          ),
+          hasLength(1),
+        );
+      } finally {
+        stateA.dispose();
+        stateB.dispose();
+        await Future.wait([dbA.close(), dbB.close()]);
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  _contentionTest(
+    'approve and reject race has one handoff terminal winner',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'atlas_proposal_review_race_',
+      );
+      final file = File(p.join(tempDir.path, 'proposal.sqlite'));
+      await _initializeProposalDb(file);
+      final dbA = _openProposalDb(file);
+      final dbB = _openProposalDb(file);
+      final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
+      final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
+      try {
+        final serviceA = AtlasAgentService(stateA);
+        final serviceB = AtlasAgentService(stateB);
+        final proposal = await serviceA.recordHandoff(
+          projectId: 'atlas',
+          title: 'Contended handoff',
+          body: 'Only one review transition may win.',
+        );
+        final start = Completer<void>();
+
+        Future<Object> capture(
+          Future<AtlasProposalApplyResult> Function() run,
+        ) async {
+          await start.future;
+          try {
+            return await run();
+          } catch (error) {
+            return error;
+          }
+        }
+
+        final attempts = [
+          capture(() => serviceA.approveAgentProposal(proposal.draftId!)),
+          capture(() => serviceB.rejectAgentProposal(proposal.draftId!)),
+        ];
+        start.complete();
+        final outcomes = await Future.wait(attempts);
+        final winners = outcomes.whereType<AtlasProposalApplyResult>().toList();
+
+        expect(winners, hasLength(1));
+        expect(outcomes.whereType<AtlasProposalConflict>(), hasLength(1));
+        final review = await serviceA.getAgentProposalReview(proposal.draftId!);
+        expect(review!.isApproved || review.isRejected, true);
+        expect(review.reviewStatus, winners.single.reviewStatus);
+        final handoffs = (await stateA.getDrafts())
+            .where((draft) => draft.kind == AtlasAgentService.handoffDraftKind)
+            .toList();
+        expect(handoffs, hasLength(review.isApproved ? 1 : 0));
+        expect(
+          (await dbA.getRecentEvents()).where(
+            (event) =>
+                event.action == 'proposal_approved' ||
+                event.action == 'proposal_rejected',
+          ),
+          hasLength(1),
+        );
+        expect(review.reviewStatus, isNot('applying'));
+      } finally {
+        stateA.dispose();
+        stateB.dispose();
+        await Future.wait([dbA.close(), dbB.close()]);
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+}
+
+void _contentionTest(String description, Future<void> Function() body) {
+  // Two background SQLite connections may legitimately serialize near their
+  // 30-second busy timeout when the full Windows suite is saturated.
+  test(description, body, timeout: const Timeout(Duration(minutes: 2)));
+}
+
+Future<void> _initializeProposalDb(File file) async {
+  final initializer = _openProposalDb(file);
+  try {
     await initializer.customSelect('SELECT 1').get();
     await initializer.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+  } finally {
     await initializer.close();
-
-    final dbA = _openProposalDb(file);
-    final dbB = _openProposalDb(file);
-    final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
-    final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
-    try {
-      final serviceA = AtlasAgentService(stateA);
-      final serviceB = AtlasAgentService(stateB);
-      final proposalA = await serviceA.proposeManifestUpdate(
-        projectId: 'atlas',
-        fields: const {
-          'tags': ['winner-a'],
-        },
-      );
-      final proposalB = await serviceB.proposeManifestUpdate(
-        projectId: 'atlas',
-        fields: const {
-          'tags': ['winner-b'],
-        },
-      );
-      final start = Completer<void>();
-
-      Future<Object> capture(AtlasAgentService service, String draftId) async {
-        await start.future;
-        try {
-          return await service.approveAgentProposal(draftId);
-        } catch (error) {
-          return error;
-        }
-      }
-
-      final attempts = [
-        capture(serviceA, proposalA.draftId!),
-        capture(serviceB, proposalB.draftId!),
-      ];
-      start.complete();
-      final outcomes = await Future.wait(attempts);
-      final winners = outcomes.whereType<AtlasProposalApplyResult>().toList();
-      final conflicts = outcomes.whereType<AtlasProposalConflict>().toList();
-
-      expect(winners, hasLength(1));
-      expect(conflicts, hasLength(1));
-      expect(
-        conflicts.single.reason,
-        AtlasProposalConflictReason.staleProjectTagSet,
-      );
-      final winningA = winners.single.draftId == proposalA.draftId;
-      expect((await dbA.getTagsForProject('atlas')).map((tag) => tag.name), [
-        winningA ? 'winner-a' : 'winner-b',
-      ]);
-      expect(
-        await dbA.findTagByName(winningA ? 'winner-b' : 'winner-a'),
-        isNull,
-      );
-      final losingDraft = winningA ? proposalB.draftId! : proposalA.draftId!;
-      expect(
-        (await serviceA.getAgentProposalReview(losingDraft))!.isPending,
-        isTrue,
-      );
-      expect(await stateA.getProjectCapsuleRevisions('atlas'), hasLength(1));
-      expect(
-        (await dbA.getRecentEvents()).where(
-          (event) => event.action == 'proposal_approved',
-        ),
-        hasLength(1),
-      );
-    } finally {
-      stateA.dispose();
-      stateB.dispose();
-      await Future.wait([dbA.close(), dbB.close()]);
-      await tempDir.delete(recursive: true);
-    }
-  });
-
-  test('approve and reject race has one handoff terminal winner', () async {
-    final tempDir = await Directory.systemTemp.createTemp(
-      'atlas_proposal_review_race_',
-    );
-    final file = File(p.join(tempDir.path, 'proposal.sqlite'));
-    final initializer = _openProposalDb(file);
-    await initializer.customSelect('SELECT 1').get();
-    await initializer.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
-    await initializer.close();
-    final dbA = _openProposalDb(file);
-    final dbB = _openProposalDb(file);
-    final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
-    final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
-    try {
-      final serviceA = AtlasAgentService(stateA);
-      final serviceB = AtlasAgentService(stateB);
-      final proposal = await serviceA.recordHandoff(
-        projectId: 'atlas',
-        title: 'Contended handoff',
-        body: 'Only one review transition may win.',
-      );
-      final start = Completer<void>();
-
-      Future<Object> capture(
-        Future<AtlasProposalApplyResult> Function() run,
-      ) async {
-        await start.future;
-        try {
-          return await run();
-        } catch (error) {
-          return error;
-        }
-      }
-
-      final attempts = [
-        capture(() => serviceA.approveAgentProposal(proposal.draftId!)),
-        capture(() => serviceB.rejectAgentProposal(proposal.draftId!)),
-      ];
-      start.complete();
-      final outcomes = await Future.wait(attempts);
-      final winners = outcomes.whereType<AtlasProposalApplyResult>().toList();
-
-      expect(winners, hasLength(1));
-      expect(outcomes.whereType<AtlasProposalConflict>(), hasLength(1));
-      final review = await serviceA.getAgentProposalReview(proposal.draftId!);
-      expect(review!.isApproved || review.isRejected, true);
-      expect(review.reviewStatus, winners.single.reviewStatus);
-      final handoffs = (await stateA.getDrafts())
-          .where((draft) => draft.kind == AtlasAgentService.handoffDraftKind)
-          .toList();
-      expect(handoffs, hasLength(review.isApproved ? 1 : 0));
-      expect(
-        (await dbA.getRecentEvents()).where(
-          (event) =>
-              event.action == 'proposal_approved' ||
-              event.action == 'proposal_rejected',
-        ),
-        hasLength(1),
-      );
-      expect(review.reviewStatus, isNot('applying'));
-    } finally {
-      stateA.dispose();
-      stateB.dispose();
-      await Future.wait([dbA.close(), dbB.close()]);
-      await tempDir.delete(recursive: true);
-    }
-  });
+  }
 }
 
 AppDb _openProposalDb(File file) => AppDb.withExecutor(
