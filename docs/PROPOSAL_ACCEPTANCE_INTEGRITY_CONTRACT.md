@@ -53,12 +53,14 @@ stored approval result.
 
 - A-09 remains open: this package does not redefine absent versus explicitly
   empty task-tag input.
-- A-10 remains open: making manifest truth and project-tag writes share the
-  approval transaction does not add the required project-tag concurrency
-  token.
-- A-06 through A-08 and A-11 remain independently tracked.
-- WP4 remains open after A-03/A-04 because A-06 through A-10 remain open.
+- A-06, A-07, and A-10 are addressed by the active follow-up contract in
+  [`ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`](ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md).
+  They remain In progress until that package merges and passes exact-main
+  post-merge proof.
+- A-08 and A-09 remain open; A-11 is closed independently.
+- WP4 remains open after A-03/A-04 because its follow-up findings are not all
+  closed.
 
 The attended single-worker constraint attached to A-03/A-04 was retired after
-post-merge proof passed on `a3c88f6`. A-09 and A-10 remain open under the
-exclusions above; this closure does not close WP4.
+post-merge proof passed on `a3c88f6`. The active follow-up package does not
+change that historical proof boundary, and this closure does not close WP4.

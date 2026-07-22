@@ -444,9 +444,17 @@ class AtlasLlmTaskTransitionException implements Exception {
 
 enum AtlasProposalConflictReason {
   missingBaseSnapshot,
+  missingManifestBaseSnapshot,
   staleTask,
   staleTagSet,
+  staleManifestTruth,
+  staleProjectTagSet,
+  invalidProjectTagSet,
+  ambiguousManifestTag,
+  unverifiableManifestReplay,
   taskNotFound,
+  manifestProjectNotFound,
+  invalidManifestTagInput,
   wrongProject,
   invalidReviewState,
 }
@@ -465,9 +473,25 @@ class AtlasProposalConflict implements Exception {
   String get code => switch (reason) {
     AtlasProposalConflictReason.missingBaseSnapshot =>
       'proposal_missing_base_snapshot',
+    AtlasProposalConflictReason.missingManifestBaseSnapshot =>
+      'proposal_missing_manifest_base_snapshot',
     AtlasProposalConflictReason.staleTask => 'proposal_stale_task',
     AtlasProposalConflictReason.staleTagSet => 'proposal_stale_tag_set',
+    AtlasProposalConflictReason.staleManifestTruth =>
+      'proposal_stale_manifest_truth',
+    AtlasProposalConflictReason.staleProjectTagSet =>
+      'proposal_stale_project_tag_set',
+    AtlasProposalConflictReason.invalidProjectTagSet =>
+      'proposal_invalid_project_tag_set',
+    AtlasProposalConflictReason.ambiguousManifestTag =>
+      'proposal_ambiguous_manifest_tag',
+    AtlasProposalConflictReason.unverifiableManifestReplay =>
+      'proposal_unverifiable_manifest_replay',
     AtlasProposalConflictReason.taskNotFound => 'proposal_task_not_found',
+    AtlasProposalConflictReason.manifestProjectNotFound =>
+      'proposal_manifest_project_not_found',
+    AtlasProposalConflictReason.invalidManifestTagInput =>
+      'proposal_invalid_manifest_tag_input',
     AtlasProposalConflictReason.wrongProject => 'proposal_wrong_project',
     AtlasProposalConflictReason.invalidReviewState =>
       'proposal_invalid_review_state',
@@ -1335,6 +1359,12 @@ class AtlasAgentService {
         proposal,
       );
       if (acceptedTruthRevision != null) {
+        if (proposal.type == 'manifest_update') {
+          throw AtlasProposalConflict(
+            draftId: draft.id,
+            reason: AtlasProposalConflictReason.unverifiableManifestReplay,
+          );
+        }
         throw StateError(
           'This proposal already changed accepted project truth in revision '
           '${acceptedTruthRevision.revisionNumber}. Approve it to recover the '
@@ -1472,6 +1502,15 @@ class AtlasAgentService {
     for (final entry in fields.entries) {
       if (!manifestFields.contains(entry.key)) {
         errors.add('Unsupported manifest field: ${entry.key}.');
+      } else if (entry.key == 'tags') {
+        final tagNames = _parseManifestTagNames(entry.value);
+        if (tagNames == null) {
+          errors.add(
+            'Manifest tags must be an array of unique, nonblank strings.',
+          );
+        } else {
+          cleanFields[entry.key] = tagNames;
+        }
       } else {
         cleanFields[entry.key] = entry.value;
       }
@@ -1495,11 +1534,11 @@ class AtlasAgentService {
     if (priority != null && !priorities.contains(priority)) {
       errors.add('Unsupported priority: $priority.');
     }
-    final truthRevisionId = project == null
+    final baseManifestSnapshot = project == null
         ? null
-        : (await state.getProjectCapsuleTruth(project.id))?.revisionId;
-    if (project != null && truthRevisionId == null) {
-      errors.add('Accepted project truth could not be loaded.');
+        : await _manifestProposalBaseSnapshot(project.id);
+    if (project != null && baseManifestSnapshot == null) {
+      errors.add('Accepted project manifest state could not be loaded.');
     }
 
     return _saveProposal(
@@ -1511,7 +1550,8 @@ class AtlasAgentService {
       payload: {
         'fields': cleanFields,
         'reason': _clean(reason),
-        'baseTruthRevisionId': truthRevisionId,
+        'baseTruthRevisionId': baseManifestSnapshot?['truthRevisionId'],
+        'baseManifestSnapshot': baseManifestSnapshot,
       },
       validationErrors: errors,
     );
@@ -1809,6 +1849,12 @@ class AtlasAgentService {
   Future<String> _applyManifestProposal(AtlasProposalDraft proposal) async {
     final projectId = proposal.projectId;
     if (projectId == null) throw StateError('Project ID is required.');
+    if (await _acceptedTruthRevisionForProposal(proposal) != null) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.unverifiableManifestReplay,
+      );
+    }
     final fields = AtlasProposalDraft._objectMap(proposal.payload['fields']);
     final unsupported =
         fields.keys
@@ -1823,6 +1869,17 @@ class AtlasAgentService {
       );
     }
 
+    final base = await _validateManifestProposalBase(proposal, projectId);
+    final tagNames = fields.containsKey('tags')
+        ? _parseManifestTagNames(fields['tags'])
+        : null;
+    if (fields.containsKey('tags') && tagNames == null) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.invalidManifestTagInput,
+      );
+    }
+
     final meta = <String, Object?>{};
     for (final entry in fields.entries) {
       if (applyableManifestFields.contains(entry.key)) {
@@ -1830,29 +1887,20 @@ class AtlasAgentService {
       }
     }
     if (meta.isNotEmpty) {
-      final baseTruthRevisionId = _payloadString(
-        proposal.payload,
-        'baseTruthRevisionId',
-      );
-      if (baseTruthRevisionId == null) {
-        throw StateError(
-          'This proposal predates accepted-truth versioning and must be recreated.',
-        );
-      }
       await state.updateProjectMeta(
         projectId,
         meta,
         actor: 'Atlas Agent',
         sourceKind: 'agent_proposal',
         sourceId: proposal.draft.id,
-        expectedTruthRevisionId: baseTruthRevisionId,
+        expectedTruthRevisionId: base.truthRevisionId,
         reason: _payloadString(proposal.payload, 'reason'),
         notify: false,
       );
       await _proposalApprovalStepHook?.call('after-manifest-truth-write');
     }
     if (fields.containsKey('tags')) {
-      final tagIds = await _ensureTagIds(_valueStringList(fields['tags']));
+      final tagIds = await _ensureManifestTagIds(proposal, tagNames!);
       await state.setProjectTags(projectId, tagIds);
       await _proposalApprovalStepHook?.call('after-manifest-tags-write');
     }
@@ -2700,6 +2748,145 @@ class AtlasAgentService {
     };
   }
 
+  Future<Map<String, Object?>?> _manifestProposalBaseSnapshot(
+    String projectId,
+  ) => state.db.transaction(() async {
+    final truth = await state.getProjectCapsuleTruth(projectId);
+    if (truth == null) return null;
+    final projectTagSetHash = await _projectTagSetHash(projectId);
+    if (projectTagSetHash == null) return null;
+    return <String, Object?>{
+      'schema': 'atlas.manifest_proposal_base.v1',
+      'projectId': projectId,
+      'truthRevisionId': truth.revisionId,
+      'projectTagSetHash': projectTagSetHash,
+    };
+  });
+
+  Future<String?> _projectTagSetHash(String projectId) async {
+    final assignments = await state.db.getProjectTagAssignments(projectId);
+    final projection = <Map<String, Object?>>[];
+    for (final assignment in assignments) {
+      final tag = await state.db.getTag(assignment.tagId);
+      if (tag == null) return null;
+      projection.add({
+        'id': assignment.tagId,
+        'name': tag.name.trim().toLowerCase(),
+        'color': _clean(tag.color),
+      });
+    }
+    projection.sort(
+      (left, right) => '${left['id']}'.compareTo('${right['id']}'),
+    );
+    return _canonicalDigest(projection);
+  }
+
+  Future<_ManifestProposalBase> _validateManifestProposalBase(
+    AtlasProposalDraft proposal,
+    String projectId,
+  ) async {
+    final raw = proposal.payload['baseManifestSnapshot'];
+    if (raw is! Map) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.missingManifestBaseSnapshot,
+      );
+    }
+    final base = raw.map((key, value) => MapEntry('$key', value));
+    final truthRevisionId = _clean(base['truthRevisionId']?.toString());
+    final projectTagSetHash = _clean(base['projectTagSetHash']?.toString());
+    final digestPattern = RegExp(r'^[0-9a-f]{64}$');
+    if (base.length != 4 ||
+        base['schema'] != 'atlas.manifest_proposal_base.v1' ||
+        base['projectId'] != projectId ||
+        truthRevisionId == null ||
+        projectTagSetHash == null ||
+        !digestPattern.hasMatch(projectTagSetHash)) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.missingManifestBaseSnapshot,
+      );
+    }
+    if (await _visibleProject(projectId) == null) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.manifestProjectNotFound,
+      );
+    }
+    final currentTruth = await state.getProjectCapsuleTruth(projectId);
+    if (currentTruth == null) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.manifestProjectNotFound,
+      );
+    }
+    if (currentTruth.revisionId != truthRevisionId) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.staleManifestTruth,
+      );
+    }
+    final currentProjectTagSetHash = await _projectTagSetHash(projectId);
+    if (currentProjectTagSetHash == null) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.invalidProjectTagSet,
+      );
+    }
+    if (currentProjectTagSetHash != projectTagSetHash) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        reason: AtlasProposalConflictReason.staleProjectTagSet,
+      );
+    }
+    return _ManifestProposalBase(truthRevisionId: truthRevisionId);
+  }
+
+  static List<String>? _parseManifestTagNames(Object? value) {
+    if (value is! List) return null;
+    final result = <String>[];
+    final canonical = <String>{};
+    for (final item in value) {
+      if (item is! String) return null;
+      final name = _clean(item);
+      if (name == null || !canonical.add(name.toLowerCase())) return null;
+      result.add(name);
+    }
+    return List.unmodifiable(result);
+  }
+
+  Future<List<String>> _ensureManifestTagIds(
+    AtlasProposalDraft proposal,
+    Iterable<String> tagNames,
+  ) async {
+    final existing = await state.db.getTags();
+    final byName = <String, List<Tag>>{};
+    for (final tag in existing) {
+      final normalized = tag.name.trim().toLowerCase();
+      byName.putIfAbsent(normalized, () => <Tag>[]).add(tag);
+    }
+    final resolved = <String>[];
+    final missing = <String>[];
+    for (final name in tagNames) {
+      final matches = byName[name.trim().toLowerCase()] ?? const <Tag>[];
+      if (matches.length > 1) {
+        throw AtlasProposalConflict(
+          draftId: proposal.draft.id,
+          reason: AtlasProposalConflictReason.ambiguousManifestTag,
+        );
+      }
+      if (matches.isEmpty) {
+        missing.add(name);
+      } else {
+        resolved.add(matches.single.id);
+      }
+    }
+    for (final name in missing) {
+      resolved.add(await state.saveTag(name: name));
+    }
+    return List.unmodifiable(resolved);
+  }
+
   Future<void> _validateTaskProposalBase(
     AtlasProposalDraft proposal,
     String workItemId,
@@ -2788,4 +2975,10 @@ class AtlasAgentService {
     }
     return ids.toSet().toList();
   }
+}
+
+class _ManifestProposalBase {
+  final String truthRevisionId;
+
+  const _ManifestProposalBase({required this.truthRevisionId});
 }

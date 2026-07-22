@@ -38,13 +38,14 @@ WP3 findings A-01, A-02, and A-05 closed after PR #33 merged as `8a90d6e`.
 A-03 and A-04 closed after PR #35 merged as `a3c88f6` and post-merge proof
 passed on current `main`. The attended single-worker constraint is therefore
 retired. A-11 closed after PR #39 merged as `9d753cb` and exact-main proof
-passed, so WP3 is closed. A-06 through A-10 remain open in WP4.
+passed, so WP3 is closed. A-06, A-07, and A-10 are in progress together on
+`fix/accepted-truth-integrity`; A-08 and A-09 remain open, so WP4 is not closed.
 
 R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
 post-merge proof passed. They provide exact full-backup directory inventory
 and bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11
-through R-14 remain open, so WP2 is not closed. The ledger contains 16 Closed
-and 35 Open findings.
+through R-14 remain open, so WP2 is not closed. The ledger contains 16 Closed,
+3 In progress, and 32 Open findings.
 
 ## Finding ledger
 
@@ -69,11 +70,11 @@ and 35 Open findings.
 | SPA-20260721-A-03 | P0 | Accepted | Closed | WP4 | Proposal side effect and review approval are not atomic/idempotent. | Codex | PR #35 | One transaction claims pending review state, applies every proposal kind, and records stable review/entity/audit results. Merged as `a3c88f6`; post-merge write-boundary rollback, two-connection contention, rejection-race, and replay proof passed. |
 | SPA-20260721-A-04 | P0 | Accepted | Closed | WP4 | Task proposals lack a base revision/hash. | Codex | PR #35 | Server-captured canonical task and exact-tag hashes are rechecked before any write. Merged as `a3c88f6`; post-merge missing, stale, moved, malformed, and same-base contention proof passed with typed conflicts and no partial effects. |
 | SPA-20260721-A-05 | P0 | Accepted | Closed | WP3 | Completion can create an orphan/duplicate handoff draft. | Codex | PR #33 | Transactional deterministic draft completion merged as `8a90d6e`; post-insert rollback, concurrent/retry deduplication, and service replay proof passed on merged `main`. |
-| SPA-20260721-A-06 | P1 | Needs verification | Open | WP4 | Accepted-truth service may mutate non-truth fields. | Unassigned | TBD | Unknown truth keys fail closed or move to a separate contract. |
-| SPA-20260721-A-07 | P1 | Needs verification | Open | WP4 | Source revision lookup bypasses complete ledger verification. | Unassigned | TBD | Source matches are resolved only from a verified chain. |
+| SPA-20260721-A-06 | P1 | Accepted | In progress | WP4 | Accepted-truth service may mutate non-truth fields. | Codex | `fix/accepted-truth-integrity` | Canonical truth keys fail closed; `lessonsLearned` uses a narrow supplemental boundary; mixed AppState/enrichment writes and audits are atomic. Contract: `docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`. |
+| SPA-20260721-A-07 | P1 | Accepted | In progress | WP4 | Source revision lookup bypasses complete ledger verification. | Codex | `fix/accepted-truth-integrity` | Source evidence is selected only from a fully verified hash/parent/number/diff chain; corrupt matching or unrelated history fails closed. Contract: `docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-08 | P2 | Needs verification | Open | WP4 | Repeated history reads verify the entire chain. | Unassigned | TBD | Write/checkpoint verification plus paged audit behavior and performance proof. |
 | SPA-20260721-A-09 | P2 | Needs verification | Open | WP4 | Explicit empty tags cannot clear a task's tags. | Unassigned | TBD | Present-empty differs from absent and clears tags in tests. |
-| SPA-20260721-A-10 | P1 | Needs verification | Open | WP4 | Manifest truth and tags are accepted separately. | Unassigned | TBD | Atomic metadata/tag acceptance with tag concurrency token. |
+| SPA-20260721-A-10 | P1 | Accepted | In progress | WP4 | Manifest truth and tags are accepted separately. | Codex | `fix/accepted-truth-integrity` | Server-owned composite truth/project-tag snapshot is revalidated before atomic truth, supplemental, tag, review, and audit writes; unverifiable replay fails closed. Contract: `docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-11 | P1 | Accepted | Closed | WP3 | Raw queue table lacks foreign-key and state constraints. | Codex | PR #39 | Schema v26 fail-closed rebuild, foreign keys, ownership triggers, exact scalar/enum/JSON/state/chronology constraints, valid legacy-state preservation, invalid migration rollback, and `foreign_key_check` proof merged as `9d753cb`; exact-main post-merge proof passed. Contract: `docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-12 | P1 | Needs verification | Open | WP5 | Malformed planning values fail open to executable defaults. | Unassigned | TBD | Unknown values enter a review lane and cannot become ready. |
 | SPA-20260721-A-13 | P1 | Needs verification | Open | WP5 | Stale work is promoted in execution ranking. | Unassigned | TBD | Stale items require revalidation and ranking fixtures prove ordering. |

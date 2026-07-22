@@ -27,12 +27,12 @@ Last updated: 2026-07-22.
 
 ## Audit resume checkpoint
 
-Start from current `main` at `9d753cb` (`Harden LLM queue schema integrity
-(#39)`). The working tree was clean and synchronized with
+Start from current `main` at `f8fed5f` (`Close A-11 after post-merge proof
+(#40)`). The working tree was clean and synchronized with
 `origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 16 Closed and 35 Open. The
-completed integrity sequence is:
+The canonical matrix contains 51 findings: 16 Closed, 3 In progress, and 32
+Open. The completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
   rollback, final verification, child acknowledgement, and handoff security.
@@ -55,7 +55,8 @@ completed integrity sequence is:
 - PR #38 / `008ed8d`: R-07 through R-10 post-merge proof and canonical
   closure evidence.
 - PR #39 / `9d753cb`: A-11 schema v26 queue constraints plus exact-main
-  post-merge proof; the evidence-only closure is recorded in the next PR.
+  post-merge proof.
+- PR #40 / `f8fed5f`: A-11 evidence-only closure and WP3 completion.
 
 Current verification baseline on merged `main`:
 
@@ -81,7 +82,7 @@ guidance; `project_bundle.json` remains schema v1.
 The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
 R-11 through R-14 remain open, so WP2 is not closed. The recommended next
-package is A-06/A-07/A-10.
+package is the active A-06/A-07/A-10 branch.
 
 Post-merge proof on exact implementation `main` at `9d0e792`:
 
@@ -134,7 +135,7 @@ schema or replacing the original queue table.
 The boundary is specified in the
 [`queue schema integrity contract`](docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md).
 A-11 is closed after exact-main post-merge proof. A-06, A-07, and A-10 remain
-the recommended next accepted-truth package.
+the active accepted-truth package.
 
 Post-merge proof on exact `main` at `9d753cb`:
 
@@ -145,6 +146,37 @@ Post-merge proof on exact `main` at `9d753cb`:
 - full Flutter suite: 521 passed with 1 intentional skip; and
 - full static analysis: clean;
 - Python policy/maintenance suite: 30/30; and
+- Windows release build: passed.
+
+### Active accepted-truth integrity package
+
+A-06, A-07, and A-10 are active on `fix/accepted-truth-integrity`. Accepted
+truth now rejects non-truth keys; `lessonsLearned` uses a narrow supplemental
+service; mixed AppState and identity-enrichment writes share one transaction.
+Source recovery selects evidence only from a fully verified revision chain.
+
+Manifest proposals store a server-owned composite truth/project-tag snapshot.
+Approval revalidates both halves before truth, supplemental, tag, review, or
+audit writes. Raw assignments, dangling tag IDs, ambiguous case variants,
+absent-versus-empty tags, stale cross-domain races, deleted projects, and
+unverifiable partial replay fail closed with typed conflicts.
+
+The boundary is specified in the
+[`accepted truth integrity contract`](docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md).
+The three findings remain In progress until merge and exact-main post-merge
+proof. A-08 and A-09 remain open, so WP4 is not closed.
+
+Current focused proof:
+
+- combined truth, metadata, proposal, agent, MCP, and enrichment suite:
+  159/159;
+- independent A-06/A-07 review: GO;
+- independent A-10 review found and drove fail-closed fixes for partial replay,
+  case-ambiguous tag rows, and dangling assignments; and
+- full Flutter suite: 545 passed with 1 intentional skip;
+- full static analysis: clean;
+- Python policy/maintenance suite: 30/30;
+- generated-code build: passed with no tracked generated diff; and
 - Windows release build: passed.
 
 ## Current public state

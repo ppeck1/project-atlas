@@ -8,6 +8,7 @@ import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/services/atlas_agent_service.dart';
 import 'package:project_atlas/services/project_capsule_truth_service.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
+import 'package:project_atlas/shared/models/project_capsule_truth.dart';
 
 void main() {
   group('AtlasAgentService', () {
@@ -432,6 +433,199 @@ void main() {
         expect(
           await ProjectCapsuleTruthService(db).listRevisions('atlas'),
           hasLength(2),
+        );
+      },
+    );
+
+    test(
+      'source recovery verifies the full chain before trusting a matching revision',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final proposed = await service.proposeStatusChange(
+          projectId: 'atlas',
+          status: 'blocked',
+        );
+        final draft = await state.getDraft(proposed.draftId!);
+        final proposal = AtlasProposalDraft.fromDraft(draft!);
+        await ProjectCapsuleTruthService(db).acceptPatch(
+          projectId: 'atlas',
+          expectedRevisionId:
+              proposal.payload['baseTruthRevisionId']! as String,
+          fields: const {'status': 'blocked'},
+          actorLabel: 'Atlas Agent',
+          sourceKind: 'agent_proposal',
+          sourceId: draft.id,
+        );
+        await state.updateProjectMeta('atlas', {
+          'desiredOutcome': 'A later unrelated accepted revision.',
+        });
+        final newest = (await state.getProjectCapsuleRevisions('atlas')).first;
+        await db.customStatement(
+          'DROP TRIGGER IF EXISTS guard_project_capsule_revisions_update',
+        );
+        await db.customStatement(
+          'UPDATE project_capsule_revisions SET changed_fields_json = ? '
+          'WHERE id = ?',
+          ['{}', newest.id],
+        );
+
+        await expectLater(
+          service.rejectAgentProposal(draft.id),
+          throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+        );
+        expect(
+          (await service.getAgentProposalReview(draft.id))!.isPending,
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'partial manifest truth cannot be rejected or approved as a verified replay',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final oldTag = await state.saveTag(name: 'old');
+        await state.setProjectTags('atlas', [oldTag]);
+        final proposed = await service.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {
+            'title': 'Partially applied title',
+            'tags': ['new'],
+          },
+        );
+        final draft = await state.getDraft(proposed.draftId!);
+        final proposal = AtlasProposalDraft.fromDraft(draft!);
+        final base = proposal.payload['baseManifestSnapshot']! as Map;
+        await ProjectCapsuleTruthService(db).acceptPatch(
+          projectId: 'atlas',
+          expectedRevisionId: base['truthRevisionId']! as String,
+          fields: const {'title': 'Partially applied title'},
+          actorLabel: 'Atlas Agent',
+          sourceKind: 'agent_proposal',
+          sourceId: draft.id,
+        );
+
+        final unverifiableReplay = isA<AtlasProposalConflict>().having(
+          (error) => error.reason,
+          'reason',
+          AtlasProposalConflictReason.unverifiableManifestReplay,
+        );
+        await expectLater(
+          service.rejectAgentProposal(draft.id),
+          throwsA(unverifiableReplay),
+        );
+        await expectLater(
+          service.approveAgentProposal(draft.id),
+          throwsA(unverifiableReplay),
+        );
+
+        expect(
+          (await service.getAgentProposalReview(draft.id))!.isPending,
+          isTrue,
+        );
+        expect((await db.getTagsForProject('atlas')).map((tag) => tag.name), [
+          'old',
+        ]);
+        expect((await db.getTags()).map((tag) => tag.name), ['old']);
+        expect(
+          (await db.getProjectFull('atlas'))!.title,
+          'Partially applied title',
+        );
+        expect(await state.getProjectCapsuleRevisions('atlas'), hasLength(2));
+      },
+    );
+
+    test(
+      'manifest truth and supplemental metadata roll back and replay atomically',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final oldTag = await state.saveTag(name: 'old');
+        await state.setProjectTags('atlas', [oldTag]);
+        final proposed = await service.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {
+            'title': 'Accepted title',
+            'lessonsLearned': 'Keep the boundary atomic.',
+            'tags': ['accepted'],
+          },
+        );
+        final base = proposed.payload['baseManifestSnapshot']! as Map;
+        expect(base['schema'], 'atlas.manifest_proposal_base.v1');
+        expect(base['projectId'], 'atlas');
+        expect(base['truthRevisionId'], isNotEmpty);
+        expect(base['projectTagSetHash'], matches(RegExp(r'^[0-9a-f]{64}$')));
+
+        final crashing = AtlasAgentService(
+          state,
+          proposalApprovalStepHook: (step) async {
+            if (step == 'after-manifest-truth-write') {
+              throw StateError('manifest facade crash');
+            }
+          },
+        );
+        await expectLater(
+          crashing.approveAgentProposal(proposed.draftId!),
+          throwsA(isA<StateError>()),
+        );
+        final rolledBack = await db.getProjectFull('atlas');
+        expect(rolledBack!.title, 'Atlas');
+        expect(rolledBack.lessonsLearned, isNull);
+        expect((await db.getTagsForProject('atlas')).map((tag) => tag.name), [
+          'old',
+        ]);
+        expect(await state.getProjectCapsuleRevisions('atlas'), hasLength(1));
+        expect(
+          (await service.getAgentProposalReview(proposed.draftId!))!.isPending,
+          isTrue,
+        );
+
+        final applied = await service.approveAgentProposal(proposed.draftId!);
+        final replay = await service.approveAgentProposal(proposed.draftId!);
+        final accepted = await db.getProjectFull('atlas');
+        expect(replay.entityId, applied.entityId);
+        expect(accepted!.title, 'Accepted title');
+        expect(accepted.lessonsLearned, 'Keep the boundary atomic.');
+        expect((await db.getTagsForProject('atlas')).map((tag) => tag.name), [
+          'accepted',
+        ]);
+        expect(await state.getProjectCapsuleRevisions('atlas'), hasLength(2));
+      },
+    );
+
+    test(
+      'manifest tags distinguish absent, empty, and invalid input',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 1, 1));
+        final oldTag = await state.saveTag(name: 'old');
+        await state.setProjectTags('atlas', [oldTag]);
+
+        final metadataOnly = await service.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {'description': 'Tags are intentionally absent.'},
+        );
+        await service.approveAgentProposal(metadataOnly.draftId!);
+        expect((await db.getTagsForProject('atlas')).map((tag) => tag.name), [
+          'old',
+        ]);
+
+        final clearTags = await service.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {'tags': <String>[]},
+        );
+        await service.approveAgentProposal(clearTags.draftId!);
+        expect(await db.getTagsForProject('atlas'), isEmpty);
+
+        final invalid = await service.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {'tags': 'not-an-array'},
+        );
+        expect(invalid.acceptedForReview, isFalse);
+        expect(invalid.draftId, isNull);
+        expect(
+          invalid.validationErrors,
+          contains(
+            'Manifest tags must be an array of unique, nonblank strings.',
+          ),
         );
       },
     );
