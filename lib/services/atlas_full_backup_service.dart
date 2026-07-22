@@ -17,6 +17,12 @@ const atlasFullBackupSnapshotContract = 'atlas_owned_roots_quiesced_v1';
 const _atlasFullBackupCompletionSchema =
     'project_atlas_full_backup_completion_v1';
 const _atlasFullBackupCompletionFile = 'backup_complete.json';
+const _atlasFullBackupManifestFile = 'manifest.json';
+const _atlasFullBackupDescriptorKinds = {'sqlite_snapshot', 'app_owned_file'};
+const _atlasFullBackupReservedFiles = {
+  _atlasFullBackupManifestFile,
+  _atlasFullBackupCompletionFile,
+};
 
 enum AtlasFullBackupPhase {
   preparing,
@@ -385,11 +391,13 @@ class AtlasFullBackupService {
     if (requireCompletion) {
       await _validateCompletionMarker(bundle, manifestFile, errors);
     }
+    final actualFiles = await _enumerateBundleFiles(bundle, errors);
+    final declaredPaths = <String>{};
+    final sqliteSnapshotPaths = <String>[];
     final entries = manifest['files'];
     if (entries is! List) {
       errors.add('Manifest files must be a list.');
     } else {
-      final seenPaths = <String>{};
       for (final rawEntry in entries) {
         if (rawEntry is! Map) {
           errors.add('Manifest has a non-object file entry.');
@@ -397,21 +405,63 @@ class AtlasFullBackupService {
         }
         final entry = rawEntry.map((key, value) => MapEntry('$key', value));
         final relativePath = entry['path'];
+        final kind = entry['kind'];
+        final expectedBytes = entry['bytes'];
         final expectedDigest = entry['sha256'];
-        if (relativePath is! String || expectedDigest is! String) {
-          errors.add('Manifest file entry is missing path or SHA-256.');
+        if (entry.length != 4 ||
+            !entry.containsKey('path') ||
+            !entry.containsKey('kind') ||
+            !entry.containsKey('bytes') ||
+            !entry.containsKey('sha256')) {
+          errors.add(
+            'Manifest file descriptor must contain exactly path, kind, bytes, and SHA-256.',
+          );
           continue;
         }
-        if (!_isSafeBundleRelativePath(relativePath)) {
+        if (relativePath is! String) {
+          errors.add('Manifest file descriptor has an invalid path.');
+          continue;
+        }
+        final canonicalPath = _canonicalBundleRelativePath(relativePath);
+        if (canonicalPath == null) {
           errors.add('Manifest contains an unsafe file path: $relativePath.');
           continue;
         }
-        if (!seenPaths.add(relativePath)) {
+        if (_atlasFullBackupReservedFiles.contains(canonicalPath)) {
+          errors.add(
+            'Manifest file descriptor uses a reserved path: $relativePath.',
+          );
+          continue;
+        }
+        if (kind is! String ||
+            !_atlasFullBackupDescriptorKinds.contains(kind)) {
+          errors.add(
+            'Manifest file descriptor has an unsupported kind: $kind.',
+          );
+          continue;
+        }
+        if (expectedBytes is! int || expectedBytes < 0) {
+          errors.add(
+            'Manifest file descriptor has an invalid byte length: $relativePath.',
+          );
+          continue;
+        }
+        if (expectedDigest is! String ||
+            !RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedDigest)) {
+          errors.add(
+            'Manifest file descriptor has an invalid SHA-256: $relativePath.',
+          );
+          continue;
+        }
+        if (!declaredPaths.add(canonicalPath)) {
           errors.add('Manifest contains a duplicate file path: $relativePath.');
           continue;
         }
-        final file = File(p.joinAll([bundle.path, ...p.split(relativePath)]));
-        if (!await file.exists()) {
+        if (kind == 'sqlite_snapshot') {
+          sqliteSnapshotPaths.add(canonicalPath);
+        }
+        final file = actualFiles[canonicalPath];
+        if (file == null) {
           errors.add('Manifest file is missing: $relativePath.');
           continue;
         }
@@ -419,20 +469,21 @@ class AtlasFullBackupService {
         if (actualDigest != expectedDigest) {
           errors.add('Checksum mismatch: $relativePath.');
         }
-        final expectedBytes = entry['bytes'];
-        if (expectedBytes is num &&
-            await file.length() != expectedBytes.toInt()) {
+        if (await file.length() != expectedBytes) {
           errors.add('Byte length mismatch: $relativePath.');
         }
       }
     }
 
     final databasePath = manifest['databaseSnapshot'];
-    if (databasePath is! String || !_isSafeBundleRelativePath(databasePath)) {
+    final canonicalDatabasePath = databasePath is String
+        ? _canonicalBundleRelativePath(databasePath)
+        : null;
+    if (canonicalDatabasePath == null) {
       errors.add('Manifest databaseSnapshot is missing or unsafe.');
     } else {
-      final snapshot = File(p.joinAll([bundle.path, ...p.split(databasePath)]));
-      if (!await snapshot.exists()) {
+      final snapshot = actualFiles[canonicalDatabasePath];
+      if (snapshot == null) {
         errors.add('SQLite snapshot is missing: $databasePath.');
       } else {
         try {
@@ -445,6 +496,31 @@ class AtlasFullBackupService {
         } on Object catch (error) {
           errors.add('SQLite snapshot validation failed: $error');
         }
+      }
+    }
+    if (sqliteSnapshotPaths.length != 1) {
+      errors.add(
+        'Manifest must contain exactly one sqlite_snapshot file descriptor.',
+      );
+    } else if (canonicalDatabasePath != null &&
+        sqliteSnapshotPaths.single != canonicalDatabasePath) {
+      errors.add('Manifest sqlite_snapshot path must match databaseSnapshot.');
+    }
+
+    final expectedFiles = <String>{
+      ...declaredPaths,
+      _atlasFullBackupManifestFile,
+      if (actualFiles.containsKey(_atlasFullBackupCompletionFile))
+        _atlasFullBackupCompletionFile,
+    };
+    for (final path in actualFiles.keys) {
+      if (!expectedFiles.contains(path)) {
+        errors.add('Bundle contains an undeclared file: $path.');
+      }
+    }
+    for (final path in expectedFiles) {
+      if (!actualFiles.containsKey(path)) {
+        errors.add('Bundle inventory is missing a declared file: $path.');
       }
     }
 
@@ -573,29 +649,65 @@ class AtlasFullBackupService {
     Directory bundle,
     Map<String, Object?> manifest,
   ) async {
-    final entries = manifest['files'] as List;
-    final files = <Map<String, Object?>>[];
-    for (final rawEntry in entries) {
-      final entry = (rawEntry as Map).map(
-        (key, value) => MapEntry('$key', value),
+    final inventoryErrors = <String>[];
+    final inventory = await _enumerateBundleFiles(bundle, inventoryErrors);
+    if (inventoryErrors.isNotEmpty) {
+      throw AtlasFullBackupException(
+        'Cannot fingerprint an invalid bundle inventory: '
+        '${inventoryErrors.join('; ')}',
       );
-      final path = entry['path'] as String;
-      final file = File(p.joinAll([bundle.path, ...p.split(path)]));
+    }
+    final files = <Map<String, Object?>>[];
+    for (final entry in inventory.entries) {
+      final file = entry.value;
       files.add({
-        'path': path,
+        'path': entry.key,
         'bytes': await file.length(),
         'sha256': await _sha256File(file),
       });
     }
     files.sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
-    final databasePath = manifest['databaseSnapshot'] as String;
-    final database = File(p.joinAll([bundle.path, ...p.split(databasePath)]));
     final canonical = <String, Object?>{
       'schema': manifest['schema'],
       'files': files,
-      'databaseInventory': _readDatabaseInventory(database),
     };
     return sha256.convert(utf8.encode(jsonEncode(canonical))).toString();
+  }
+
+  Future<Map<String, File>> _enumerateBundleFiles(
+    Directory bundle,
+    List<String> errors,
+  ) async {
+    final files = <String, File>{};
+    if (!await bundle.exists()) return files;
+    await for (final entity in bundle.list(
+      recursive: true,
+      followLinks: false,
+    )) {
+      final relativePath = p.relative(entity.path, from: bundle.path);
+      final canonicalPath = _canonicalBundleRelativePath(relativePath);
+      if (canonicalPath == null) {
+        errors.add('Bundle contains an unsafe filesystem path: $relativePath.');
+        continue;
+      }
+      if (entity is Link) {
+        errors.add('Bundle contains a forbidden link: $canonicalPath.');
+        continue;
+      }
+      if (entity is Directory) continue;
+      if (entity is! File) {
+        errors.add(
+          'Bundle contains an unsupported filesystem entry: $canonicalPath.',
+        );
+        continue;
+      }
+      if (files.putIfAbsent(canonicalPath, () => entity) != entity) {
+        errors.add(
+          'Bundle contains a duplicate canonical path: $canonicalPath.',
+        );
+      }
+    }
+    return files;
   }
 
   Future<void> _writeCompletionMarker(Directory bundle, File manifest) async {
@@ -828,11 +940,27 @@ class AtlasFullBackupService {
       (await sha256.bind(file.openRead()).first).toString();
 
   static bool _isSafeBundleRelativePath(String value) {
-    if (value.trim().isEmpty || p.isAbsolute(value)) return false;
-    final normalized = p.normalize(value);
-    return normalized != '.' &&
-        !normalized.startsWith('..${p.separator}') &&
-        normalized != '..';
+    return _canonicalBundleRelativePath(value) != null;
+  }
+
+  static String? _canonicalBundleRelativePath(String value) {
+    if (value.trim().isEmpty || value.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
+      return null;
+    }
+    final portable = value.replaceAll('\\', '/');
+    if (p.posix.isAbsolute(portable) ||
+        p.windows.isAbsolute(value) ||
+        RegExp(r'^[A-Za-z]:').hasMatch(portable)) {
+      return null;
+    }
+    final normalized = p.posix.normalize(portable);
+    if (normalized != portable ||
+        normalized == '.' ||
+        normalized == '..' ||
+        normalized.startsWith('../')) {
+      return null;
+    }
+    return normalized.toLowerCase();
   }
 
   static String _quoteIdentifier(String identifier) =>

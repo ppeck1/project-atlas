@@ -1,6 +1,6 @@
 # Project Atlas follow-up matrix
 
-Status date: 2026-07-21  
+Status date: 2026-07-22
 Authority: canonical live follow-up ledger for the 2026-07-21 second-pass audit  
 Source: [preserved audit artifact](audits/PROJECT_ATLAS_SECOND_PASS_AUDIT_2026-07-21.txt)
 
@@ -40,6 +40,12 @@ passed on current `main`. The attended single-worker constraint is therefore
 retired. A-11 remains open in WP3, and A-06 through A-10 remain open in WP4,
 so neither work package is fully closed.
 
+R-07 through R-10 are in progress on `fix/bundle-validation-integrity`.
+R-07 hardens exact full-backup directory inventory; R-08 through R-10 define
+bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11 through
+R-14 remain open, so WP2 is not closed. The ledger contains 11 Closed, 4 In
+progress, and 36 Open findings.
+
 ## Finding ledger
 
 | ID | Pri | Disposition | Status | Package | Finding | Owner | Target PR | Required proof / closure evidence |
@@ -50,10 +56,10 @@ so neither work package is fully closed.
 | SPA-20260721-R-04 | P1 | Accepted | Closed | WP1 | Parent exits without child plan-acceptance acknowledgement. | Codex | PR #30 | Validated child acknowledgement and early-exit handling merged as `1e18ebd`; post-merge focused suite passed 18/18. |
 | SPA-20260721-R-05 | P1 | Accepted | Closed | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Codex | PR #30 | Owned-root atomic v2 plan, strict schema/checksum/identity/path validation, and threat model merged as `1e18ebd`; post-merge focused suite passed 18/18. |
 | SPA-20260721-R-06 | P0 | Accepted | Closed | WP2 | Full backup may mix database and file states during concurrent mutation. | Codex | PR #31 | Exclusive backup/mutation coordination, fixed owned-root inventory, source length/SHA-256 recheck, and concurrent document/media proof merged as `31f966c`; post-merge focused suite passed 10/10. Contract: `docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md`. |
-| SPA-20260721-R-07 | P1 | Needs verification | Open | WP2 | Bundle manifest inventory is not exact. | Unassigned | TBD | Missing, duplicate, and undeclared files all fail validation. |
-| SPA-20260721-R-08 | P1 | Needs verification | Open | WP2 | Project recovery decodes unbounded ZIP content in memory. | Unassigned | TBD | Source, entry-count, per-entry, and expanded-size limits with hostile fixtures. |
-| SPA-20260721-R-09 | P1 | Needs verification | Open | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Unassigned | TBD | Exact path/kind/size/SHA-256 manifest rejects all mutations. |
-| SPA-20260721-R-10 | P1 | Needs verification | Open | WP2 | Archive path validation is not canonical Windows containment validation. | Unassigned | TBD | Traversal, drive, ADS, device-name, control, and trailing-dot/space tests. |
+| SPA-20260721-R-07 | P1 | Accepted | In progress | WP2 | Full-backup manifest inventory is not exact. | Codex | `fix/bundle-validation-integrity` | Strict v1 descriptors, one matching SQLite snapshot, and exact case-folded regular-file inventory must reject missing, duplicate, aliased, malformed, linked, and undeclared content. |
+| SPA-20260721-R-08 | P1 | Accepted | In progress | WP2 | Project recovery decodes unbounded ZIP content in memory. | Codex | `fix/bundle-validation-integrity` | File-backed two-pass recovery must enforce pre-decode source/directory/entry limits plus actual compressed, per-entry, metadata, and aggregate expansion bounds with forged-header proof. |
+| SPA-20260721-R-09 | P1 | Accepted | In progress | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Codex | `fix/bundle-validation-integrity` | Manifest v2 exact path/kind/bytes/SHA-256 inventory and second-pass rebinding must reject missing, extra, modified, malformed, and wrong-kind payloads. |
+| SPA-20260721-R-10 | P1 | Accepted | In progress | WP2 | Archive path validation is not canonical Windows containment validation. | Codex | `fix/bundle-validation-integrity` | Platform-independent Windows path, alias, ancestor, and containment checks must reject traversal, drive, ADS, device, control, invalid-character, and trailing-dot/space inputs before staging. |
 | SPA-20260721-R-11 | P2 | Needs verification | Open | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Unassigned | TBD | `.incomplete` lifecycle and bounded cleanup/quarantine tests. |
 | SPA-20260721-R-12 | P2 | Needs verification | Open | WP2 | Recovery artifacts have no retention policy. | Unassigned | TBD | Local previewed retention preserves newest safety backup and active plan. |
 | SPA-20260721-R-13 | P2 | Needs verification | Open | WP2 | Portable export builds the full archive in memory. | Unassigned | TBD | Streaming/isolate export with progress, cancellation, and bounds. |

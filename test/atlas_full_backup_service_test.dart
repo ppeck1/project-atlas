@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:project_atlas/services/atlas_full_backup_service.dart';
@@ -322,6 +323,190 @@ void main() {
     );
   });
 
+  test('validation rejects an undeclared regular file', () async {
+    final result = await service().createBundle(
+      Directory(p.join(tempDir.path, 'backups')),
+    );
+    await File(
+      p.join(result.bundle.path, 'undeclared.txt'),
+    ).writeAsString('not in the manifest');
+
+    final validation = await service().validateBundle(result.bundle);
+
+    expect(validation.isValid, isFalse);
+    expect(
+      validation.errors,
+      contains('Bundle contains an undeclared file: undeclared.txt.'),
+    );
+  });
+
+  test('validation rejects a case-insensitive inventory alias', () async {
+    final result = await service().createBundle(
+      Directory(p.join(tempDir.path, 'backups')),
+    );
+    final original = File(
+      p.join(result.bundle.path, 'files', 'atlas_documents', 'brief.txt'),
+    );
+    final alias = File(
+      p.join(result.bundle.path, 'files', 'atlas_documents', 'BRIEF.TXT'),
+    );
+    try {
+      await alias.writeAsString('alias');
+    } on FileSystemException {
+      // Case-insensitive hosts cannot materialize both aliases; the policy is
+      // exercised by this fixture on case-sensitive CI hosts.
+      return;
+    }
+    if (await original.readAsString() == 'alias') return;
+
+    final validation = await service().validateBundle(result.bundle);
+
+    expect(validation.isValid, isFalse);
+    expect(
+      validation.errors.any(
+        (error) => error.contains('duplicate canonical path'),
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'validation requires one correctly typed database snapshot descriptor',
+    () async {
+      for (final omitDescriptor in [true, false]) {
+        final suffix = omitDescriptor ? 'omitted' : 'mis-kinded';
+        final result = await service().createBundle(
+          Directory(p.join(tempDir.path, 'backups-$suffix')),
+        );
+        final manifest = await _readManifest(result.bundle);
+        final files = manifest['files'] as List<dynamic>;
+        final databaseDescriptor = files
+            .whereType<Map<String, dynamic>>()
+            .singleWhere((entry) => entry['kind'] == 'sqlite_snapshot');
+        if (omitDescriptor) {
+          files.remove(databaseDescriptor);
+        } else {
+          databaseDescriptor['kind'] = 'app_owned_file';
+        }
+        await _writeManifestAndRefreshCompletion(result.bundle, manifest);
+
+        final validation = await service().validateBundle(result.bundle);
+
+        expect(
+          validation.isValid,
+          isFalse,
+          reason:
+              '$suffix unexpectedly passed:\n${validation.errors.join('\n')}',
+        );
+        expect(
+          validation.errors,
+          contains(
+            'Manifest must contain exactly one sqlite_snapshot file descriptor.',
+          ),
+        );
+      }
+    },
+  );
+
+  test('validation rejects malformed or incomplete file descriptors', () async {
+    final cases = <({String name, void Function(Map<String, dynamic>) mutate})>[
+      (name: 'missing-bytes', mutate: (entry) => entry.remove('bytes')),
+      (name: 'negative-bytes', mutate: (entry) => entry['bytes'] = -1),
+      (
+        name: 'uppercase-sha',
+        mutate: (entry) =>
+            entry['sha256'] = (entry['sha256'] as String).toUpperCase(),
+      ),
+      (
+        name: 'noncanonical-path',
+        mutate: (entry) => entry['path'] = (entry['path'] as String)
+            .replaceFirst('files', 'files//'),
+      ),
+      (name: 'unknown-field', mutate: (entry) => entry['unexpected'] = true),
+    ];
+
+    for (final testCase in cases) {
+      final result = await service().createBundle(
+        Directory(p.join(tempDir.path, 'backups-${testCase.name}')),
+      );
+      final manifest = await _readManifest(result.bundle);
+      final descriptor = (manifest['files'] as List<dynamic>)
+          .whereType<Map<String, dynamic>>()
+          .singleWhere((entry) => entry['kind'] == 'app_owned_file');
+      testCase.mutate(descriptor);
+      await _writeManifestAndRefreshCompletion(result.bundle, manifest);
+
+      final validation = await service().validateBundle(result.bundle);
+
+      expect(
+        validation.isValid,
+        isFalse,
+        reason:
+            '${testCase.name} unexpectedly passed:\n${validation.errors.join('\n')}',
+      );
+    }
+  });
+
+  test('validation rejects missing and ambiguous declared inventory', () async {
+    final missing = await service().createBundle(
+      Directory(p.join(tempDir.path, 'backups-missing')),
+    );
+    await File(
+      p.join(missing.bundle.path, 'files', 'atlas_documents', 'brief.txt'),
+    ).delete();
+    final missingValidation = await service().validateBundle(missing.bundle);
+    expect(missingValidation.isValid, isFalse);
+    expect(
+      missingValidation.errors.any(
+        (error) => error.contains('Manifest file is missing'),
+      ),
+      isTrue,
+    );
+
+    for (final aliasCase in [false, true]) {
+      final suffix = aliasCase ? 'case-alias' : 'duplicate';
+      final result = await service().createBundle(
+        Directory(p.join(tempDir.path, 'backups-$suffix')),
+      );
+      final manifest = await _readManifest(result.bundle);
+      final files = manifest['files']! as List<dynamic>;
+      final document = Map<String, dynamic>.from(
+        files.cast<Map<String, dynamic>>().singleWhere(
+          (entry) => entry['kind'] == 'app_owned_file',
+        ),
+      );
+      if (aliasCase) {
+        document['path'] = (document['path']! as String).toUpperCase();
+      }
+      files.add(document);
+      await _writeManifestAndRefreshCompletion(result.bundle, manifest);
+
+      final validation = await service().validateBundle(result.bundle);
+      expect(validation.isValid, isFalse, reason: suffix);
+      expect(
+        validation.errors.any((error) => error.contains('duplicate file path')),
+        isTrue,
+        reason: suffix,
+      );
+    }
+
+    final mismatched = await service().createBundle(
+      Directory(p.join(tempDir.path, 'backups-db-pointer')),
+    );
+    final manifest = await _readManifest(mismatched.bundle);
+    final files = manifest['files']! as List<dynamic>;
+    manifest['databaseSnapshot'] = files
+        .cast<Map<String, dynamic>>()
+        .singleWhere((entry) => entry['kind'] == 'app_owned_file')['path'];
+    await _writeManifestAndRefreshCompletion(mismatched.bundle, manifest);
+    final validation = await service().validateBundle(mismatched.bundle);
+    expect(validation.isValid, isFalse);
+    expect(
+      validation.errors,
+      contains('Manifest sqlite_snapshot path must match databaseSnapshot.'),
+    );
+  });
+
   test(
     'restores a verified bundle into staging without touching live data',
     () async {
@@ -408,4 +593,32 @@ void main() {
     );
     expect(await restoreRoot.exists(), isFalse);
   });
+}
+
+Future<Map<String, dynamic>> _readManifest(Directory bundle) async {
+  return jsonDecode(
+        await File(p.join(bundle.path, 'manifest.json')).readAsString(),
+      )
+      as Map<String, dynamic>;
+}
+
+Future<void> _writeManifestAndRefreshCompletion(
+  Directory bundle,
+  Map<String, dynamic> manifest,
+) async {
+  final manifestFile = File(p.join(bundle.path, 'manifest.json'));
+  await manifestFile.writeAsString(
+    const JsonEncoder.withIndent('  ').convert(manifest),
+    flush: true,
+  );
+  final completionFile = File(p.join(bundle.path, 'backup_complete.json'));
+  final completion =
+      jsonDecode(await completionFile.readAsString()) as Map<String, dynamic>;
+  completion['manifestSha256'] = sha256
+      .convert(await manifestFile.readAsBytes())
+      .toString();
+  await completionFile.writeAsString(
+    const JsonEncoder.withIndent('  ').convert(completion),
+    flush: true,
+  );
 }
