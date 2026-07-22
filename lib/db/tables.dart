@@ -63,6 +63,21 @@ class ProjectCapsuleRevisions extends Table {
   List<String> get customConstraints => ['UNIQUE(project_id, revision_number)'];
 }
 
+@DataClassName('ProjectCapsuleLedgerCheckpoint')
+class ProjectCapsuleLedgerCheckpoints extends Table {
+  TextColumn get projectId => text().references(Projects, #id)();
+  TextColumn get headRevisionId => text()();
+  IntColumn get headRevisionNumber => integer()();
+  IntColumn get revisionCount => integer()();
+  TextColumn get headContentHash => text()();
+  TextColumn get ledgerDigest => text()();
+  BoolColumn get dirty => boolean().withDefault(const Constant(true))();
+  DateTimeColumn get verifiedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {projectId}; // ignore: override_on_non_overriding_member
+}
+
 class AppMeta extends Table {
   TextColumn get key => text()();
   TextColumn get value => text()();

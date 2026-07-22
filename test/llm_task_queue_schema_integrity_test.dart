@@ -421,7 +421,7 @@ void main() {
           migrated.firstWhere((row) => row.id == 'cancelled-failed').resultJson,
           '{}',
         );
-        expect(db.schemaVersion, 26);
+        expect(db.schemaVersion, 27);
         expect(
           await db
               .customSelect("PRAGMA foreign_key_check('llm_task_queue')")
@@ -489,7 +489,7 @@ void main() {
         WHERE type = 'trigger' AND name LIKE 'guard_llm_task_queue_%'
       ''').get();
         expect(triggers, hasLength(4));
-        expect(migrated.schemaVersion, 26);
+        expect(migrated.schemaVersion, 27);
       },
     );
 

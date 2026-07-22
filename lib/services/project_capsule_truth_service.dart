@@ -166,24 +166,46 @@ class ProjectCapsuleTruthAcceptance {
   });
 }
 
+class _VerifiedCapsuleCheckpoint {
+  final ProjectCapsuleLedgerCheckpoint row;
+  final ProjectCapsuleAcceptedRevision head;
+
+  const _VerifiedCapsuleCheckpoint(this.row, this.head);
+}
+
+class _VerifiedCapsuleLedger {
+  final List<ProjectCapsuleAcceptedRevision> revisions;
+  final String digest;
+
+  const _VerifiedCapsuleLedger(this.revisions, this.digest);
+}
+
 class ProjectCapsuleTruthService {
   final AppDb db;
   final DateTime Function() _now;
+  final void Function(String operation, int revisionRows)?
+  _revisionReadObserver;
 
-  ProjectCapsuleTruthService(this.db, {DateTime Function()? now})
-    : _now = now ?? DateTime.now;
+  ProjectCapsuleTruthService(
+    this.db, {
+    DateTime Function()? now,
+    void Function(String operation, int revisionRows)?
+    revisionReadObserverForTesting,
+  }) : _now = now ?? DateTime.now,
+       _revisionReadObserver = revisionReadObserverForTesting;
 
   Future<ProjectCapsuleTruthState?> load(String projectId) async {
-    final project = await db.getProjectFull(projectId);
-    if (project == null) return null;
-    final revisions = await _verifiedRevisions(projectId);
-    final head = revisions.isEmpty ? null : revisions.first;
-    return ProjectCapsuleTruthState(
-      project: project,
-      truth: ProjectCapsuleTruth.fromProjectMap(project.toJson()),
-      recordedHead: head,
-      revisionCount: revisions.length,
-    );
+    return db.transaction(() async {
+      final project = await db.getProjectFull(projectId);
+      if (project == null) return null;
+      final checkpoint = await _verifiedCheckpoint(projectId);
+      return ProjectCapsuleTruthState(
+        project: project,
+        truth: ProjectCapsuleTruth.fromProjectMap(project.toJson()),
+        recordedHead: checkpoint.head,
+        revisionCount: checkpoint.row.revisionCount,
+      );
+    });
   }
 
   Future<List<ProjectCapsuleAcceptedRevision>> listRevisions(
@@ -191,9 +213,50 @@ class ProjectCapsuleTruthService {
     int limit = 50,
     int offset = 0,
   }) async {
-    final revisions = await _verifiedRevisions(projectId);
-    final start = offset.clamp(0, revisions.length);
-    return List.unmodifiable(revisions.skip(start).take(limit.clamp(1, 200)));
+    final pageLimit = limit.clamp(1, 200);
+    final pageOffset = offset < 0 ? 0 : offset;
+    return db.transaction(() async {
+      final checkpoint = await _verifiedCheckpoint(projectId);
+      if (pageOffset >= checkpoint.row.revisionCount) return const [];
+      final rows =
+          await (db.select(db.projectCapsuleRevisions)
+                ..where((table) => table.projectId.equals(projectId))
+                ..orderBy([(table) => OrderingTerm.desc(table.revisionNumber)])
+                ..limit(pageLimit + 1, offset: pageOffset))
+              .get();
+      _revisionReadObserver?.call('history_page', rows.length);
+      final revisions = rows
+          .map(ProjectCapsuleAcceptedRevision.fromRow)
+          .toList(growable: false);
+      final visibleCount = revisions.length.clamp(0, pageLimit);
+      for (var index = 0; index < visibleCount; index++) {
+        final revision = revisions[index];
+        final older = index + 1 < revisions.length
+            ? revisions[index + 1]
+            : null;
+        if (older == null) {
+          if (revision.revisionNumber != 1 ||
+              revision.parentRevisionId != null ||
+              revision.changedFields.isNotEmpty) {
+            throw ProjectCapsuleTruthLedgerException(
+              'Capsule revision ${revision.id} has an invalid baseline.',
+            );
+          }
+          continue;
+        }
+        if (revision.revisionNumber != older.revisionNumber + 1 ||
+            revision.parentRevisionId != older.id ||
+            !_changesMatch(
+              older.truth.diff(revision.truth),
+              revision.changedFields,
+            )) {
+          throw ProjectCapsuleTruthLedgerException(
+            'Capsule revision ${revision.id} failed page verification.',
+          );
+        }
+      }
+      return List.unmodifiable(revisions.take(visibleCount));
+    });
   }
 
   Future<ProjectCapsuleAcceptedRevision?> findAcceptedRevisionBySource({
@@ -201,6 +264,7 @@ class ProjectCapsuleTruthService {
     required String sourceKind,
     required String sourceId,
   }) async {
+    await _verifiedCheckpoint(projectId);
     final revisions = await _verifiedRevisions(projectId);
     for (final revision in revisions) {
       if (revision.sourceKind == sourceKind && revision.sourceId == sourceId) {
@@ -208,6 +272,31 @@ class ProjectCapsuleTruthService {
       }
     }
     return null;
+  }
+
+  /// Performs an explicit full-chain audit without repairing or cleaning the
+  /// durable checkpoint. Ordinary reads use the checkpointed bounded path.
+  Future<int> auditLedger(String projectId) {
+    return db.transaction(() async {
+      final checkpoint = await (db.select(
+        db.projectCapsuleLedgerCheckpoints,
+      )..where((table) => table.projectId.equals(projectId))).getSingleOrNull();
+      final rows = await _revisionRows(projectId);
+      final ledger = _verifyRevisionRows(projectId, rows);
+      final head = ledger.revisions.first;
+      if (checkpoint == null ||
+          checkpoint.dirty ||
+          ledger.digest != checkpoint.ledgerDigest ||
+          ledger.revisions.length != checkpoint.revisionCount ||
+          head.id != checkpoint.headRevisionId ||
+          head.revisionNumber != checkpoint.headRevisionNumber ||
+          head.contentHash != checkpoint.headContentHash) {
+        throw ProjectCapsuleTruthLedgerException(
+          'Capsule revision ledger for $projectId failed its full audit.',
+        );
+      }
+      return ledger.revisions.length;
+    });
   }
 
   Future<ProjectCapsuleTruthAcceptance> acceptPatch({
@@ -223,6 +312,7 @@ class ProjectCapsuleTruthService {
     bool recordReconciliation = false,
   }) {
     return db.transaction(() async {
+      await _acquireCheckpointWrite(projectId, expectedRevisionId);
       final beforeState = await load(projectId);
       if (beforeState == null) {
         throw StateError('Project not found: $projectId');
@@ -357,20 +447,86 @@ class ProjectCapsuleTruthService {
     });
   }
 
-  Future<List<ProjectCapsuleRevisionRow>> _revisionRows(String projectId) {
-    return (db.select(db.projectCapsuleRevisions)
-          ..where((table) => table.projectId.equals(projectId))
-          ..orderBy([(table) => OrderingTerm.desc(table.revisionNumber)]))
-        .get();
+  Future<void> _acquireCheckpointWrite(
+    String projectId,
+    String? expectedRevisionId,
+  ) async {
+    final hasRecordedExpectation =
+        expectedRevisionId != null &&
+        !expectedRevisionId.startsWith('derived-');
+    await db.customUpdate(
+      'UPDATE project_capsule_ledger_checkpoints '
+      'SET verified_at = verified_at '
+      'WHERE project_id = ? AND dirty = 0'
+      '${hasRecordedExpectation ? ' AND head_revision_id = ?' : ''}',
+      variables: [
+        Variable<String>(projectId),
+        if (hasRecordedExpectation) Variable<String>(expectedRevisionId),
+      ],
+      updates: {db.projectCapsuleLedgerCheckpoints},
+    );
+  }
+
+  Future<List<ProjectCapsuleRevisionRow>> _revisionRows(
+    String projectId,
+  ) async {
+    final rows =
+        await (db.select(db.projectCapsuleRevisions)
+              ..where((table) => table.projectId.equals(projectId))
+              ..orderBy([(table) => OrderingTerm.desc(table.revisionNumber)]))
+            .get();
+    _revisionReadObserver?.call('full_chain', rows.length);
+    return rows;
+  }
+
+  Future<_VerifiedCapsuleCheckpoint> _verifiedCheckpoint(
+    String projectId,
+  ) async {
+    final checkpoint = await (db.select(
+      db.projectCapsuleLedgerCheckpoints,
+    )..where((table) => table.projectId.equals(projectId))).getSingleOrNull();
+    if (checkpoint == null || checkpoint.dirty) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule revision ledger for $projectId has no clean checkpoint.',
+      );
+    }
+    final latest =
+        await (db.select(db.projectCapsuleRevisions)
+              ..where((table) => table.projectId.equals(projectId))
+              ..orderBy([(table) => OrderingTerm.desc(table.revisionNumber)])
+              ..limit(1))
+            .getSingleOrNull();
+    _revisionReadObserver?.call('checkpoint_head', latest == null ? 0 : 1);
+    if (latest == null ||
+        latest.id != checkpoint.headRevisionId ||
+        latest.revisionNumber != checkpoint.headRevisionNumber ||
+        latest.revisionNumber != checkpoint.revisionCount ||
+        latest.contentHash != checkpoint.headContentHash) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule revision checkpoint for $projectId does not match its head.',
+      );
+    }
+    return _VerifiedCapsuleCheckpoint(
+      checkpoint,
+      ProjectCapsuleAcceptedRevision.fromRow(latest),
+    );
   }
 
   Future<List<ProjectCapsuleAcceptedRevision>> _verifiedRevisions(
     String projectId,
   ) async {
+    return _verifyRevisionRows(
+      projectId,
+      await _revisionRows(projectId),
+    ).revisions;
+  }
+
+  _VerifiedCapsuleLedger _verifyRevisionRows(
+    String projectId,
+    List<ProjectCapsuleRevisionRow> rows,
+  ) {
     final revisions = List<ProjectCapsuleAcceptedRevision>.unmodifiable(
-      (await _revisionRows(
-        projectId,
-      )).map(ProjectCapsuleAcceptedRevision.fromRow),
+      rows.map(ProjectCapsuleAcceptedRevision.fromRow),
     );
     if (revisions.isEmpty) {
       throw ProjectCapsuleTruthLedgerException(
@@ -379,6 +535,7 @@ class ProjectCapsuleTruthService {
     }
     ProjectCapsuleAcceptedRevision? parent;
     var expectedNumber = 1;
+    var digest = projectCapsuleLedgerSeed;
     for (final revision in revisions.reversed) {
       if (revision.projectId != projectId) {
         throw ProjectCapsuleTruthLedgerException(
@@ -405,10 +562,26 @@ class ProjectCapsuleTruthService {
           'Capsule revision ${revision.id} has an invalid recorded diff.',
         );
       }
+      final row = rows[rows.length - expectedNumber];
+      digest = projectCapsuleLedgerDigest(
+        previousDigest: digest,
+        revisionId: row.id,
+        projectId: row.projectId,
+        revisionNumber: row.revisionNumber,
+        parentRevisionId: row.parentRevisionId,
+        contentHash: row.contentHash,
+        changedFieldsJson: row.changedFieldsJson,
+        actorType: row.actorType,
+        actorLabel: row.actorLabel,
+        sourceKind: row.sourceKind,
+        sourceId: row.sourceId,
+        reason: row.reason,
+        acceptedAt: row.acceptedAt,
+      );
       parent = revision;
       expectedNumber++;
     }
-    return revisions;
+    return _VerifiedCapsuleLedger(revisions, digest);
   }
 
   Future<ProjectCapsuleAcceptedRevision> _insertRevision({
@@ -445,7 +618,70 @@ class ProjectCapsuleTruthService {
       acceptedAt: acceptedAt,
     );
     await db.into(db.projectCapsuleRevisions).insert(row);
+    await _advanceCheckpoint(row, parent);
     return ProjectCapsuleAcceptedRevision.fromRow(row);
+  }
+
+  Future<void> _advanceCheckpoint(
+    ProjectCapsuleRevisionRow revision,
+    ProjectCapsuleAcceptedRevision? parent,
+  ) async {
+    if (parent == null) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule revision ${revision.id} cannot advance without a checkpointed parent.',
+      );
+    }
+    final checkpoint =
+        await (db.select(db.projectCapsuleLedgerCheckpoints)
+              ..where((table) => table.projectId.equals(revision.projectId)))
+            .getSingleOrNull();
+    if (checkpoint == null ||
+        !checkpoint.dirty ||
+        checkpoint.headRevisionId != parent.id ||
+        checkpoint.headRevisionNumber != parent.revisionNumber ||
+        checkpoint.revisionCount != parent.revisionNumber) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule checkpoint for ${revision.projectId} could not advance atomically.',
+      );
+    }
+    final digest = projectCapsuleLedgerDigest(
+      previousDigest: checkpoint.ledgerDigest,
+      revisionId: revision.id,
+      projectId: revision.projectId,
+      revisionNumber: revision.revisionNumber,
+      parentRevisionId: revision.parentRevisionId,
+      contentHash: revision.contentHash,
+      changedFieldsJson: revision.changedFieldsJson,
+      actorType: revision.actorType,
+      actorLabel: revision.actorLabel,
+      sourceKind: revision.sourceKind,
+      sourceId: revision.sourceId,
+      reason: revision.reason,
+      acceptedAt: revision.acceptedAt,
+    );
+    final updated =
+        await (db.update(db.projectCapsuleLedgerCheckpoints)..where(
+              (table) =>
+                  table.projectId.equals(revision.projectId) &
+                  table.headRevisionId.equals(parent.id) &
+                  table.dirty.equals(true),
+            ))
+            .write(
+              ProjectCapsuleLedgerCheckpointsCompanion(
+                headRevisionId: Value(revision.id),
+                headRevisionNumber: Value(revision.revisionNumber),
+                revisionCount: Value(checkpoint.revisionCount + 1),
+                headContentHash: Value(revision.contentHash),
+                ledgerDigest: Value(digest),
+                dirty: const Value(false),
+                verifiedAt: Value(revision.acceptedAt),
+              ),
+            );
+    if (updated != 1) {
+      throw ProjectCapsuleTruthLedgerException(
+        'Capsule checkpoint for ${revision.projectId} lost its advance race.',
+      );
+    }
   }
 }
 

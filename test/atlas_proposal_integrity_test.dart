@@ -844,6 +844,237 @@ void main() {
       },
     );
 
+    test('task tags distinguish omitted from explicitly empty', () async {
+      await db.createProject('omitted', 'Omitted', DateTime(2026, 7, 21));
+      final preservedTag = await state.saveTag(name: 'preserved');
+      final omittedTask = await state.addWorkItemToProject(
+        'omitted',
+        'Original omitted task',
+        tagIds: [preservedTag],
+      );
+      final omitted = await service.proposeTaskUpdate(
+        projectId: 'omitted',
+        workItemId: omittedTask,
+        title: 'Updated omitted task',
+      );
+      expect(omitted.payload['tagNamesSpecified'], isFalse);
+      expect(omitted.payload.containsKey('tagNames'), isFalse);
+
+      await service.approveAgentProposal(omitted.draftId!);
+
+      expect(
+        (await db.getTagsForWorkItem(omittedTask)).map((tag) => tag.name),
+        ['preserved'],
+      );
+
+      await db.createProject('empty', 'Empty', DateTime(2026, 7, 21));
+      final clearedTag = await state.saveTag(name: 'to-clear');
+      final emptyTask = await state.addWorkItemToProject(
+        'empty',
+        'Original empty task',
+        tagIds: [clearedTag],
+      );
+      final empty = await service.proposeTaskUpdate(
+        projectId: 'empty',
+        workItemId: emptyTask,
+        title: 'Updated empty task',
+        tagNames: const [],
+      );
+      expect(empty.payload['tagNamesSpecified'], isTrue);
+      expect(empty.payload['tagNames'], isEmpty);
+
+      await service.approveAgentProposal(empty.draftId!);
+
+      expect(await db.getTagsForWorkItem(emptyTask), isEmpty);
+    });
+
+    test(
+      'empty task tag replacement rolls back and retries atomically',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+        final oldTag = await state.saveTag(name: 'old');
+        final workItemId = await state.addWorkItemToProject(
+          'atlas',
+          'Original task',
+          tagIds: [oldTag],
+        );
+        final proposal = await service.proposeTaskUpdate(
+          projectId: 'atlas',
+          workItemId: workItemId,
+          title: 'Cleared task',
+          tagNames: const [],
+        );
+        final crashing = AtlasAgentService(
+          state,
+          proposalApprovalStepHook: (step) async {
+            if (step == 'after-task-tags-write') {
+              throw StateError('empty task tag write crash');
+            }
+          },
+        );
+
+        await expectLater(
+          crashing.approveAgentProposal(proposal.draftId!),
+          throwsA(isA<StateError>()),
+        );
+        expect((await db.getWorkItem(workItemId))!.title, 'Original task');
+        expect(
+          (await db.getTagsForWorkItem(workItemId)).map((tag) => tag.name),
+          ['old'],
+        );
+        expect(
+          (await service.getAgentProposalReview(proposal.draftId!))!.isPending,
+          isTrue,
+        );
+
+        await service.approveAgentProposal(proposal.draftId!);
+        expect((await db.getWorkItem(workItemId))!.title, 'Cleared task');
+        expect(await db.getTagsForWorkItem(workItemId), isEmpty);
+      },
+    );
+
+    test(
+      'legacy marker-absent task tag payloads retain old semantics',
+      () async {
+        Future<void> removeIntentMarker(String draftId) async {
+          final draft = await state.getDraft(draftId);
+          final envelope =
+              jsonDecode(draft!.inputJson!) as Map<String, Object?>;
+          final payload = Map<String, Object?>.from(envelope['payload']! as Map)
+            ..remove('tagNamesSpecified');
+          envelope['payload'] = payload;
+          await state.updateDraftReview(
+            id: draft.id,
+            accepted: false,
+            inputJson: jsonEncode(envelope),
+          );
+        }
+
+        await db.createProject(
+          'legacy-empty',
+          'Legacy empty',
+          DateTime(2026, 7, 21),
+        );
+        final preservedTag = await state.saveTag(name: 'legacy-preserved');
+        final emptyTask = await state.addWorkItemToProject(
+          'legacy-empty',
+          'Legacy empty task',
+          tagIds: [preservedTag],
+        );
+        final empty = await service.proposeTaskUpdate(
+          projectId: 'legacy-empty',
+          workItemId: emptyTask,
+          title: 'Legacy empty updated',
+          tagNames: const [],
+        );
+        await removeIntentMarker(empty.draftId!);
+        await service.approveAgentProposal(empty.draftId!);
+        expect(
+          (await db.getTagsForWorkItem(emptyTask)).map((tag) => tag.name),
+          ['legacy-preserved'],
+        );
+
+        await db.createProject(
+          'legacy-nonempty',
+          'Legacy nonempty',
+          DateTime(2026, 7, 21),
+        );
+        final replacedTag = await state.saveTag(name: 'legacy-old');
+        final nonemptyTask = await state.addWorkItemToProject(
+          'legacy-nonempty',
+          'Legacy nonempty task',
+          tagIds: [replacedTag],
+        );
+        final nonempty = await service.proposeTaskUpdate(
+          projectId: 'legacy-nonempty',
+          workItemId: nonemptyTask,
+          title: 'Legacy nonempty updated',
+          tagNames: const ['legacy-new'],
+        );
+        await removeIntentMarker(nonempty.draftId!);
+        await service.approveAgentProposal(nonempty.draftId!);
+        expect(
+          (await db.getTagsForWorkItem(nonemptyTask)).map((tag) => tag.name),
+          ['legacy-new'],
+        );
+      },
+    );
+
+    test('tampered task tag intent fails closed and remains pending', () async {
+      final cases = <String, void Function(Map<String, Object?>)>{
+        'null-marker': (payload) => payload['tagNamesSpecified'] = null,
+        'scalar-marker': (payload) => payload['tagNamesSpecified'] = 'true',
+        'false-with-tags': (payload) => payload['tagNamesSpecified'] = false,
+        'true-without-tags': (payload) => payload.remove('tagNames'),
+        'scalar-tags': (payload) => payload['tagNames'] = 'tampered-tag',
+        'legacy-null-tags': (payload) {
+          payload.remove('tagNamesSpecified');
+          payload['tagNames'] = null;
+        },
+        'legacy-scalar-tags': (payload) {
+          payload.remove('tagNamesSpecified');
+          payload['tagNames'] = 'tampered-tag';
+        },
+        'legacy-mixed-tags': (payload) {
+          payload.remove('tagNamesSpecified');
+          payload['tagNames'] = <Object?>['tampered-tag', 7];
+        },
+        'legacy-blank-tags': (payload) {
+          payload.remove('tagNamesSpecified');
+          payload['tagNames'] = <String>[''];
+        },
+      };
+
+      for (final entry in cases.entries) {
+        final projectId = 'tamper-${entry.key}';
+        await db.createProject(projectId, projectId, DateTime(2026, 7, 21));
+        final oldTag = await state.saveTag(name: 'old-${entry.key}');
+        final workItemId = await state.addWorkItemToProject(
+          projectId,
+          'Original ${entry.key}',
+          tagIds: [oldTag],
+        );
+        final proposed = await service.proposeTaskUpdate(
+          projectId: projectId,
+          workItemId: workItemId,
+          title: 'Must not apply ${entry.key}',
+          tagNames: const ['tampered-tag'],
+        );
+        final draft = await state.getDraft(proposed.draftId!);
+        final envelope = jsonDecode(draft!.inputJson!) as Map<String, Object?>;
+        final payload = Map<String, Object?>.from(envelope['payload']! as Map);
+        entry.value(payload);
+        envelope['payload'] = payload;
+        await state.updateDraftReview(
+          id: draft.id,
+          accepted: false,
+          inputJson: jsonEncode(envelope),
+        );
+
+        await expectLater(
+          service.approveAgentProposal(draft.id),
+          throwsA(isA<StateError>()),
+          reason: entry.key,
+        );
+        expect(
+          (await service.getAgentProposalReview(draft.id))!.isPending,
+          isTrue,
+          reason: entry.key,
+        );
+        expect(
+          (await db.getWorkItem(workItemId))!.title,
+          'Original ${entry.key}',
+          reason: entry.key,
+        );
+        expect(
+          (await db.getTagsForWorkItem(workItemId)).map((tag) => tag.name),
+          ['old-${entry.key}'],
+          reason: entry.key,
+        );
+        expect(await db.findTagByName('tampered-tag'), isNull);
+      }
+    });
+
     test('deleted task fails closed before creating proposal tags', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
       final workItemId = await state.addWorkItemToProject('atlas', 'Original');
@@ -1058,6 +1289,77 @@ void main() {
                   as Map)['baseTaskSnapshot']
               as Map);
       expect(listedBase, equals(base));
+    });
+
+    test('MCP preserves absent versus explicitly empty task tags', () async {
+      final adapter = AtlasMcpAdapter(service);
+
+      await db.createProject('mcp-absent', 'MCP absent', DateTime(2026, 7, 21));
+      final preservedTag = await state.saveTag(name: 'mcp-preserved');
+      final absentTask = await state.addWorkItemToProject(
+        'mcp-absent',
+        'Absent task',
+        tagIds: [preservedTag],
+      );
+      final absentResult = await adapter.callTool('propose_task_update', {
+        'projectId': 'mcp-absent',
+        'workItemId': absentTask,
+        'title': 'Absent updated',
+      });
+      final absent = absentResult.data! as Map;
+      final absentPayload = absent['payload'] as Map;
+      expect(absentPayload['tagNamesSpecified'], isFalse);
+      expect(absentPayload.containsKey('tagNames'), isFalse);
+      await service.approveAgentProposal(absent['draftId']! as String);
+      expect((await db.getTagsForWorkItem(absentTask)).map((tag) => tag.name), [
+        'mcp-preserved',
+      ]);
+
+      await db.createProject('mcp-empty', 'MCP empty', DateTime(2026, 7, 21));
+      final clearedTag = await state.saveTag(name: 'mcp-cleared');
+      final emptyTask = await state.addWorkItemToProject(
+        'mcp-empty',
+        'Empty task',
+        tagIds: [clearedTag],
+      );
+      final emptyResult = await adapter.callTool('propose_task_update', {
+        'projectId': 'mcp-empty',
+        'workItemId': emptyTask,
+        'title': 'Empty updated',
+        'tagNames': <String>[],
+      });
+      final empty = emptyResult.data! as Map;
+      final emptyPayload = empty['payload'] as Map;
+      expect(emptyPayload['tagNamesSpecified'], isTrue);
+      expect(emptyPayload['tagNames'], isEmpty);
+      await service.approveAgentProposal(empty['draftId']! as String);
+      expect(await db.getTagsForWorkItem(emptyTask), isEmpty);
+    });
+
+    test('MCP rejects malformed present task tags without a draft', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+      final adapter = AtlasMcpAdapter(service);
+      final invalidValues = <Object?>[
+        null,
+        'single-tag',
+        <Object?>['valid', 7],
+        <String>[''],
+      ];
+
+      for (final value in invalidValues) {
+        final result = await adapter.callTool('propose_task_update', {
+          'projectId': 'atlas',
+          'title': 'Must not create a draft',
+          'tagNames': value,
+        });
+        expect(result.isError, isTrue, reason: '$value');
+        expect(result.data, isA<Map>(), reason: '$value');
+        expect((result.data! as Map)['error'], contains('tagNames'));
+      }
+
+      final listed = await adapter.callTool('list_agent_proposals');
+      expect(listed.isError, isFalse);
+      expect(listed.data, isEmpty);
     });
   });
 

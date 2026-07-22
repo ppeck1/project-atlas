@@ -32,6 +32,43 @@ const projectCapsuleTruthFieldLabels = <String, String>{
   'outcomeSummary': 'Outcome summary',
 };
 
+const projectCapsuleLedgerSeed = 'atlas.project_capsule_ledger.v1';
+
+String projectCapsuleLedgerDigest({
+  required String previousDigest,
+  required String revisionId,
+  required String projectId,
+  required int revisionNumber,
+  required String? parentRevisionId,
+  required String contentHash,
+  required String changedFieldsJson,
+  required String actorType,
+  required String actorLabel,
+  required String sourceKind,
+  required String? sourceId,
+  required String? reason,
+  required DateTime acceptedAt,
+}) {
+  final envelope = <String, Object?>{
+    'previousDigest': previousDigest,
+    'revisionId': revisionId,
+    'projectId': projectId,
+    'revisionNumber': revisionNumber,
+    'parentRevisionId': parentRevisionId,
+    'contentHash': contentHash,
+    'changedFields': jsonDecode(changedFieldsJson),
+    'actorType': actorType,
+    'actorLabel': actorLabel,
+    'sourceKind': sourceKind,
+    'sourceId': sourceId,
+    'reason': reason,
+    'acceptedAtEpochSeconds': acceptedAt.millisecondsSinceEpoch ~/ 1000,
+  };
+  return sha256
+      .convert(utf8.encode(jsonEncode(_canonicalJsonValue(envelope))))
+      .toString();
+}
+
 class ProjectCapsuleTruthChange {
   final Object? before;
   final Object? after;

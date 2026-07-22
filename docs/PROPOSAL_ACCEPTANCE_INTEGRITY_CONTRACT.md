@@ -49,14 +49,29 @@ New-task proposals have no existing entity to hash. Their deterministic
 single-application guarantee comes from the atomic pending-draft CAS and the
 stored approval result.
 
+## Task-tag mutation intent
+
+New task proposals store an explicit `tagNamesSpecified` boolean. Omitted tags
+preserve assignments on existing tasks, present-empty tags clear assignments,
+and a present non-empty list replaces them. The MCP adapter and approval path
+require present values to be unique, nonblank string arrays.
+
+Legacy pending proposals have no marker. A missing legacy tag field preserves
+assignments, a valid empty list preserves historical behavior, and a valid
+non-empty list replaces assignments. Null, scalar, mixed, blank, duplicate, or
+marker/key-inconsistent envelopes fail before task or tag writes and remain
+pending. Tag clearing runs inside the same proposal transaction and therefore
+rolls back with the task, review state, events, and retry state.
+
 ## Scope exclusions
 
-- A-09 remains open: this package does not redefine absent versus explicitly
-  empty task-tag input.
+- A-09's implementation defines absent versus explicitly empty task-tag input;
+  canonical closure still requires merge and exact-main post-merge proof.
 - A-06, A-07, and A-10 are closed under the follow-up contract in
   [`ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`](ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md).
   PR #41 merged as `393ab6b`, and exact-main post-merge proof passed.
-- A-08 and A-09 remain open; A-11 is closed independently.
+- A-08 and A-09 remain canonically open pending merge proof; A-11 is closed
+  independently.
 - WP4 remains open after A-03/A-04 because its follow-up findings are not all
   closed.
 

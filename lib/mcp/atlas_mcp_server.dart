@@ -628,7 +628,9 @@ class AtlasMcpAdapter {
         priority: _string(args, 'priority') ?? 'normal',
         dueAt: _date(args, 'dueAt'),
         blockedReason: _string(args, 'blockedReason'),
-        tagNames: _stringList(args, 'tagNames'),
+        tagNames: args.containsKey('tagNames')
+            ? _strictStringList(args, 'tagNames')
+            : null,
       )).toJson(),
       'propose_manifest_update' => (await agent.proposeManifestUpdate(
         projectId: _requiredString(args, 'projectId'),
@@ -783,6 +785,18 @@ class AtlasMcpAdapter {
     }
     final single = _string(args, key);
     return single == null ? const [] : [single];
+  }
+
+  List<String> _strictStringList(Map<String, Object?> args, String key) {
+    final value = args[key];
+    if (value is! List || value.any((item) => item is! String)) {
+      throw ArgumentError('$key must be an array of strings.');
+    }
+    final result = value.cast<String>().map((item) => item.trim()).toList();
+    if (result.any((item) => item.isEmpty)) {
+      throw ArgumentError('$key must not contain blank strings.');
+    }
+    return result;
   }
 
   WorkloadFilters _workloadFilters(Map<String, Object?> args) =>

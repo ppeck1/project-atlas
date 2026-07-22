@@ -1,6 +1,6 @@
 # Data model
 
-Project Atlas uses SQLite through Drift. The current schema version is `26`.
+Project Atlas uses SQLite through Drift. The current schema version is `27`.
 
 ## Core records
 
@@ -17,6 +17,9 @@ Project Atlas uses SQLite through Drift. The current schema version is `26`.
   truth JSON, field diff, actor/source/reason attribution, and acceptance time.
   Existing project columns remain the mutable accepted truth; the ledger is
   not a competing project record.
+- Project Capsule ledger checkpoints: one verified head per project containing
+  the exact revision count, head identity/hash, cumulative ledger digest, and
+  dirty state used for bounded current-state and history-page reads.
 
 ## Operational records
 
@@ -62,6 +65,14 @@ The v25-to-v26 migration rebuilds the hand-managed LLM task queue with
 foreign-key, enum, scalar, lease-state, and project/work-item ownership
 constraints. Invalid legacy rows fail migration without replacing the v25
 table or advancing its schema version.
+
+The v26-to-v27 migration verifies every complete Capsule revision chain before
+creating a clean durable checkpoint. Checkpoint DDL, backfill, and invalidation
+triggers are one transaction: any malformed ledger rolls the entire migration
+back to v26. Normal revision inserts dirty the checkpoint, and the accepted
+writer advances revision plus checkpoint atomically. Current-state reads use
+the checkpoint and exact head; history uses bounded SQL pages; explicit audits
+and source-recovery evidence retain full-chain verification.
 
 The database is local and currently plaintext. The Settings portable export is
 not a complete backup and cannot restore an Atlas instance; full backup and

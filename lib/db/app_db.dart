@@ -30,6 +30,41 @@ part 'app_db.g.dart';
 /// carries them. This typedef keeps call-sites unchanged.
 typedef ProjectFull = Project;
 
+String _capsuleLedgerDigestForRow(
+  String previousDigest,
+  ProjectCapsuleRevisionRow row,
+) => projectCapsuleLedgerDigest(
+  previousDigest: previousDigest,
+  revisionId: row.id,
+  projectId: row.projectId,
+  revisionNumber: row.revisionNumber,
+  parentRevisionId: row.parentRevisionId,
+  contentHash: row.contentHash,
+  changedFieldsJson: row.changedFieldsJson,
+  actorType: row.actorType,
+  actorLabel: row.actorLabel,
+  sourceKind: row.sourceKind,
+  sourceId: row.sourceId,
+  reason: row.reason,
+  acceptedAt: row.acceptedAt,
+);
+
+bool _capsuleChangesMatch(
+  Map<String, ProjectCapsuleTruthChange> expected,
+  Map<String, ProjectCapsuleTruthChange> actual,
+) {
+  if (expected.length != actual.length) return false;
+  for (final entry in expected.entries) {
+    final recorded = actual[entry.key];
+    if (recorded == null ||
+        recorded.before != entry.value.before ||
+        recorded.after != entry.value.after) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Drift generates:
 //   ProjectPeopleData  (from ProjectPeople — doesn't end in 's', so adds 'Data')
 //   ProjectRisk        (from ProjectRisks  — removes 's')
@@ -819,6 +854,7 @@ String _normalizedProjectSourceIdentity({
   tables: [
     Projects,
     ProjectCapsuleRevisions,
+    ProjectCapsuleLedgerCheckpoints,
     AppMeta,
     Stages,
     WorkItems,
@@ -882,7 +918,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 26;
+  int get schemaVersion => 27;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1128,6 +1164,13 @@ class AppDb extends _$AppDb {
       if (from < 26) {
         await _migrateLlmTaskQueueIntegrityV26();
       }
+      if (from < 27) {
+        await transaction(() async {
+          await m.createTable(projectCapsuleLedgerCheckpoints);
+          await _backfillProjectCapsuleLedgerCheckpoints();
+          await _ensureProjectCapsuleCheckpointInvalidationTriggers();
+        });
+      }
     },
     beforeOpen: (_) async {
       await customStatement('PRAGMA foreign_keys = ON');
@@ -1141,6 +1184,7 @@ class AppDb extends _$AppDb {
       await _ensureLlmTaskQueueTable();
       await _ensureProjectCapsuleRevisionIndex();
       await _ensureProjectCapsuleRevisionImmutabilityTriggers();
+      await _ensureProjectCapsuleCheckpointInvalidationTriggers();
       await _ensureTimestampUnitTriggers();
       await recoverStaleProjectEnrichmentRuns();
     },
@@ -1177,6 +1221,86 @@ class AppDb extends _$AppDb {
     ''');
   }
 
+  Future<void> _ensureProjectCapsuleCheckpointInvalidationTriggers() async {
+    final exists = await customSelect(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'project_capsule_ledger_checkpoints' LIMIT 1",
+    ).getSingleOrNull();
+    if (exists == null) return;
+    for (final operation in ['INSERT', 'UPDATE', 'DELETE']) {
+      final row = operation == 'DELETE' ? 'OLD' : 'NEW';
+      await customStatement('''
+        CREATE TRIGGER IF NOT EXISTS
+          dirty_project_capsule_checkpoint_${operation.toLowerCase()}
+        AFTER $operation ON project_capsule_revisions
+        FOR EACH ROW BEGIN
+          UPDATE project_capsule_ledger_checkpoints SET dirty = 1
+          WHERE project_id = $row.project_id;
+        END
+      ''');
+    }
+  }
+
+  Future<void> _backfillProjectCapsuleLedgerCheckpoints() async {
+    for (final project in await select(projects).get()) {
+      final rows =
+          await (select(projectCapsuleRevisions)
+                ..where((table) => table.projectId.equals(project.id))
+                ..orderBy([(table) => OrderingTerm.asc(table.revisionNumber)]))
+              .get();
+      if (rows.isEmpty) {
+        throw StateError(
+          'Capsule revision ledger for ${project.id} has no baseline.',
+        );
+      }
+      ProjectCapsuleRevisionRow? parent;
+      ProjectCapsuleTruth? parentTruth;
+      var digest = projectCapsuleLedgerSeed;
+      for (var index = 0; index < rows.length; index++) {
+        final revision = rows[index];
+        final decoded = jsonDecode(revision.truthJson);
+        if (decoded is! Map) {
+          throw StateError('Capsule revision ${revision.id} is malformed.');
+        }
+        final truth = ProjectCapsuleTruth.fromJson(
+          decoded.map((key, value) => MapEntry('$key', value)),
+        );
+        final changes = decodeProjectCapsuleTruthChanges(
+          revision.changedFieldsJson,
+        );
+        final expected = parentTruth == null
+            ? const <String, ProjectCapsuleTruthChange>{}
+            : parentTruth.diff(truth);
+        if (truth.contentHash != revision.contentHash ||
+            revision.projectId != project.id ||
+            revision.revisionNumber != index + 1 ||
+            revision.parentRevisionId != parent?.id ||
+            !_capsuleChangesMatch(expected, changes)) {
+          throw StateError(
+            'Capsule revision ledger for ${project.id} failed verification '
+            'at revision ${revision.revisionNumber}.',
+          );
+        }
+        digest = _capsuleLedgerDigestForRow(digest, revision);
+        parent = revision;
+        parentTruth = truth;
+      }
+      final head = rows.last;
+      await into(projectCapsuleLedgerCheckpoints).insertOnConflictUpdate(
+        ProjectCapsuleLedgerCheckpointsCompanion.insert(
+          projectId: project.id,
+          headRevisionId: head.id,
+          headRevisionNumber: head.revisionNumber,
+          revisionCount: rows.length,
+          headContentHash: head.contentHash,
+          ledgerDigest: digest,
+          dirty: const Value(false),
+          verifiedAt: DateTime.now(),
+        ),
+      );
+    }
+  }
+
   Future<void> _backfillProjectCapsuleRevisionBaselines() async {
     final existingProjects = await select(projects).get();
     for (final project in existingProjects) {
@@ -1192,31 +1316,52 @@ class AppDb extends _$AppDb {
     Project project, {
     required String sourceKind,
     required DateTime acceptedAt,
-  }) async {
-    final existing =
-        await (select(projectCapsuleRevisions)
-              ..where((table) => table.projectId.equals(project.id))
-              ..limit(1))
-            .getSingleOrNull();
-    if (existing != null) return;
-    final truth = ProjectCapsuleTruth.fromProjectMap(project.toJson());
-    await into(projectCapsuleRevisions).insert(
-      ProjectCapsuleRevisionsCompanion.insert(
+  }) {
+    return transaction(() async {
+      final existing =
+          await (select(projectCapsuleRevisions)
+                ..where((table) => table.projectId.equals(project.id))
+                ..limit(1))
+              .getSingleOrNull();
+      if (existing != null) return;
+      final truth = ProjectCapsuleTruth.fromProjectMap(project.toJson());
+      final row = ProjectCapsuleRevisionRow(
         id: _newMicrosId('capsule_revision'),
         projectId: project.id,
         revisionNumber: 1,
-        parentRevisionId: const Value(null),
+        parentRevisionId: null,
         contentHash: truth.contentHash,
         truthJson: jsonEncode(truth.toJson()),
         changedFieldsJson: '{}',
         actorType: 'system',
         actorLabel: 'Atlas',
         sourceKind: sourceKind,
-        sourceId: const Value(null),
-        reason: const Value(null),
+        sourceId: null,
+        reason: null,
         acceptedAt: acceptedAt,
-      ),
-    );
+      );
+      await into(projectCapsuleRevisions).insert(row);
+      final checkpointTable = await customSelect(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'project_capsule_ledger_checkpoints' LIMIT 1",
+      ).getSingleOrNull();
+      if (checkpointTable == null) return;
+      await into(projectCapsuleLedgerCheckpoints).insert(
+        ProjectCapsuleLedgerCheckpointsCompanion.insert(
+          projectId: project.id,
+          headRevisionId: row.id,
+          headRevisionNumber: 1,
+          revisionCount: 1,
+          headContentHash: row.contentHash,
+          ledgerDigest: _capsuleLedgerDigestForRow(
+            projectCapsuleLedgerSeed,
+            row,
+          ),
+          dirty: const Value(false),
+          verifiedAt: acceptedAt,
+        ),
+      );
+    });
   }
 
   /// Repairs only values that are unambiguously millisecond-scale dates in
