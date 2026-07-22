@@ -1,6 +1,6 @@
 # Bundle recovery integrity contract
 
-Status: implementation proof in progress on `fix/bundle-validation-integrity`.
+Status: implemented by PR #37 (`9d0e792`) and verified on exact merged `main`.
 Date: 2026-07-22
 
 This contract defines the R-07 through R-10 boundary. Full backups are
