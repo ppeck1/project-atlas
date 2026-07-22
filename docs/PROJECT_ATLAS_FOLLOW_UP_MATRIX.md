@@ -42,6 +42,11 @@ post-merge proof passed on current `main`. A-11 remains open, so WP3 is not
 fully closed. The attended single-worker constraint remains in force because
 P0 findings A-03 and A-04 are still open.
 
+A-03 and A-04 are in progress on `fix/proposal-acceptance-integrity`. The
+attended single-worker constraint remains in force until both findings merge
+and pass post-merge proof. A-06 through A-10 remain open, so this slice does
+not close WP4.
+
 ## Finding ledger
 
 | ID | Pri | Disposition | Status | Package | Finding | Owner | Target PR | Required proof / closure evidence |
@@ -62,8 +67,8 @@ P0 findings A-03 and A-04 are still open.
 | SPA-20260721-R-14 | P2 | Needs verification | Open | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Unassigned | TBD | Async/isolate extraction with source and expanded-size limits. |
 | SPA-20260721-A-01 | P0 | Accepted | Closed | WP3 | LLM claim is a select-then-unconditional-update race. | Codex | PR #33 | Atomic specific-task and claim-next CAS merged as `8a90d6e`; two-connection contention proof passed on merged `main`. |
 | SPA-20260721-A-02 | P0 | Accepted | Closed | WP3 | Complete/fail does not enforce lease owner or expiry. | Codex | PR #33 | Worker-plus-attempt CAS with strict expiry and typed conflicts merged as `8a90d6e`; wrong-owner, exact-expiry, and same-worker ABA proof passed on merged `main`. |
-| SPA-20260721-A-03 | P0 | Accepted | Open | WP4 | Proposal side effect and review approval are not atomic/idempotent. | Unassigned | TBD | Crash after side effect plus retry applies exactly once. |
-| SPA-20260721-A-04 | P0 | Needs verification | Open | WP4 | Task proposals lack a base revision/hash. | Unassigned | TBD | CAS rejects stale task and tag-set proposals. |
+| SPA-20260721-A-03 | P0 | Accepted | In progress | WP4 | Proposal side effect and review approval are not atomic/idempotent. | Codex | `fix/proposal-acceptance-integrity` | One SQLite transaction claims pending review state, applies every proposal kind, and records stable review/entity/audit results; write-boundary rollback, two-connection contention, rejection-race, and replay proof must show zero partial effects and exactly one result. |
+| SPA-20260721-A-04 | P0 | Accepted | In progress | WP4 | Task proposals lack a base revision/hash. | Codex | `fix/proposal-acceptance-integrity` | A server-captured canonical task-and-exact-tag snapshot is rechecked before any write; missing or stale task, tag, and project-binding state must return a typed conflict with no tag creation or domain mutation. |
 | SPA-20260721-A-05 | P0 | Accepted | Closed | WP3 | Completion can create an orphan/duplicate handoff draft. | Codex | PR #33 | Transactional deterministic draft completion merged as `8a90d6e`; post-insert rollback, concurrent/retry deduplication, and service replay proof passed on merged `main`. |
 | SPA-20260721-A-06 | P1 | Needs verification | Open | WP4 | Accepted-truth service may mutate non-truth fields. | Unassigned | TBD | Unknown truth keys fail closed or move to a separate contract. |
 | SPA-20260721-A-07 | P1 | Needs verification | Open | WP4 | Source revision lookup bypasses complete ledger verification. | Unassigned | TBD | Source matches are resolved only from a verified chain. |

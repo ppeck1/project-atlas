@@ -442,16 +442,64 @@ class AtlasLlmTaskTransitionException implements Exception {
       '${result.conflictReason?.name ?? result.outcome.name}.';
 }
 
+enum AtlasProposalConflictReason {
+  missingBaseSnapshot,
+  staleTask,
+  staleTagSet,
+  taskNotFound,
+  wrongProject,
+  invalidReviewState,
+}
+
+class AtlasProposalConflict implements Exception {
+  final String draftId;
+  final String? workItemId;
+  final AtlasProposalConflictReason reason;
+
+  const AtlasProposalConflict({
+    required this.draftId,
+    required this.reason,
+    this.workItemId,
+  });
+
+  String get code => switch (reason) {
+    AtlasProposalConflictReason.missingBaseSnapshot =>
+      'proposal_missing_base_snapshot',
+    AtlasProposalConflictReason.staleTask => 'proposal_stale_task',
+    AtlasProposalConflictReason.staleTagSet => 'proposal_stale_tag_set',
+    AtlasProposalConflictReason.taskNotFound => 'proposal_task_not_found',
+    AtlasProposalConflictReason.wrongProject => 'proposal_wrong_project',
+    AtlasProposalConflictReason.invalidReviewState =>
+      'proposal_invalid_review_state',
+  };
+
+  Map<String, Object?> toJson() => {
+    'code': code,
+    'draftId': draftId,
+    'workItemId': workItemId,
+    'reason': reason.name,
+  };
+
+  @override
+  String toString() =>
+      'Proposal application rejected for $draftId: ${reason.name}.';
+}
+
 class AtlasAgentService {
   final AppState state;
+  final Future<void> Function(String step)? _proposalApprovalStepHook;
 
-  AtlasAgentService(this.state);
+  AtlasAgentService(
+    this.state, {
+    Future<void> Function(String step)? proposalApprovalStepHook,
+  }) : _proposalApprovalStepHook = proposalApprovalStepHook;
 
   static const String proposalDraftKind = 'atlas_agent_proposal';
   static const String handoffDraftKind = 'project_handoff';
   static const String reviewStatusPending = 'pending';
   static const String reviewStatusApproved = 'approved';
   static const String reviewStatusRejected = 'rejected';
+  static const String _reviewStatusApplying = 'applying';
 
   static final Set<String> projectStatuses = Set.unmodifiable(
     project_meta.projectStatusValues,
@@ -1193,17 +1241,19 @@ class AtlasAgentService {
     final draft = await _loadProposalDraft(draftId);
     final proposal = AtlasProposalDraft.fromDraft(draft);
     if (proposal.isApproved) {
-      return AtlasProposalApplyResult(
-        draftId: draft.id,
-        proposalId: proposal.proposalId,
-        type: proposal.type,
-        reviewStatus: reviewStatusApproved,
-        message: 'Proposal was already approved.',
-        entityId: proposal.projectId,
-      );
+      return _approvedProposalReplay(proposal);
     }
     if (proposal.isRejected) {
-      throw StateError('Rejected proposals cannot be approved.');
+      throw AtlasProposalConflict(
+        draftId: draft.id,
+        reason: AtlasProposalConflictReason.invalidReviewState,
+      );
+    }
+    if (!proposal.isPending) {
+      throw AtlasProposalConflict(
+        draftId: draft.id,
+        reason: AtlasProposalConflictReason.invalidReviewState,
+      );
     }
     if (proposal.validationErrors.isNotEmpty) {
       throw StateError(
@@ -1211,24 +1261,41 @@ class AtlasAgentService {
       );
     }
 
-    final entityId = await _applyProposal(proposal);
-    final message = _approvalMessage(proposal, entityId);
-    await _markProposalReviewed(
-      draft: draft,
-      proposal: proposal,
-      status: reviewStatusApproved,
-      accepted: true,
-      message: message,
-      entityId: entityId,
-    );
-    return AtlasProposalApplyResult(
-      draftId: draft.id,
-      proposalId: proposal.proposalId,
-      type: proposal.type,
-      reviewStatus: reviewStatusApproved,
-      message: message,
-      entityId: entityId,
-    );
+    final result = await state.db.transaction(() async {
+      if (!await _tryClaimProposalDraft(draft, proposal)) {
+        final current = AtlasProposalDraft.fromDraft(
+          await _loadProposalDraft(draft.id),
+        );
+        if (current.isApproved) return _approvedProposalReplay(current);
+        throw AtlasProposalConflict(
+          draftId: draft.id,
+          reason: AtlasProposalConflictReason.invalidReviewState,
+        );
+      }
+
+      final entityId = await _applyProposal(proposal);
+      await _proposalApprovalStepHook?.call('after-proposal-side-effect');
+      final message = _approvalMessage(proposal, entityId);
+      await _markProposalReviewed(
+        draft: draft,
+        proposal: proposal,
+        status: reviewStatusApproved,
+        accepted: true,
+        message: message,
+        entityId: entityId,
+      );
+      await _proposalApprovalStepHook?.call('after-proposal-review');
+      return AtlasProposalApplyResult(
+        draftId: draft.id,
+        proposalId: proposal.proposalId,
+        type: proposal.type,
+        reviewStatus: reviewStatusApproved,
+        message: message,
+        entityId: entityId,
+      );
+    });
+    state.notifyAgentProposalChanged();
+    return result;
   }
 
   Future<AtlasProposalApplyResult> rejectAgentProposal(
@@ -1238,45 +1305,61 @@ class AtlasAgentService {
     final draft = await _loadProposalDraft(draftId);
     final proposal = AtlasProposalDraft.fromDraft(draft);
     if (proposal.isApproved) {
-      throw StateError('Approved proposals cannot be rejected.');
+      throw AtlasProposalConflict(
+        draftId: draft.id,
+        reason: AtlasProposalConflictReason.invalidReviewState,
+      );
     }
     if (proposal.isRejected) {
+      return _rejectedProposalReplay(proposal);
+    }
+    if (!proposal.isPending) {
+      throw AtlasProposalConflict(
+        draftId: draft.id,
+        reason: AtlasProposalConflictReason.invalidReviewState,
+      );
+    }
+    final message = _clean(reason) ?? 'Rejected by reviewer.';
+    final result = await state.db.transaction(() async {
+      if (!await _tryClaimProposalDraft(draft, proposal)) {
+        final current = AtlasProposalDraft.fromDraft(
+          await _loadProposalDraft(draft.id),
+        );
+        if (current.isRejected) return _rejectedProposalReplay(current);
+        throw AtlasProposalConflict(
+          draftId: draft.id,
+          reason: AtlasProposalConflictReason.invalidReviewState,
+        );
+      }
+      final acceptedTruthRevision = await _acceptedTruthRevisionForProposal(
+        proposal,
+      );
+      if (acceptedTruthRevision != null) {
+        throw StateError(
+          'This proposal already changed accepted project truth in revision '
+          '${acceptedTruthRevision.revisionNumber}. Approve it to recover the '
+          'review record; it can no longer be rejected.',
+        );
+      }
+      await _markProposalReviewed(
+        draft: draft,
+        proposal: proposal,
+        status: reviewStatusRejected,
+        accepted: false,
+        message: message,
+        entityId: proposal.projectId,
+      );
       return AtlasProposalApplyResult(
         draftId: draft.id,
         proposalId: proposal.proposalId,
         type: proposal.type,
         reviewStatus: reviewStatusRejected,
-        message: proposal.reviewMessage ?? 'Proposal was already rejected.',
+        message: message,
         entityId: proposal.projectId,
       );
-    }
-    final acceptedTruthRevision = await _acceptedTruthRevisionForProposal(
-      proposal,
-    );
-    if (acceptedTruthRevision != null) {
-      throw StateError(
-        'This proposal already changed accepted project truth in revision '
-        '${acceptedTruthRevision.revisionNumber}. Approve it to recover the '
-        'review record; it can no longer be rejected.',
-      );
-    }
-    final message = _clean(reason) ?? 'Rejected by reviewer.';
-    await _markProposalReviewed(
-      draft: draft,
-      proposal: proposal,
-      status: reviewStatusRejected,
-      accepted: false,
-      message: message,
-      entityId: proposal.projectId,
-    );
-    return AtlasProposalApplyResult(
-      draftId: draft.id,
-      proposalId: proposal.proposalId,
-      type: proposal.type,
-      reviewStatus: reviewStatusRejected,
-      message: message,
-      entityId: proposal.projectId,
-    );
+    });
+    state.notifyAgentProposalChanged();
+    return result;
   }
 
   Future<AtlasProposalResult> proposeStatusChange({
@@ -1329,6 +1412,7 @@ class AtlasAgentService {
     final cleanWorkItemId = _clean(workItemId);
     final cleanStatus = _clean(status) ?? 'next';
     final cleanPriority = _clean(priority) ?? 'normal';
+    Map<String, Object?>? baseTaskSnapshot;
 
     if (cleanTitle == null) {
       errors.add('Task title is required.');
@@ -1347,6 +1431,8 @@ class AtlasAgentService {
         final ownerProject = await state.getProjectForWorkItem(cleanWorkItemId);
         if (ownerProject?.id != projectId) {
           errors.add('Work item does not belong to project $projectId.');
+        } else {
+          baseTaskSnapshot = await _taskProposalBaseSnapshot(item, projectId);
         }
       }
     } else {
@@ -1368,6 +1454,7 @@ class AtlasAgentService {
         'dueAt': dueAt?.toIso8601String(),
         'blockedReason': _clean(blockedReason),
         'tagNames': _cleanList(tagNames),
+        'baseTaskSnapshot': ?baseTaskSnapshot,
       },
       validationErrors: errors,
       warnings: warnings,
@@ -1567,6 +1654,55 @@ class AtlasAgentService {
     return draft;
   }
 
+  Future<bool> _tryClaimProposalDraft(
+    Draft draft,
+    AtlasProposalDraft proposal,
+  ) async {
+    final expectedInputJson = draft.inputJson;
+    if (expectedInputJson == null || expectedInputJson.trim().isEmpty) {
+      throw AtlasProposalConflict(
+        draftId: draft.id,
+        reason: AtlasProposalConflictReason.invalidReviewState,
+      );
+    }
+    final claimedEnvelope = Map<String, Object?>.from(proposal.envelope)
+      ..['reviewStatus'] = _reviewStatusApplying;
+    return state.db.tryClaimPendingProposalDraft(
+      id: draft.id,
+      expectedInputJson: expectedInputJson,
+      claimedInputJson: jsonEncode(claimedEnvelope),
+    );
+  }
+
+  AtlasProposalApplyResult _approvedProposalReplay(
+    AtlasProposalDraft proposal,
+  ) => AtlasProposalApplyResult(
+    draftId: proposal.draft.id,
+    proposalId: proposal.proposalId,
+    type: proposal.type,
+    reviewStatus: reviewStatusApproved,
+    message:
+        proposal.reviewMessage ??
+        _clean(proposal.envelope['reviewMessage']?.toString()) ??
+        'Proposal was already approved.',
+    entityId:
+        _clean(proposal.envelope['reviewEntityId']?.toString()) ??
+        proposal.projectId,
+  );
+
+  AtlasProposalApplyResult _rejectedProposalReplay(
+    AtlasProposalDraft proposal,
+  ) => AtlasProposalApplyResult(
+    draftId: proposal.draft.id,
+    proposalId: proposal.proposalId,
+    type: proposal.type,
+    reviewStatus: reviewStatusRejected,
+    message: proposal.reviewMessage ?? 'Proposal was already rejected.',
+    entityId:
+        _clean(proposal.envelope['reviewEntityId']?.toString()) ??
+        proposal.projectId,
+  );
+
   Future<String?> _applyProposal(AtlasProposalDraft proposal) async {
     final projectId = proposal.projectId;
     switch (proposal.type) {
@@ -1593,6 +1729,7 @@ class AtlasAgentService {
           sourceId: proposal.draft.id,
           expectedTruthRevisionId: baseTruthRevisionId,
           reason: _payloadString(proposal.payload, 'reason'),
+          notify: false,
         );
         return projectId;
       case 'task_update':
@@ -1624,11 +1761,14 @@ class AtlasAgentService {
       throw StateError('Unsupported priority: $priority');
     }
     final tagNames = _payloadStringList(proposal.payload, 'tagNames');
-    final tagIds = await _ensureTagIds(tagNames);
     final dueAt = _payloadDate(proposal.payload, 'dueAt');
     final workItemId = _payloadString(proposal.payload, 'workItemId');
+    if (workItemId != null) {
+      await _validateTaskProposalBase(proposal, workItemId, projectId);
+    }
+    final tagIds = await _ensureTagIds(tagNames);
     if (workItemId == null) {
-      return state.addWorkItemToProject(
+      final createdId = await state.addWorkItemToProject(
         projectId,
         title,
         description: _payloadString(proposal.payload, 'description'),
@@ -1638,7 +1778,10 @@ class AtlasAgentService {
         blockedReason: _payloadString(proposal.payload, 'blockedReason'),
         source: 'Atlas agent proposal ${proposal.proposalId}',
         tagIds: tagIds,
+        notify: false,
       );
+      await _proposalApprovalStepHook?.call('after-task-write');
+      return createdId;
     }
 
     await state.updateWorkItem(
@@ -1653,9 +1796,12 @@ class AtlasAgentService {
       clearBlockedReason:
           proposal.payload.containsKey('blockedReason') &&
           _payloadString(proposal.payload, 'blockedReason') == null,
+      notify: false,
     );
+    await _proposalApprovalStepHook?.call('after-task-write');
     if (tagNames.isNotEmpty) {
       await state.setWorkItemTags(workItemId, tagIds);
+      await _proposalApprovalStepHook?.call('after-task-tags-write');
     }
     return workItemId;
   }
@@ -1701,11 +1847,14 @@ class AtlasAgentService {
         sourceId: proposal.draft.id,
         expectedTruthRevisionId: baseTruthRevisionId,
         reason: _payloadString(proposal.payload, 'reason'),
+        notify: false,
       );
+      await _proposalApprovalStepHook?.call('after-manifest-truth-write');
     }
     if (fields.containsKey('tags')) {
       final tagIds = await _ensureTagIds(_valueStringList(fields['tags']));
       await state.setProjectTags(projectId, tagIds);
+      await _proposalApprovalStepHook?.call('after-manifest-tags-write');
     }
     return projectId;
   }
@@ -1783,26 +1932,24 @@ class AtlasAgentService {
       ..['reviewEntityId'] = entityId;
     final updatedBody =
         '${draft.body.trimRight()}\n\n---\nReview: $status\n$message\n';
-    await state.db.transaction(() async {
-      await state.updateDraftReview(
-        id: draft.id,
-        accepted: accepted,
-        inputJson: jsonEncode(envelope),
-        body: updatedBody,
-      );
-      await state.db.logEvent(
-        area: 'agent',
-        action: 'proposal_$status',
-        entityType: proposal.projectId == null ? 'draft' : 'project',
-        entityId: proposal.projectId ?? draft.id,
-        inputJson: jsonEncode(proposal.toJson()),
-        outputJson: jsonEncode({
-          'draftId': draft.id,
-          'message': message,
-          'entityId': entityId,
-        }),
-      );
-    });
+    await state.updateDraftReview(
+      id: draft.id,
+      accepted: accepted,
+      inputJson: jsonEncode(envelope),
+      body: updatedBody,
+    );
+    await state.db.logEvent(
+      area: 'agent',
+      action: 'proposal_$status',
+      entityType: proposal.projectId == null ? 'draft' : 'project',
+      entityId: proposal.projectId ?? draft.id,
+      inputJson: jsonEncode(proposal.toJson()),
+      outputJson: jsonEncode({
+        'draftId': draft.id,
+        'message': message,
+        'entityId': entityId,
+      }),
+    );
   }
 
   Future<ProjectCapsuleAcceptedRevision?> _acceptedTruthRevisionForProposal(
@@ -2504,6 +2651,133 @@ class AtlasAgentService {
     if (value is DateTime) return value;
     if (value is String) return DateTime.tryParse(value);
     return null;
+  }
+
+  Future<Map<String, Object?>> _taskProposalBaseSnapshot(
+    WorkItem item,
+    String projectId,
+  ) async {
+    final tags = await state.db.getTagsForWorkItem(item.id);
+    final taskState = <String, Object?>{
+      'id': item.id,
+      'projectId': projectId,
+      'stageId': item.stageId,
+      'title': item.title,
+      'description': item.description,
+      'owner': item.owner,
+      'status': item.status,
+      'priority': item.priority,
+      'dueAt': item.dueAt?.toUtc().toIso8601String(),
+      'createdAt': item.createdAt.toUtc().toIso8601String(),
+      'blockedReason': item.blockedReason,
+      'source': item.source,
+      'phoneQueue': item.phoneQueue,
+      'completed': item.completed,
+      'readiness': item.readiness,
+      'size': item.size,
+      'risk': item.risk,
+      'suggestedActor': item.suggestedActor,
+      'verificationNeeded': item.verificationNeeded,
+      'nextAction': item.nextAction,
+      'planningNotes': item.planningNotes,
+      'lastReviewedAt': item.lastReviewedAt?.toUtc().toIso8601String(),
+    };
+    final tagState =
+        tags
+            .map(
+              (tag) => <String, Object?>{
+                'id': tag.id,
+                'name': tag.name.trim().toLowerCase(),
+                'color': tag.color,
+              },
+            )
+            .toList()
+          ..sort((left, right) => '${left['id']}'.compareTo('${right['id']}'));
+    return {
+      'schema': 'atlas.task_proposal_base.v1',
+      'taskHash': _canonicalDigest(taskState),
+      'tagSetHash': _canonicalDigest(tagState),
+    };
+  }
+
+  Future<void> _validateTaskProposalBase(
+    AtlasProposalDraft proposal,
+    String workItemId,
+    String projectId,
+  ) async {
+    final rawBase = proposal.payload['baseTaskSnapshot'];
+    if (rawBase is! Map) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        workItemId: workItemId,
+        reason: AtlasProposalConflictReason.missingBaseSnapshot,
+      );
+    }
+    final base = rawBase.map((key, value) => MapEntry('$key', value));
+    final taskHash = _clean(base['taskHash']?.toString());
+    final tagSetHash = _clean(base['tagSetHash']?.toString());
+    final digestPattern = RegExp(r'^[0-9a-f]{64}$');
+    if (base['schema'] != 'atlas.task_proposal_base.v1' ||
+        taskHash == null ||
+        !digestPattern.hasMatch(taskHash) ||
+        tagSetHash == null ||
+        !digestPattern.hasMatch(tagSetHash)) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        workItemId: workItemId,
+        reason: AtlasProposalConflictReason.missingBaseSnapshot,
+      );
+    }
+    final item = await state.getWorkItem(workItemId);
+    if (item == null) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        workItemId: workItemId,
+        reason: AtlasProposalConflictReason.taskNotFound,
+      );
+    }
+    final ownerProject = await state.getProjectForWorkItem(workItemId);
+    if (ownerProject?.id != projectId) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        workItemId: workItemId,
+        reason: AtlasProposalConflictReason.wrongProject,
+      );
+    }
+    final current = await _taskProposalBaseSnapshot(item, projectId);
+    if (current['taskHash'] != base['taskHash']) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        workItemId: workItemId,
+        reason: AtlasProposalConflictReason.staleTask,
+      );
+    }
+    if (current['tagSetHash'] != base['tagSetHash']) {
+      throw AtlasProposalConflict(
+        draftId: proposal.draft.id,
+        workItemId: workItemId,
+        reason: AtlasProposalConflictReason.staleTagSet,
+      );
+    }
+  }
+
+  static String _canonicalDigest(Object? value) => sha256
+      .convert(utf8.encode(jsonEncode(_canonicalJsonValue(value))))
+      .toString();
+
+  static Object? _canonicalJsonValue(Object? value) {
+    if (value is Map) {
+      final entries = value.entries.toList()
+        ..sort((left, right) => '${left.key}'.compareTo('${right.key}'));
+      return <String, Object?>{
+        for (final entry in entries)
+          '${entry.key}': _canonicalJsonValue(entry.value),
+      };
+    }
+    if (value is Iterable) {
+      return value.map(_canonicalJsonValue).toList(growable: false);
+    }
+    return value;
   }
 
   Future<List<String>> _ensureTagIds(Iterable<String> tagNames) async {

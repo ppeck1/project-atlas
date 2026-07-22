@@ -485,6 +485,11 @@ class AtlasMcpAdapter {
         data: {...error.toJson(), 'tool': name},
         isError: true,
       );
+    } on AtlasProposalConflict catch (error) {
+      return AtlasMcpCallResult(
+        data: {...error.toJson(), 'tool': name},
+        isError: true,
+      );
     } catch (error) {
       return AtlasMcpCallResult(
         data: {'error': error.toString(), 'tool': name},

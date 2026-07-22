@@ -1036,6 +1036,7 @@ class AppState extends ChangeNotifier {
     String? nextAction,
     String? planningNotes,
     DateTime? lastReviewedAt,
+    bool notify = true,
   }) async {
     var stages = await db.getStagesForProject(projectId);
     if (stages.isEmpty) {
@@ -1079,7 +1080,7 @@ class AppState extends ChangeNotifier {
       entityId: workItemId,
       inputJson: title,
     );
-    notifyListeners();
+    if (notify) notifyListeners();
     return workItemId;
   }
 
@@ -1180,6 +1181,7 @@ class AppState extends ChangeNotifier {
     bool clearPlanningNotes = false,
     DateTime? lastReviewedAt,
     bool clearLastReviewedAt = false,
+    bool notify = true,
   }) async {
     await db.logEvent(
       area: 'ui',
@@ -1223,7 +1225,7 @@ class AppState extends ChangeNotifier {
       entityType: 'work_item',
       entityId: id,
     );
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 
   Future<void> setWorkItemStatus(String id, String status) async {
@@ -1683,6 +1685,8 @@ class AppState extends ChangeNotifier {
     );
   }
 
+  void notifyAgentProposalChanged() => notifyListeners();
+
   Future<void> deleteDraft(String id) async {
     await db.deleteDraft(id);
   }
@@ -1980,6 +1984,7 @@ class AppState extends ChangeNotifier {
     String? sourceId,
     String? expectedTruthRevisionId,
     String? reason,
+    bool notify = true,
   }) async {
     await ProjectCapsuleTruthService(db).acceptPatch(
       projectId: id,
@@ -1991,7 +1996,7 @@ class AppState extends ChangeNotifier {
       reason: reason,
       recordProjectMetadataAudit: true,
     );
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 
   Future<ProjectCapsuleTruthState?> getProjectCapsuleTruth(String projectId) =>
