@@ -24,12 +24,12 @@ Last updated: 2026-07-21.
 
 ## Audit resume checkpoint
 
-Start from current `main` at `8a90d6e` (`Harden LLM queue lease integrity
-(#33)`). The working tree was clean and synchronized with `origin/main` when
-this handoff was written.
+Start from current `main` at `c9a5e36` (`Close LLM queue findings after
+post-merge proof (#34)`). The working tree was clean and synchronized with
+`origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 9 Closed and 42 Open. The completed
-integrity sequence is:
+The canonical matrix contains 51 findings: 9 Closed, 2 In progress, and 40
+Open. The completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
   rollback, final verification, child acknowledgement, and handoff security.
@@ -39,6 +39,8 @@ integrity sequence is:
 - PR #33 / `8a90d6e`: A-01/A-02/A-05 atomic claims, authenticated and
   generation-bound terminal CAS, and transactional retry-idempotent handoff
   drafts.
+- PR #34 / `c9a5e36`: A-01/A-02/A-05 post-merge proof and canonical closure
+  evidence.
 
 Current verification baseline after A-01/A-02/A-05:
 
@@ -57,15 +59,32 @@ Take A-03 and A-04 as the next P0 proposal-acceptance package. Keep the
 attended single-worker constraint until both have merged and passed post-merge
 proof.
 
-1. Make proposal side effects and review approval one crash-idempotent
-   transaction or recoverable application ledger.
-2. Persist a base revision or canonical hash for task and tag-set proposals.
+Active implementation branch: `fix/proposal-acceptance-integrity`. A-03 and
+A-04 are in progress; neither finding is closed and the operating constraint
+is unchanged.
+
+1. Make proposal side effects and review approval one crash-idempotent SQLite
+   transaction with an UPDATE-first pending-draft claim.
+2. Persist server-generated canonical task and exact-tag-set hashes for
+   existing-task proposals.
 3. Reject stale proposal application with a typed conflict before any side
    effect occurs.
 4. Prove crash-after-side-effect retry applies exactly once and stale task/tag
    proposals change nothing.
 5. Keep A-06 through A-10 and A-11 separately tracked unless implementation
    evidence shows a shared atomicity or schema boundary.
+
+The active lifecycle and hash boundary are specified in the
+[`proposal acceptance integrity contract`](docs/PROPOSAL_ACCEPTANCE_INTEGRITY_CONTRACT.md).
+
+Current pre-merge proof for the active package:
+
+- proposal-integrity suite: 18/18;
+- focused proposal/service/MCP suite: 54/54;
+- full Flutter suite: 495 passed with 1 intentional skip;
+- static analysis: clean;
+- Python policy/maintenance suite: 30/30; and
+- Windows release build: passed.
 
 Primary inspection points:
 

@@ -2293,6 +2293,28 @@ class AppDb extends _$AppDb {
     );
   }
 
+  Future<bool> tryClaimPendingProposalDraft({
+    required String id,
+    required String expectedInputJson,
+    required String claimedInputJson,
+  }) async {
+    final updated =
+        await (update(drafts)..where(
+              (draft) =>
+                  draft.id.equals(id) &
+                  draft.kind.equals('atlas_agent_proposal') &
+                  draft.accepted.equals(false) &
+                  draft.inputJson.equals(expectedInputJson),
+            ))
+            .write(
+              DraftsCompanion(
+                inputJson: Value(claimedInputJson),
+                updatedAt: Value(DateTime.now()),
+              ),
+            );
+    return updated == 1;
+  }
+
   Future<void> deleteDraft(String id) =>
       (delete(drafts)..where((t) => t.id.equals(id))).go();
 
