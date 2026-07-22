@@ -37,15 +37,14 @@ reproduction or design disposition before implementation.
 WP3 findings A-01, A-02, and A-05 closed after PR #33 merged as `8a90d6e`.
 A-03 and A-04 closed after PR #35 merged as `a3c88f6` and post-merge proof
 passed on current `main`. The attended single-worker constraint is therefore
-retired. A-11 is in progress on `fix/queue-schema-integrity`, and A-06 through
-A-10 remain open in WP4,
-so neither work package is fully closed.
+retired. A-11 closed after PR #39 merged as `9d753cb` and exact-main proof
+passed, so WP3 is closed. A-06 through A-10 remain open in WP4.
 
 R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
 post-merge proof passed. They provide exact full-backup directory inventory
 and bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11
-through R-14 remain open, so WP2 is not closed. The ledger contains 15 Closed,
-1 In progress, and 35 Open findings.
+through R-14 remain open, so WP2 is not closed. The ledger contains 16 Closed
+and 35 Open findings.
 
 ## Finding ledger
 
@@ -75,7 +74,7 @@ through R-14 remain open, so WP2 is not closed. The ledger contains 15 Closed,
 | SPA-20260721-A-08 | P2 | Needs verification | Open | WP4 | Repeated history reads verify the entire chain. | Unassigned | TBD | Write/checkpoint verification plus paged audit behavior and performance proof. |
 | SPA-20260721-A-09 | P2 | Needs verification | Open | WP4 | Explicit empty tags cannot clear a task's tags. | Unassigned | TBD | Present-empty differs from absent and clears tags in tests. |
 | SPA-20260721-A-10 | P1 | Needs verification | Open | WP4 | Manifest truth and tags are accepted separately. | Unassigned | TBD | Atomic metadata/tag acceptance with tag concurrency token. |
-| SPA-20260721-A-11 | P1 | Accepted | In progress | WP3 | Raw queue table lacks foreign-key and state constraints. | Codex | `fix/queue-schema-integrity` | Schema v26 fail-closed rebuild, foreign keys, ownership triggers, exact scalar/enum/JSON/state/chronology constraints, valid legacy-state preservation, invalid migration rollback, and `foreign_key_check` proof must pass. Contract: `docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md`. |
+| SPA-20260721-A-11 | P1 | Accepted | Closed | WP3 | Raw queue table lacks foreign-key and state constraints. | Codex | PR #39 | Schema v26 fail-closed rebuild, foreign keys, ownership triggers, exact scalar/enum/JSON/state/chronology constraints, valid legacy-state preservation, invalid migration rollback, and `foreign_key_check` proof merged as `9d753cb`; exact-main post-merge proof passed. Contract: `docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-12 | P1 | Needs verification | Open | WP5 | Malformed planning values fail open to executable defaults. | Unassigned | TBD | Unknown values enter a review lane and cannot become ready. |
 | SPA-20260721-A-13 | P1 | Needs verification | Open | WP5 | Stale work is promoted in execution ranking. | Unassigned | TBD | Stale items require revalidation and ranking fixtures prove ordering. |
 | SPA-20260721-A-14 | P2 | Needs verification | Open | WP5 | Invalid workload filters silently normalize to valid filters. | Unassigned | TBD | Invalid arguments return allowed-value diagnostics. |
@@ -104,6 +103,24 @@ through R-14 remain open, so WP2 is not closed. The ledger contains 15 Closed,
 | SPA-20260721-D-06 | P3 | Needs verification | Open | WP11 | Public metadata, captures, reported version, and database opener have stale residue. | Unassigned | TBD | Metadata/version/capture manifest and truthful database opener naming. |
 
 ## Progress evidence
+
+### WP3 A-11 closure — 2026-07-22
+
+PR #39 merged as `9d753cb`. A-11 is closed after focused, hostile migration,
+full-suite, policy, analysis, and Windows release proof passed on exact clean
+`main`.
+
+- Queue schema, lease, and stream suite: 26/26 passed.
+- Independent hostile and migration selection: 15 passed with 1 intentional
+  external-fixture skip.
+- Full Flutter suite: 521 passed with 1 intentional skip.
+- Static analysis: clean.
+- Python policy/maintenance suite: 30/30.
+- Windows release build: passed.
+- Hosted PR #39 CI passed, including generation, policy, analysis, full tests,
+  Windows release, seeded MCP fixture, and gateway smoke.
+- WP3 is closed. A-06, A-07, and A-10 are the recommended next accepted-truth
+  package in WP4.
 
 ### WP2 R-07/R-10 closure — 2026-07-22
 

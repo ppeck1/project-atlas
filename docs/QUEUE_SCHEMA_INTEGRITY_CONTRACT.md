@@ -1,6 +1,6 @@
 # Queue schema integrity contract
 
-Status: implementation proof in progress on `fix/queue-schema-integrity`.
+Status: closed after PR #39 merged as `9d753cb` and exact-main proof passed.
 Date: 2026-07-22
 
 This contract defines the A-11 storage boundary for `llm_task_queue`. Service
@@ -45,6 +45,6 @@ table and trigger inventory back together.
 Focused proof covers raw foreign-key and trigger violations, every enum
 family, wrong SQLite storage classes, non-object JSON, malformed state and
 chronology, runtime claim/terminal/requeue behavior, retained-trigger recovery,
-and valid v25 rows for every historical queue state. A-11 closes only after
-merge and exact-main post-merge proof. A-12 through A-15 remain separate
+and valid v25 rows for every historical queue state. A-11 closed after merge
+and exact-main post-merge proof. A-12 through A-15 remain separate
 workload-semantics findings.

@@ -13,10 +13,11 @@ The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
 Recovery findings R-01 through R-10 and agent-integrity findings A-01 through
-A-05 are closed. R-11 through R-14 remain open, so WP2 is not fully closed.
+A-05 plus A-11 are closed. R-11 through R-14 remain open, so WP2 is not fully
+closed.
 The attended single-worker operating constraint was retired only after
-A-03/A-04 merged and their post-merge proof passed. A-11 is in progress, so
-WP3 is not fully closed.
+A-03/A-04 merged and their post-merge proof passed. A-11's exact-main proof
+also passed, so WP3 is closed.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
@@ -26,12 +27,12 @@ Last updated: 2026-07-22.
 
 ## Audit resume checkpoint
 
-Start from current `main` at `008ed8d` (`Close bundle integrity findings after
-proof (#38)`). The working tree was clean and synchronized with
+Start from current `main` at `9d753cb` (`Harden LLM queue schema integrity
+(#39)`). The working tree was clean and synchronized with
 `origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 15 Closed, 1 In progress, and 35
-Open. The completed integrity sequence is:
+The canonical matrix contains 51 findings: 16 Closed and 35 Open. The
+completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
   rollback, final verification, child acknowledgement, and handoff security.
@@ -53,12 +54,14 @@ Open. The completed integrity sequence is:
   staging validation.
 - PR #38 / `008ed8d`: R-07 through R-10 post-merge proof and canonical
   closure evidence.
+- PR #39 / `9d753cb`: A-11 schema v26 queue constraints plus exact-main
+  post-merge proof; the evidence-only closure is recorded in the next PR.
 
 Current verification baseline on merged `main`:
 
 - focused full-backup and hostile project-recovery suite: 28/28;
 - production project-export suite, including export-to-staging recovery: 5/5;
-- full Flutter suite: 511 passed with 1 intentional skip;
+- full Flutter suite: 521 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
@@ -78,8 +81,7 @@ guidance; `project_bundle.json` remains schema v1.
 The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
 R-11 through R-14 remain open, so WP2 is not closed. The recommended next
-package is A-11 to finish WP3's queue schema constraints, followed by
-A-06/A-07/A-10.
+package is A-06/A-07/A-10.
 
 Post-merge proof on exact implementation `main` at `9d0e792`:
 
@@ -118,12 +120,12 @@ Primary inspection points:
 Atomic claims, worker-plus-attempt terminal CAS, typed conflicts, and
 transactional deterministic handoff drafts are implemented end to end through
 AppState and trusted-local MCP. A-01, A-02, and A-05 closed after PR #33 merged
-and post-merge proof passed on `8a90d6e`. A-11 is in progress, so WP3 is not
-fully closed.
+and post-merge proof passed on `8a90d6e`. A-11 closed after PR #39 merged and
+exact-main proof passed on `9d753cb`, so WP3 is closed.
 
-### Active queue-schema integrity package
+### Closed queue-schema integrity package
 
-A-11 is active on `fix/queue-schema-integrity`. Schema v26 rebuilds the raw
+A-11 merged in PR #39 as `9d753cb`. Schema v26 rebuilds the raw
 LLM queue with foreign keys, exact enum/scalar/JSON/state/chronology checks,
 and database triggers that preserve project/work-item ownership across raw
 writes and reparenting. Invalid v25 rows fail closed without advancing the
@@ -131,16 +133,19 @@ schema or replacing the original queue table.
 
 The boundary is specified in the
 [`queue schema integrity contract`](docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md).
-A-11 remains In progress until merge and exact-main post-merge proof. A-06,
-A-07, and A-10 remain the recommended next accepted-truth package.
+A-11 is closed after exact-main post-merge proof. A-06, A-07, and A-10 remain
+the recommended next accepted-truth package.
 
-Current focused proof:
+Post-merge proof on exact `main` at `9d753cb`:
 
 - queue schema, lease, and stream suite: 26/26;
 - schema and migration regression suite: 77 passed with 1 intentional skip;
-- independent final hostile and legacy-migration review: GO, 15/15; and
+- independent hostile and migration selection: 15 passed with 1 intentional
+  external-fixture skip;
 - full Flutter suite: 521 passed with 1 intentional skip; and
-- full static analysis: clean.
+- full static analysis: clean;
+- Python policy/maintenance suite: 30/30; and
+- Windows release build: passed.
 
 ## Current public state
 
