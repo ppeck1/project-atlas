@@ -882,7 +882,7 @@ class AppDb extends _$AppDb {
 
   // ── Schema ────────────────────────────────────────────────────────────────
   @override
-  int get schemaVersion => 25;
+  int get schemaVersion => 26;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -1125,8 +1125,12 @@ class AppDb extends _$AppDb {
       if (from < 25) {
         await _ensureProjectCapsuleRevisionImmutabilityTriggers();
       }
+      if (from < 26) {
+        await _migrateLlmTaskQueueIntegrityV26();
+      }
     },
     beforeOpen: (_) async {
+      await customStatement('PRAGMA foreign_keys = ON');
       await _ensureProjectCompatibilityColumns();
       await _ensureProjectRegistrySourceColumns();
       await _ensureWorkItemTagsTable();
@@ -3860,8 +3864,7 @@ class AppDb extends _$AppDb {
     }
   }
 
-  Future<void> _ensureLlmTaskQueueTable() async {
-    await customStatement('''CREATE TABLE IF NOT EXISTS llm_task_queue (
+  static const _llmTaskQueueColumnsAndConstraints = '''
       id TEXT NOT NULL PRIMARY KEY,
       project_id TEXT NOT NULL,
       work_item_id TEXT NULL,
@@ -3889,8 +3892,101 @@ class AppDb extends _$AppDb {
       next_action TEXT NULL,
       blocker_reason TEXT NULL,
       planning_notes TEXT NULL,
-      last_reviewed_at INTEGER NULL
-    )''');
+      last_reviewed_at INTEGER NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id),
+      FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE SET NULL,
+      CHECK (length(trim(id)) > 0),
+      CHECK (length(trim(project_id)) > 0),
+      CHECK (length(trim(title)) > 0),
+      CHECK (length(trim(objective)) > 0),
+      CHECK (length(trim(created_by)) > 0),
+      CHECK (typeof(id) = 'text'),
+      CHECK (typeof(project_id) = 'text'),
+      CHECK (work_item_id IS NULL OR typeof(work_item_id) = 'text'),
+      CHECK (typeof(title) = 'text'),
+      CHECK (typeof(objective) = 'text'),
+      CHECK (typeof(context_json) = 'text'),
+      CHECK (typeof(priority) = 'text'),
+      CHECK (typeof(status) = 'text'),
+      CHECK (typeof(created_by) = 'text'),
+      CHECK (leased_by IS NULL OR typeof(leased_by) = 'text'),
+      CHECK (result_json IS NULL OR typeof(result_json) = 'text'),
+      CHECK (error IS NULL OR typeof(error) = 'text'),
+      CHECK (review_draft_id IS NULL OR typeof(review_draft_id) = 'text'),
+      CHECK (typeof(readiness) = 'text'),
+      CHECK (typeof(size) = 'text'),
+      CHECK (typeof(risk) = 'text'),
+      CHECK (typeof(suggested_actor) = 'text'),
+      CHECK (typeof(verification_needed) = 'text'),
+      CHECK (next_action IS NULL OR typeof(next_action) = 'text'),
+      CHECK (blocker_reason IS NULL OR typeof(blocker_reason) = 'text'),
+      CHECK (planning_notes IS NULL OR typeof(planning_notes) = 'text'),
+      CHECK (CASE WHEN json_valid(context_json)
+        THEN json_type(context_json) = 'object' ELSE 0 END),
+      CHECK (result_json IS NULL OR CASE WHEN json_valid(result_json)
+        THEN json_type(result_json) = 'object' ELSE 0 END),
+      CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+      CHECK (status IN ('pending', 'leased', 'completed', 'failed', 'cancelled')),
+      CHECK (readiness IN ('ready', 'blocked', 'needs_decision', 'needs_context', 'review_needed')),
+      CHECK (size IN ('tiny', 'small', 'medium', 'large')),
+      CHECK (risk IN ('docs_only', 'low_code', 'medium_code', 'db_schema', 'release', 'external_facing')),
+      CHECK (suggested_actor IN ('user', 'codex', 'claude', 'local_llm', 'manual_review')),
+      CHECK (verification_needed IN ('none', 'tests', 'smoke', 'build', 'manual_ui')),
+      CHECK (attempts >= 0),
+      CHECK (typeof(attempts) = 'integer'),
+      CHECK (typeof(created_at) = 'integer'),
+      CHECK (typeof(updated_at) = 'integer'),
+      CHECK (updated_at >= created_at),
+      CHECK (leased_at IS NULL OR typeof(leased_at) = 'integer'),
+      CHECK (lease_expires_at IS NULL OR typeof(lease_expires_at) = 'integer'),
+      CHECK (completed_at IS NULL OR typeof(completed_at) = 'integer'),
+      CHECK (last_reviewed_at IS NULL OR typeof(last_reviewed_at) = 'integer'),
+      CHECK (last_reviewed_at IS NULL OR last_reviewed_at >= created_at),
+      CHECK (
+        (status = 'pending'
+          AND leased_by IS NULL AND leased_at IS NULL
+          AND lease_expires_at IS NULL AND completed_at IS NULL
+          AND result_json IS NULL AND error IS NULL AND review_draft_id IS NULL)
+        OR
+        (status = 'leased'
+          AND leased_by IS NOT NULL AND length(trim(leased_by)) > 0
+          AND leased_at IS NOT NULL AND lease_expires_at IS NOT NULL
+          AND leased_at >= created_at AND lease_expires_at > leased_at
+          AND updated_at >= leased_at AND attempts > 0
+          AND completed_at IS NULL AND result_json IS NULL
+          AND error IS NULL AND review_draft_id IS NULL)
+        OR
+        (status = 'completed'
+          AND leased_by IS NOT NULL AND length(trim(leased_by)) > 0
+          AND leased_at IS NOT NULL AND lease_expires_at IS NULL
+          AND attempts > 0 AND completed_at IS NOT NULL
+          AND leased_at >= created_at AND completed_at >= leased_at
+          AND updated_at >= completed_at
+          AND result_json IS NOT NULL AND error IS NULL)
+        OR
+        (status = 'failed'
+          AND leased_by IS NOT NULL AND length(trim(leased_by)) > 0
+          AND leased_at IS NOT NULL AND lease_expires_at IS NULL
+          AND attempts > 0 AND completed_at IS NOT NULL
+          AND leased_at >= created_at AND completed_at >= leased_at
+          AND updated_at >= completed_at
+          AND error IS NOT NULL AND length(trim(error)) > 0
+          AND review_draft_id IS NULL)
+        OR
+        (status = 'cancelled'
+          AND leased_by IS NULL AND leased_at IS NULL
+          AND lease_expires_at IS NULL AND completed_at IS NOT NULL
+          AND completed_at >= created_at AND updated_at >= completed_at
+          AND review_draft_id IS NULL)
+      )
+  ''';
+
+  Future<void> _createLlmTaskQueueTable(String tableName) => customStatement(
+    'CREATE TABLE IF NOT EXISTS $tableName ('
+    '$_llmTaskQueueColumnsAndConstraints)',
+  );
+
+  Future<void> _ensureLlmTaskQueueCompatibilityColumns() async {
     for (final stmt in <String>[
       "ALTER TABLE llm_task_queue ADD COLUMN readiness TEXT NOT NULL DEFAULT 'ready'",
       "ALTER TABLE llm_task_queue ADD COLUMN size TEXT NOT NULL DEFAULT 'medium'",
@@ -3908,6 +4004,9 @@ class AppDb extends _$AppDb {
         _logToleratedSchemaError('_ensureLlmTaskQueueTable: addColumn', e);
       }
     }
+  }
+
+  Future<void> _createLlmTaskQueueIndexes() async {
     await customStatement(
       'CREATE INDEX IF NOT EXISTS idx_llm_task_queue_project_status '
       'ON llm_task_queue(project_id, status, updated_at DESC)',
@@ -3920,6 +4019,221 @@ class AppDb extends _$AppDb {
       'CREATE INDEX IF NOT EXISTS idx_llm_task_queue_work_item '
       'ON llm_task_queue(work_item_id)',
     );
+  }
+
+  Future<void> _createLlmTaskQueueIntegrityTriggers() async {
+    await customStatement('''
+      CREATE TRIGGER IF NOT EXISTS guard_llm_task_queue_project_insert
+      BEFORE INSERT ON llm_task_queue
+      FOR EACH ROW WHEN NEW.work_item_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM work_items w JOIN stages s ON s.id = w.stage_id
+        WHERE w.id = NEW.work_item_id AND s.project_id = NEW.project_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'queue work item must belong to queue project');
+      END
+    ''');
+    await customStatement('''
+      CREATE TRIGGER IF NOT EXISTS guard_llm_task_queue_project_update
+      BEFORE UPDATE OF project_id, work_item_id ON llm_task_queue
+      FOR EACH ROW WHEN NEW.work_item_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM work_items w JOIN stages s ON s.id = w.stage_id
+        WHERE w.id = NEW.work_item_id AND s.project_id = NEW.project_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'queue work item must belong to queue project');
+      END
+    ''');
+    await customStatement('''
+      CREATE TRIGGER IF NOT EXISTS guard_llm_task_queue_work_item_reparent
+      BEFORE UPDATE OF stage_id ON work_items
+      FOR EACH ROW WHEN EXISTS (
+        SELECT 1 FROM llm_task_queue q
+        WHERE q.work_item_id = OLD.id AND NOT EXISTS (
+          SELECT 1 FROM stages s
+          WHERE s.id = NEW.stage_id AND s.project_id = q.project_id
+        )
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'work item reparent would invalidate queue project');
+      END
+    ''');
+    await customStatement('''
+      CREATE TRIGGER IF NOT EXISTS guard_llm_task_queue_stage_reparent
+      BEFORE UPDATE OF project_id ON stages
+      FOR EACH ROW WHEN EXISTS (
+        SELECT 1 FROM work_items w JOIN llm_task_queue q
+          ON q.work_item_id = w.id
+        WHERE w.stage_id = OLD.id AND q.project_id != NEW.project_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'stage reparent would invalidate queue project');
+      END
+    ''');
+  }
+
+  Future<void> _dropLlmTaskQueueIntegrityTriggers() async {
+    for (final trigger in const <String>[
+      'guard_llm_task_queue_project_insert',
+      'guard_llm_task_queue_project_update',
+      'guard_llm_task_queue_work_item_reparent',
+      'guard_llm_task_queue_stage_reparent',
+    ]) {
+      await customStatement('DROP TRIGGER IF EXISTS $trigger');
+    }
+  }
+
+  Future<void> _ensureLlmTaskQueueTable() async {
+    await _createLlmTaskQueueTable('llm_task_queue');
+    await _ensureLlmTaskQueueCompatibilityColumns();
+    await _createLlmTaskQueueIndexes();
+    await _createLlmTaskQueueIntegrityTriggers();
+  }
+
+  Future<void> _migrateLlmTaskQueueIntegrityV26() async {
+    final exists = await customSelect(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'llm_task_queue' LIMIT 1",
+    ).getSingleOrNull();
+    if (exists == null) {
+      await _ensureLlmTaskQueueTable();
+      return;
+    }
+
+    await _ensureLlmTaskQueueCompatibilityColumns();
+    await transaction(() async {
+      final preflightChecks = <String, String>{
+        'orphan project': '''NOT EXISTS (
+          SELECT 1 FROM projects p WHERE p.id = q.project_id)''',
+        'invalid work item ownership':
+            '''q.work_item_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM work_items w JOIN stages s ON s.id = w.stage_id
+          WHERE w.id = q.work_item_id AND s.project_id = q.project_id)''',
+        'invalid enum': '''q.priority NOT IN ('low', 'normal', 'high', 'urgent')
+          OR q.status NOT IN ('pending', 'leased', 'completed', 'failed', 'cancelled')
+          OR q.readiness NOT IN ('ready', 'blocked', 'needs_decision', 'needs_context', 'review_needed')
+          OR q.size NOT IN ('tiny', 'small', 'medium', 'large')
+          OR q.risk NOT IN ('docs_only', 'low_code', 'medium_code', 'db_schema', 'release', 'external_facing')
+          OR q.suggested_actor NOT IN ('user', 'codex', 'claude', 'local_llm', 'manual_review')
+          OR q.verification_needed NOT IN ('none', 'tests', 'smoke', 'build', 'manual_ui')''',
+        'invalid scalar': '''q.attempts < 0 OR trim(q.id) = ''
+          OR trim(q.project_id) = '' OR trim(q.title) = ''
+          OR trim(q.objective) = '' OR trim(q.created_by) = ''
+          OR typeof(q.id) != 'text'
+          OR typeof(q.project_id) != 'text'
+          OR (q.work_item_id IS NOT NULL AND typeof(q.work_item_id) != 'text')
+          OR typeof(q.title) != 'text' OR typeof(q.objective) != 'text'
+          OR typeof(q.context_json) != 'text' OR typeof(q.priority) != 'text'
+          OR typeof(q.status) != 'text' OR typeof(q.created_by) != 'text'
+          OR (q.leased_by IS NOT NULL AND typeof(q.leased_by) != 'text')
+          OR (q.result_json IS NOT NULL AND typeof(q.result_json) != 'text')
+          OR (q.error IS NOT NULL AND typeof(q.error) != 'text')
+          OR (q.review_draft_id IS NOT NULL AND typeof(q.review_draft_id) != 'text')
+          OR typeof(q.readiness) != 'text' OR typeof(q.size) != 'text'
+          OR typeof(q.risk) != 'text' OR typeof(q.suggested_actor) != 'text'
+          OR typeof(q.verification_needed) != 'text'
+          OR (q.next_action IS NOT NULL AND typeof(q.next_action) != 'text')
+          OR (q.blocker_reason IS NOT NULL AND typeof(q.blocker_reason) != 'text')
+          OR (q.planning_notes IS NOT NULL AND typeof(q.planning_notes) != 'text')
+          OR CASE WHEN json_valid(q.context_json)
+            THEN json_type(q.context_json) != 'object' ELSE 1 END
+          OR (q.result_json IS NOT NULL AND CASE WHEN json_valid(q.result_json)
+            THEN json_type(q.result_json) != 'object' ELSE 1 END)
+          OR typeof(q.attempts) != 'integer'
+          OR typeof(q.created_at) != 'integer'
+          OR typeof(q.updated_at) != 'integer'
+          OR q.updated_at < q.created_at
+          OR (q.leased_at IS NOT NULL AND typeof(q.leased_at) != 'integer')
+          OR (q.lease_expires_at IS NOT NULL AND typeof(q.lease_expires_at) != 'integer')
+          OR (q.completed_at IS NOT NULL AND typeof(q.completed_at) != 'integer')
+          OR (q.last_reviewed_at IS NOT NULL AND typeof(q.last_reviewed_at) != 'integer')
+          OR (q.last_reviewed_at IS NOT NULL AND q.last_reviewed_at < q.created_at)''',
+        'invalid state': '''NOT (
+          (q.status = 'pending' AND q.leased_by IS NULL AND q.leased_at IS NULL
+            AND q.lease_expires_at IS NULL AND q.completed_at IS NULL
+            AND q.result_json IS NULL AND q.error IS NULL AND q.review_draft_id IS NULL)
+          OR (q.status = 'leased' AND q.leased_by IS NOT NULL
+            AND length(trim(q.leased_by)) > 0 AND q.leased_at IS NOT NULL
+            AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at > q.leased_at
+            AND q.leased_at >= q.created_at AND q.updated_at >= q.leased_at
+            AND q.attempts > 0 AND q.completed_at IS NULL
+            AND q.result_json IS NULL AND q.error IS NULL AND q.review_draft_id IS NULL)
+          OR (q.status = 'completed' AND q.leased_by IS NOT NULL
+            AND length(trim(q.leased_by)) > 0 AND q.leased_at IS NOT NULL
+            AND q.lease_expires_at IS NULL AND q.attempts > 0
+            AND q.completed_at IS NOT NULL AND q.result_json IS NOT NULL
+            AND q.leased_at >= q.created_at AND q.completed_at >= q.leased_at
+            AND q.updated_at >= q.completed_at AND q.error IS NULL)
+          OR (q.status = 'failed' AND q.leased_by IS NOT NULL
+            AND length(trim(q.leased_by)) > 0 AND q.leased_at IS NOT NULL
+            AND q.lease_expires_at IS NULL AND q.attempts > 0
+            AND q.completed_at IS NOT NULL AND q.error IS NOT NULL
+            AND length(trim(q.error)) > 0
+            AND q.leased_at >= q.created_at AND q.completed_at >= q.leased_at
+            AND q.updated_at >= q.completed_at
+            AND q.review_draft_id IS NULL)
+          OR (q.status = 'cancelled' AND q.leased_by IS NULL
+            AND q.leased_at IS NULL AND q.lease_expires_at IS NULL
+            AND q.completed_at IS NOT NULL
+            AND q.completed_at >= q.created_at
+            AND q.updated_at >= q.completed_at
+            AND q.review_draft_id IS NULL))''',
+      };
+      for (final check in preflightChecks.entries) {
+        final rows = await customSelect(
+          'SELECT q.id FROM llm_task_queue q WHERE ${check.value} LIMIT 10',
+        ).get();
+        if (rows.isNotEmpty) {
+          final ids = rows.map((row) => row.data['id']).join(', ');
+          throw StateError(
+            'Cannot migrate llm_task_queue to schema v26: '
+            '${check.key} rows: $ids',
+          );
+        }
+      }
+
+      await customStatement('DROP TABLE IF EXISTS llm_task_queue_v26');
+      await _createLlmTaskQueueTable('llm_task_queue_v26');
+      const columns = '''id, project_id, work_item_id, title, objective,
+        context_json, priority, status, created_by, created_at, updated_at,
+        leased_by, leased_at, lease_expires_at, attempts, result_json, error,
+        review_draft_id, completed_at, readiness, size, risk, suggested_actor,
+        verification_needed, next_action, blocker_reason, planning_notes,
+        last_reviewed_at''';
+      await customStatement(
+        'INSERT INTO llm_task_queue_v26 ($columns) '
+        'SELECT $columns FROM llm_task_queue',
+      );
+      final sourceCount = await customSelect(
+        'SELECT count(*) AS count FROM llm_task_queue',
+      ).getSingle();
+      final targetCount = await customSelect(
+        'SELECT count(*) AS count FROM llm_task_queue_v26',
+      ).getSingle();
+      if (sourceCount.read<int>('count') != targetCount.read<int>('count')) {
+        throw StateError('llm_task_queue v26 rebuild changed the row count.');
+      }
+      // Triggers owned by work_items/stages survive a queue-table drop and
+      // would reference the missing old name while SQLite validates RENAME.
+      // Keep their removal and recreation inside this rebuild transaction so
+      // any later failure restores the original table and trigger inventory.
+      await _dropLlmTaskQueueIntegrityTriggers();
+      await customStatement('DROP TABLE llm_task_queue');
+      await customStatement(
+        'ALTER TABLE llm_task_queue_v26 RENAME TO llm_task_queue',
+      );
+      await _createLlmTaskQueueIndexes();
+      await _createLlmTaskQueueIntegrityTriggers();
+      final foreignKeyFailures = await customSelect(
+        "PRAGMA foreign_key_check('llm_task_queue')",
+      ).get();
+      if (foreignKeyFailures.isNotEmpty) {
+        throw StateError(
+          'llm_task_queue v26 rebuild failed foreign_key_check: '
+          '${foreignKeyFailures.length} violation(s).',
+        );
+      }
+    });
   }
 
   Future<String> ensureGeneralTaskStage() async {
@@ -5677,6 +5991,26 @@ class AppDb extends _$AppDb {
   void _notifyLlmTaskQueueChanged({UpdateKind? kind}) =>
       notifyUpdates({TableUpdate(_llmTaskQueueTableName, kind: kind)});
 
+  Future<void> _validateLlmTaskProjectWorkItemLink({
+    required String projectId,
+    required String? workItemId,
+  }) async {
+    if (workItemId == null) return;
+    final match = await customSelect(
+      '''SELECT 1 FROM work_items w
+         JOIN stages s ON s.id = w.stage_id
+         WHERE w.id = ? AND s.project_id = ? LIMIT 1''',
+      variables: [Variable<String>(workItemId), Variable<String>(projectId)],
+    ).getSingleOrNull();
+    if (match == null) {
+      throw ArgumentError.value(
+        workItemId,
+        'workItemId',
+        'must identify a work item in project $projectId',
+      );
+    }
+  }
+
   LlmTaskQueueItem _llmTaskQueueItemFromRow(QueryRow row) => LlmTaskQueueItem(
     id: row.data['id'] as String,
     projectId: row.data['project_id'] as String,
@@ -5728,6 +6062,10 @@ class AppDb extends _$AppDb {
     DateTime? lastReviewedAt,
   }) async {
     await _ensureLlmTaskQueueTable();
+    await _validateLlmTaskProjectWorkItemLink(
+      projectId: projectId,
+      workItemId: workItemId,
+    );
     final now = createdAt ?? DateTime.now();
     final id = _newMicrosId('llm_task');
     await customStatement(
@@ -5841,6 +6179,10 @@ class AppDb extends _$AppDb {
     final existing = await getLlmTask(id);
     if (existing == null) return null;
     if (existing.status == 'completed') return existing;
+    await _validateLlmTaskProjectWorkItemLink(
+      projectId: projectId,
+      workItemId: workItemId,
+    );
     final now = updatedAt ?? DateTime.now();
     final editedLeasedTask = existing.status == 'leased';
     await customStatement(
@@ -5926,6 +6268,10 @@ class AppDb extends _$AppDb {
     await _ensureLlmTaskQueueTable();
     final existing = await getLlmTask(id);
     if (existing == null) return null;
+    await _validateLlmTaskProjectWorkItemLink(
+      projectId: existing.projectId,
+      workItemId: workItemId,
+    );
     final now = updatedAt ?? DateTime.now();
     await customStatement(
       'UPDATE llm_task_queue SET work_item_id = ?, updated_at = ? WHERE id = ?',
@@ -5990,6 +6336,13 @@ class AppDb extends _$AppDb {
   }) async {
     if (leasedBy.trim().isEmpty) {
       throw ArgumentError.value(leasedBy, 'leasedBy', 'must not be blank');
+    }
+    if (leaseDuration <= Duration.zero) {
+      throw ArgumentError.value(
+        leaseDuration,
+        'leaseDuration',
+        'must be greater than zero',
+      );
     }
     await _ensureLlmTaskQueueTable();
     final claimedAt = now ?? DateTime.now();

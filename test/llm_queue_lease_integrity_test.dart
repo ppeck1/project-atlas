@@ -39,6 +39,11 @@ void main() {
         dbA.customSelect('SELECT 1').get(),
         dbB.customSelect('SELECT 1').get(),
       ]);
+      await dbA.createProject(
+        'queue-integrity-project',
+        'Queue integrity',
+        DateTime.utc(2026, 7, 21),
+      );
     });
 
     tearDown(() async {
@@ -574,6 +579,7 @@ Future<String> _enqueue(AppDb db, {required String suffix}) =>
       title: 'Queue integrity $suffix',
       objective: 'Prove lease and retry integrity for $suffix.',
       contextJson: '{}',
+      createdAt: DateTime.utc(2026, 7, 21),
     );
 
 LlmTaskCompletionDraftPayload _completionDraft(String taskId, int attempt) =>

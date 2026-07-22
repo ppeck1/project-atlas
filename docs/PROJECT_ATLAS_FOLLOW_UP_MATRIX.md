@@ -37,14 +37,15 @@ reproduction or design disposition before implementation.
 WP3 findings A-01, A-02, and A-05 closed after PR #33 merged as `8a90d6e`.
 A-03 and A-04 closed after PR #35 merged as `a3c88f6` and post-merge proof
 passed on current `main`. The attended single-worker constraint is therefore
-retired. A-11 remains open in WP3, and A-06 through A-10 remain open in WP4,
+retired. A-11 is in progress on `fix/queue-schema-integrity`, and A-06 through
+A-10 remain open in WP4,
 so neither work package is fully closed.
 
 R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
 post-merge proof passed. They provide exact full-backup directory inventory
 and bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11
-through R-14 remain open, so WP2 is not closed. The ledger contains 15 Closed
-and 36 Open findings.
+through R-14 remain open, so WP2 is not closed. The ledger contains 15 Closed,
+1 In progress, and 35 Open findings.
 
 ## Finding ledger
 
@@ -74,7 +75,7 @@ and 36 Open findings.
 | SPA-20260721-A-08 | P2 | Needs verification | Open | WP4 | Repeated history reads verify the entire chain. | Unassigned | TBD | Write/checkpoint verification plus paged audit behavior and performance proof. |
 | SPA-20260721-A-09 | P2 | Needs verification | Open | WP4 | Explicit empty tags cannot clear a task's tags. | Unassigned | TBD | Present-empty differs from absent and clears tags in tests. |
 | SPA-20260721-A-10 | P1 | Needs verification | Open | WP4 | Manifest truth and tags are accepted separately. | Unassigned | TBD | Atomic metadata/tag acceptance with tag concurrency token. |
-| SPA-20260721-A-11 | P1 | Needs verification | Open | WP3 | Raw queue table lacks foreign-key and state constraints. | Unassigned | TBD | Invalid-state migrations/tests and `foreign_key_check` pass. |
+| SPA-20260721-A-11 | P1 | Accepted | In progress | WP3 | Raw queue table lacks foreign-key and state constraints. | Codex | `fix/queue-schema-integrity` | Schema v26 fail-closed rebuild, foreign keys, ownership triggers, exact scalar/enum/JSON/state/chronology constraints, valid legacy-state preservation, invalid migration rollback, and `foreign_key_check` proof must pass. Contract: `docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-12 | P1 | Needs verification | Open | WP5 | Malformed planning values fail open to executable defaults. | Unassigned | TBD | Unknown values enter a review lane and cannot become ready. |
 | SPA-20260721-A-13 | P1 | Needs verification | Open | WP5 | Stale work is promoted in execution ranking. | Unassigned | TBD | Stale items require revalidation and ranking fixtures prove ordering. |
 | SPA-20260721-A-14 | P2 | Needs verification | Open | WP5 | Invalid workload filters silently normalize to valid filters. | Unassigned | TBD | Invalid arguments return allowed-value diagnostics. |
@@ -95,9 +96,9 @@ and 36 Open findings.
 | SPA-20260721-U-04 | P2 | Needs verification | Open | WP9 | Capsule flagship presentation leads with identifiers/failure state. | Unassigned | TBD | Plain-language Act view and separate audit details with healthy primary fixture. |
 | SPA-20260721-U-05 | P2 | Needs verification | Open | WP9 | Operations and Library expose internal terminology/empty states. | Unassigned | TBD | Plain-language Sources & Health and useful Library initial selection/state. |
 | SPA-20260721-U-06 | P2 | Needs verification | Open | WP10 | The central productivity claim is unmeasured. | Unassigned | TBD | Local benchmark for resume, choice, delegation, acceptance, and rework. |
-| SPA-20260721-D-01 | P1 | Accepted | Open | WP6 | Runtime schema 25 conflicts with documentation claiming 24. | Unassigned | TBD | All current-state docs agree with code; automated drift check passes. |
+| SPA-20260721-D-01 | P1 | Accepted | Open | WP6 | Current-schema documentation can drift from the runtime schema. | Unassigned | TBD | All current-state docs agree with code; automated drift check passes. |
 | SPA-20260721-D-02 | P1 | Accepted | Open | WP6 | Capsule Edit Truth v1 lacks a recorded formal acceptance decision. | Unassigned | TBD | Current build/copied-database checklist records accepted/rejected/follow-ups. |
-| SPA-20260721-D-03 | P1 | Needs verification | Open | WP6 | Real migration coverage is stale, inconsistent, and normally skipped. | Unassigned | TBD | Sanitized/deterministic old schemas prove v25 preservation and ledger guards. |
+| SPA-20260721-D-03 | P1 | Needs verification | Open | WP6 | Real migration coverage is stale, inconsistent, and normally skipped. | Unassigned | TBD | Sanitized/deterministic old schemas prove current-schema v26 preservation, Capsule ledger guards, and queue integrity guards. |
 | SPA-20260721-D-04 | P2 | Needs verification | Open | WP11 | CI is broad but incompletely pinned and self-auditing. | Unassigned | TBD | Pinned toolchain/deps, format/generation diff, privacy/freshness, artifact scans. |
 | SPA-20260721-D-05 | P2 | Needs verification | Open | WP11 | Large architectural concentrations remain regression risks. | Unassigned | TBD | Extract-as-you-touch work tied to functional changes and typed diagnostics. |
 | SPA-20260721-D-06 | P3 | Needs verification | Open | WP11 | Public metadata, captures, reported version, and database opener have stale residue. | Unassigned | TBD | Metadata/version/capture manifest and truthful database opener naming. |
