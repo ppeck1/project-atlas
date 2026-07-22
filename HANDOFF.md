@@ -12,9 +12,10 @@ for the guarded worker is recorded in the
 The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
-Recovery findings R-01 through R-06 and queue findings A-01, A-02, and A-05
-are closed. The LLM queue remains restricted to an attended single-worker
-operating assumption while P0 proposal findings A-03 and A-04 remain open.
+Recovery findings R-01 through R-06 and agent-integrity findings A-01 through
+A-05 are closed. The attended single-worker operating constraint was retired
+only after A-03/A-04 merged and their post-merge proof passed. A-11 remains
+open, so WP3 is not fully closed.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
@@ -24,12 +25,12 @@ Last updated: 2026-07-21.
 
 ## Audit resume checkpoint
 
-Start from current `main` at `c9a5e36` (`Close LLM queue findings after
-post-merge proof (#34)`). The working tree was clean and synchronized with
+Start from current `main` at `a3c88f6` (`Harden proposal acceptance integrity
+(#35)`). The working tree was clean and synchronized with
 `origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 9 Closed, 2 In progress, and 40
-Open. The completed integrity sequence is:
+The canonical matrix contains 51 findings: 11 Closed and 40 Open. The
+completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
   rollback, final verification, child acknowledgement, and handoff security.
@@ -41,43 +42,34 @@ Open. The completed integrity sequence is:
   drafts.
 - PR #34 / `c9a5e36`: A-01/A-02/A-05 post-merge proof and canonical closure
   evidence.
+- PR #35 / `a3c88f6`: A-03/A-04 transactional proposal acceptance, stable
+  replay, canonical task/tag freshness tokens, typed conflicts, and fault and
+  contention proof.
 
-Current verification baseline after A-01/A-02/A-05:
+Current verification baseline after A-03/A-04:
 
 - focused recovery suite: 18/18;
 - focused full-backup suite: 10/10 on merged `main`;
-- focused queue/service/MCP suite: 52/52 on merged `main`;
-- full Flutter suite: 477 passed with 1 intentional skip on merged `main`;
+- proposal-integrity suite: 18/18 on merged `main`;
+- focused proposal/service/MCP suite: 54/54;
+- full Flutter suite: 495 passed with 1 intentional skip on merged `main`;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
 - hosted CI, including seeded isolated MCP smoke: passed.
 
-### Recommended next implementation
+### Recommended next package
 
-Take A-03 and A-04 as the next P0 proposal-acceptance package. Keep the
-attended single-worker constraint until both have merged and passed post-merge
-proof.
+Resume the canonical package order with R-07 through R-10 as one P1
+bundle-validation and recovery-safety slice. Then take A-11 to finish WP3's
+queue schema constraints, followed by A-06/A-07/A-10 as the remaining P1
+truth/proposal-integrity work. Keep A-08 and A-09 as separately evidenced P2
+follow-ups. None of these findings is closed by the proposal work.
 
-Active implementation branch: `fix/proposal-acceptance-integrity`. A-03 and
-A-04 are in progress; neither finding is closed and the operating constraint
-is unchanged.
-
-1. Make proposal side effects and review approval one crash-idempotent SQLite
-   transaction with an UPDATE-first pending-draft claim.
-2. Persist server-generated canonical task and exact-tag-set hashes for
-   existing-task proposals.
-3. Reject stale proposal application with a typed conflict before any side
-   effect occurs.
-4. Prove crash-after-side-effect retry applies exactly once and stale task/tag
-   proposals change nothing.
-5. Keep A-06 through A-10 and A-11 separately tracked unless implementation
-   evidence shows a shared atomicity or schema boundary.
-
-The active lifecycle and hash boundary are specified in the
+The lifecycle and hash boundary are specified in the
 [`proposal acceptance integrity contract`](docs/PROPOSAL_ACCEPTANCE_INTEGRITY_CONTRACT.md).
 
-Current pre-merge proof for the active package:
+Post-merge proof for the closed A-03/A-04 package on `a3c88f6`:
 
 - proposal-integrity suite: 18/18;
 - focused proposal/service/MCP suite: 54/54;

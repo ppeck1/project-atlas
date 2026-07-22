@@ -16,10 +16,7 @@ reproduction or design disposition before implementation.
 
 ## Immediate operating constraints
 
-- Treat the LLM queue as single-worker and attended until SPA-20260721-A-01
-  through SPA-20260721-A-05 are verified closed.
 - Do not record formal Capsule Edit Truth v1 acceptance until WP6 completes.
-- Start Workboard Agency work only after the P0 integrity packages close.
 
 ## Work packages and order
 
@@ -37,15 +34,11 @@ reproduction or design disposition before implementation.
 | 10 | WP10 — usefulness measurement | U-06 | A local benchmark records resume and delegation outcomes without outbound telemetry. |
 | 11 | WP11 — CI and maintainability | D-04–D-06 | Reproducibility gates and bounded extract-as-you-touch cleanup are delivered. |
 
-WP3 findings A-01, A-02, and A-05 closed after PR #33 merged as `8a90d6e` and
-post-merge proof passed on current `main`. A-11 remains open, so WP3 is not
-fully closed. The attended single-worker constraint remains in force because
-P0 findings A-03 and A-04 are still open.
-
-A-03 and A-04 are in progress on `fix/proposal-acceptance-integrity`. The
-attended single-worker constraint remains in force until both findings merge
-and pass post-merge proof. A-06 through A-10 remain open, so this slice does
-not close WP4.
+WP3 findings A-01, A-02, and A-05 closed after PR #33 merged as `8a90d6e`.
+A-03 and A-04 closed after PR #35 merged as `a3c88f6` and post-merge proof
+passed on current `main`. The attended single-worker constraint is therefore
+retired. A-11 remains open in WP3, and A-06 through A-10 remain open in WP4,
+so neither work package is fully closed.
 
 ## Finding ledger
 
@@ -67,8 +60,8 @@ not close WP4.
 | SPA-20260721-R-14 | P2 | Needs verification | Open | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Unassigned | TBD | Async/isolate extraction with source and expanded-size limits. |
 | SPA-20260721-A-01 | P0 | Accepted | Closed | WP3 | LLM claim is a select-then-unconditional-update race. | Codex | PR #33 | Atomic specific-task and claim-next CAS merged as `8a90d6e`; two-connection contention proof passed on merged `main`. |
 | SPA-20260721-A-02 | P0 | Accepted | Closed | WP3 | Complete/fail does not enforce lease owner or expiry. | Codex | PR #33 | Worker-plus-attempt CAS with strict expiry and typed conflicts merged as `8a90d6e`; wrong-owner, exact-expiry, and same-worker ABA proof passed on merged `main`. |
-| SPA-20260721-A-03 | P0 | Accepted | In progress | WP4 | Proposal side effect and review approval are not atomic/idempotent. | Codex | `fix/proposal-acceptance-integrity` | One SQLite transaction claims pending review state, applies every proposal kind, and records stable review/entity/audit results; write-boundary rollback, two-connection contention, rejection-race, and replay proof must show zero partial effects and exactly one result. |
-| SPA-20260721-A-04 | P0 | Accepted | In progress | WP4 | Task proposals lack a base revision/hash. | Codex | `fix/proposal-acceptance-integrity` | A server-captured canonical task-and-exact-tag snapshot is rechecked before any write; missing or stale task, tag, and project-binding state must return a typed conflict with no tag creation or domain mutation. |
+| SPA-20260721-A-03 | P0 | Accepted | Closed | WP4 | Proposal side effect and review approval are not atomic/idempotent. | Codex | PR #35 | One transaction claims pending review state, applies every proposal kind, and records stable review/entity/audit results. Merged as `a3c88f6`; post-merge write-boundary rollback, two-connection contention, rejection-race, and replay proof passed. |
+| SPA-20260721-A-04 | P0 | Accepted | Closed | WP4 | Task proposals lack a base revision/hash. | Codex | PR #35 | Server-captured canonical task and exact-tag hashes are rechecked before any write. Merged as `a3c88f6`; post-merge missing, stale, moved, malformed, and same-base contention proof passed with typed conflicts and no partial effects. |
 | SPA-20260721-A-05 | P0 | Accepted | Closed | WP3 | Completion can create an orphan/duplicate handoff draft. | Codex | PR #33 | Transactional deterministic draft completion merged as `8a90d6e`; post-insert rollback, concurrent/retry deduplication, and service replay proof passed on merged `main`. |
 | SPA-20260721-A-06 | P1 | Needs verification | Open | WP4 | Accepted-truth service may mutate non-truth fields. | Unassigned | TBD | Unknown truth keys fail closed or move to a separate contract. |
 | SPA-20260721-A-07 | P1 | Needs verification | Open | WP4 | Source revision lookup bypasses complete ledger verification. | Unassigned | TBD | Source matches are resolved only from a verified chain. |
@@ -104,6 +97,29 @@ not close WP4.
 | SPA-20260721-D-06 | P3 | Needs verification | Open | WP11 | Public metadata, captures, reported version, and database opener have stale residue. | Unassigned | TBD | Metadata/version/capture manifest and truthful database opener naming. |
 
 ## Progress evidence
+
+### WP4 A-03/A-04 closure — 2026-07-21
+
+PR #35 merged as `a3c88f6`. A-03 and A-04 are closed after focused and full
+post-merge proof passed on current `main`.
+
+- Proposal-integrity suite: 18 tests passed.
+- Focused proposal, service, and MCP suite: 54 tests passed.
+- Every proposal kind shares the pending-draft claim, domain side effects,
+  stable review result, and audit event transaction; injected failures at each
+  write boundary roll back without partial effects.
+- Two independent SQLite connections prove one terminal approve/reject winner,
+  stable approved replay, and one winner for same-base task proposals.
+- Canonical server-captured task and exact-tag hashes reject missing, stale,
+  moved, malformed, or changed-tag proposals before tag creation or mutation.
+- Full Flutter suite: 495 tests passed with 1 intentional skip.
+- Static analysis: clean.
+- Python policy/maintenance suite: 30 tests passed.
+- Windows release build: passed.
+- Hosted PR #35 CI passed, including generated-code verification, analysis,
+  full tests, Windows release build, seeded MCP fixture, and gateway smoke.
+- The attended single-worker constraint was retired only after this post-merge
+  evidence passed. A-06 through A-10 remain open, so WP4 remains open.
 
 ### WP3 A-01/A-02/A-05 closure — 2026-07-21
 
