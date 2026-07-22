@@ -4,6 +4,7 @@ import '../db/app_db.dart';
 import 'local_project_refresh_service.dart';
 import 'project_capsule_truth_service.dart';
 import 'project_enrichment_service.dart';
+import 'project_non_truth_metadata_service.dart';
 
 /// Applies deterministic, local project identity updates produced by a refresh
 /// plan. UI-facing run state intentionally stays with `AppState`.
@@ -133,24 +134,37 @@ class ProjectIdentityEnrichmentService {
     maybeSet('outcomeSummary', project.outcomeSummary);
     maybeSet('lessonsLearned', project.lessonsLearned);
 
-    var changed = false;
-    if (fields.isNotEmpty) {
-      await ProjectCapsuleTruthService(db).acceptPatch(
-        projectId: projectId,
-        fields: fields,
-        actorLabel: 'Atlas',
-        sourceKind: 'local_project_identity_refresh',
-        sourceId: entry.id,
-      );
-      changed = true;
-    }
-    return await _applyProjectIdentityTags(
+    return db.transaction(() async {
+      var changed = false;
+      final truthFields = Map<String, Object?>.from(fields)
+        ..remove('lessonsLearned');
+      if (truthFields.isNotEmpty) {
+        final result = await ProjectCapsuleTruthService(db).acceptPatch(
           projectId: projectId,
-          entry: entry,
-          planProfile: planProfile,
-          payload: action.payload,
-        ) ||
-        changed;
+          fields: truthFields,
+          actorLabel: 'Atlas',
+          sourceKind: 'local_project_identity_refresh',
+          sourceId: entry.id,
+        );
+        changed = result.changed || changed;
+      }
+      if (fields.containsKey('lessonsLearned')) {
+        changed =
+            await ProjectNonTruthMetadataService(db).updatePatch(
+              projectId: projectId,
+              fields: {'lessonsLearned': fields['lessonsLearned']},
+              actorLabel: 'Atlas',
+            ) ||
+            changed;
+      }
+      final tagsChanged = await _applyProjectIdentityTags(
+        projectId: projectId,
+        entry: entry,
+        planProfile: planProfile,
+        payload: action.payload,
+      );
+      return changed || tagsChanged;
+    });
   }
 
   Future<bool> _applyProjectIdentityTags({

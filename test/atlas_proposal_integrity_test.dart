@@ -300,7 +300,418 @@ void main() {
         (await service.getAgentProposalReview(proposal.draftId!))!.isPending,
         true,
       );
+
+      final applied = await service.approveAgentProposal(proposal.draftId!);
+      final replay = await service.approveAgentProposal(proposal.draftId!);
+      expect(replay.entityId, applied.entityId);
+      expect(
+        (await db.getProjectFull('atlas'))!.title,
+        'Proposed project title',
+      );
+      expect(await state.getProjectCapsuleRevisions('atlas'), hasLength(2));
+      expect((await db.getTagsForProject('atlas')).map((tag) => tag.name), [
+        'new-project-tag',
+      ]);
+      expect(
+        (await db.getRecentEvents()).where(
+          (event) => event.action == 'proposal_approved',
+        ),
+        hasLength(1),
+      );
     });
+
+    test('manifest snapshots are composite and server-authoritative', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+      final tagId = await state.saveTag(name: 'Alpha', color: '#112233');
+      await state.setProjectTags('atlas', [tagId]);
+      final adapter = AtlasMcpAdapter(service);
+
+      final result = await adapter.callTool('propose_manifest_update', {
+        'projectId': 'atlas',
+        'fields': {
+          'title': 'Proposed title',
+          'tags': ['beta'],
+        },
+        'baseManifestSnapshot': {
+          'schema': 'forged',
+          'truthRevisionId': 'forged',
+          'projectTagSetHash': 'forged',
+        },
+      });
+      final proposal = result.data! as Map;
+      final payload = proposal['payload'] as Map;
+      final base = payload['baseManifestSnapshot'] as Map;
+
+      expect(result.isError, isFalse);
+      expect(base, hasLength(4));
+      expect(base['schema'], 'atlas.manifest_proposal_base.v1');
+      expect(base['projectId'], 'atlas');
+      expect(base['truthRevisionId'], isNot('forged'));
+      expect(base['projectTagSetHash'], hasLength(64));
+      expect(base['projectTagSetHash'], isNot('forged'));
+      expect(payload['baseTruthRevisionId'], base['truthRevisionId']);
+
+      final listed = await adapter.callTool('list_agent_proposals');
+      final listedBase =
+          ((((listed.data! as List).single as Map)['payload']
+                  as Map)['baseManifestSnapshot']
+              as Map);
+      expect(listedBase, equals(base));
+    });
+
+    test(
+      'manifest approval detects stale assignment, name, and color',
+      () async {
+        Future<void> expectStale(
+          String projectId,
+          Future<void> Function(String tagId) mutate,
+        ) async {
+          await db.createProject(projectId, projectId, DateTime(2026, 7, 21));
+          final tagId = await state.saveTag(name: '$projectId-tag');
+          await state.setProjectTags(projectId, [tagId]);
+          final proposal = await service.proposeManifestUpdate(
+            projectId: projectId,
+            fields: const {
+              'tags': ['replacement'],
+            },
+          );
+          await mutate(tagId);
+
+          await expectLater(
+            service.approveAgentProposal(proposal.draftId!),
+            throwsA(
+              isA<AtlasProposalConflict>().having(
+                (error) => error.reason,
+                'reason',
+                AtlasProposalConflictReason.staleProjectTagSet,
+              ),
+            ),
+          );
+          expect(
+            (await service.getAgentProposalReview(
+              proposal.draftId!,
+            ))!.isPending,
+            isTrue,
+          );
+          expect(await db.findTagByName('replacement'), isNull);
+        }
+
+        await expectStale('assignment', (tagId) async {
+          final added = await state.saveTag(name: 'operator-added');
+          await state.setProjectTags('assignment', [tagId, added]);
+        });
+        await expectStale(
+          'rename',
+          (tagId) => db.updateTag(tagId, name: 'substantive-rename'),
+        );
+        await expectStale(
+          'color',
+          (tagId) => db.updateTag(tagId, color: '#abcdef'),
+        );
+      },
+    );
+
+    test('composite manifest snapshot detects cross-domain races', () async {
+      await db.createProject('truth-race', 'Truth race', DateTime(2026, 7, 21));
+      final tagsOnly = await service.proposeManifestUpdate(
+        projectId: 'truth-race',
+        fields: const {
+          'tags': ['proposal-tag'],
+        },
+      );
+      await state.updateProjectMeta('truth-race', {
+        'description': 'Operator truth change.',
+      });
+      await expectLater(
+        service.approveAgentProposal(tagsOnly.draftId!),
+        throwsA(
+          isA<AtlasProposalConflict>().having(
+            (error) => error.reason,
+            'reason',
+            AtlasProposalConflictReason.staleManifestTruth,
+          ),
+        ),
+      );
+      expect(await db.findTagByName('proposal-tag'), isNull);
+
+      await db.createProject('tag-race', 'Tag race', DateTime(2026, 7, 21));
+      final metadataOnly = await service.proposeManifestUpdate(
+        projectId: 'tag-race',
+        fields: const {'description': 'Proposal metadata.'},
+      );
+      final operatorTag = await state.saveTag(name: 'operator-tag');
+      await state.setProjectTags('tag-race', [operatorTag]);
+      await expectLater(
+        service.approveAgentProposal(metadataOnly.draftId!),
+        throwsA(
+          isA<AtlasProposalConflict>().having(
+            (error) => error.reason,
+            'reason',
+            AtlasProposalConflictReason.staleProjectTagSet,
+          ),
+        ),
+      );
+      expect((await db.getProjectFull('tag-race'))!.description, isNull);
+    });
+
+    test('manifest tags distinguish absent from explicitly empty', () async {
+      await db.createProject('absent', 'Absent', DateTime(2026, 7, 21));
+      final absentTag = await state.saveTag(name: 'preserved');
+      await state.setProjectTags('absent', [absentTag]);
+      final absent = await service.proposeManifestUpdate(
+        projectId: 'absent',
+        fields: const {'description': 'Metadata only.'},
+      );
+      await service.approveAgentProposal(absent.draftId!);
+      expect((await db.getTagsForProject('absent')).map((tag) => tag.name), [
+        'preserved',
+      ]);
+
+      await db.createProject('empty', 'Empty', DateTime(2026, 7, 21));
+      final emptyTag = await state.saveTag(name: 'to-clear');
+      await state.setProjectTags('empty', [emptyTag]);
+      final empty = await service.proposeManifestUpdate(
+        projectId: 'empty',
+        fields: const {'tags': <String>[]},
+      );
+      expect(
+        (empty.payload['fields'] as Map<String, Object?>).containsKey('tags'),
+        isTrue,
+      );
+      await service.approveAgentProposal(empty.draftId!);
+      expect(await db.getTagsForProject('empty'), isEmpty);
+      expect(await state.getProjectCapsuleRevisions('empty'), hasLength(1));
+    });
+
+    test(
+      'legacy and malformed manifest tokens fail with typed conflicts',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+
+        Future<void> mutateAndExpect(
+          void Function(Map<String, Object?> payload) mutate,
+          AtlasProposalConflictReason reason,
+        ) async {
+          final proposed = await service.proposeManifestUpdate(
+            projectId: 'atlas',
+            fields: const {
+              'tags': ['must-not-exist'],
+            },
+          );
+          final draft = await state.getDraft(proposed.draftId!);
+          final envelope =
+              jsonDecode(draft!.inputJson!) as Map<String, Object?>;
+          final payload = Map<String, Object?>.from(
+            envelope['payload']! as Map,
+          );
+          mutate(payload);
+          envelope['payload'] = payload;
+          await state.updateDraftReview(
+            id: draft.id,
+            accepted: false,
+            inputJson: jsonEncode(envelope),
+          );
+
+          await expectLater(
+            service.approveAgentProposal(draft.id),
+            throwsA(
+              isA<AtlasProposalConflict>().having(
+                (error) => error.reason,
+                'reason',
+                reason,
+              ),
+            ),
+          );
+          expect(
+            (await service.getAgentProposalReview(draft.id))!.isPending,
+            true,
+          );
+          expect(await db.findTagByName('must-not-exist'), isNull);
+        }
+
+        await mutateAndExpect(
+          (payload) => payload.remove('baseManifestSnapshot'),
+          AtlasProposalConflictReason.missingManifestBaseSnapshot,
+        );
+        await mutateAndExpect((payload) {
+          payload['baseManifestSnapshot'] = {
+            'schema': 'atlas.manifest_proposal_base.v1',
+            'projectId': 'atlas',
+            'truthRevisionId': payload['baseTruthRevisionId'],
+            'projectTagSetHash': 'not-a-digest',
+          };
+        }, AtlasProposalConflictReason.missingManifestBaseSnapshot);
+        await mutateAndExpect((payload) {
+          final fields = Map<String, Object?>.from(payload['fields']! as Map)
+            ..['tags'] = 'not-a-list';
+          payload['fields'] = fields;
+        }, AtlasProposalConflictReason.invalidManifestTagInput);
+      },
+    );
+
+    test('deleted manifest project fails before tag creation', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+      final proposal = await service.proposeManifestUpdate(
+        projectId: 'atlas',
+        fields: const {
+          'tags': ['orphan-project-tag'],
+        },
+      );
+      await state.softDeleteProject('atlas', 'Deleted during review.');
+
+      await expectLater(
+        service.approveAgentProposal(proposal.draftId!),
+        throwsA(
+          isA<AtlasProposalConflict>().having(
+            (error) => error.reason,
+            'reason',
+            AtlasProposalConflictReason.manifestProjectNotFound,
+          ),
+        ),
+      );
+      expect(await db.findTagByName('orphan-project-tag'), isNull);
+      expect(
+        (await service.getAgentProposalReview(proposal.draftId!))!.isPending,
+        isTrue,
+      );
+    });
+
+    test(
+      'ambiguous case-insensitive manifest tag fails typed without writes',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+        final upperId = await state.saveTag(name: 'Alpha');
+        final lowerId = await state.saveTag(name: 'alpha');
+        final proposal = await service.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {
+            'description': 'Must not apply.',
+            'tags': ['ALPHA'],
+          },
+        );
+
+        await expectLater(
+          service.approveAgentProposal(proposal.draftId!),
+          throwsA(
+            isA<AtlasProposalConflict>()
+                .having(
+                  (error) => error.reason,
+                  'reason',
+                  AtlasProposalConflictReason.ambiguousManifestTag,
+                )
+                .having(
+                  (error) => error.code,
+                  'code',
+                  'proposal_ambiguous_manifest_tag',
+                ),
+          ),
+        );
+        expect(
+          (await service.getAgentProposalReview(proposal.draftId!))!.isPending,
+          isTrue,
+        );
+        expect((await db.getProjectFull('atlas'))!.description, isNull);
+        expect(await db.getProjectTagAssignments('atlas'), isEmpty);
+        expect((await db.getTags()).map((tag) => tag.id).toSet(), {
+          upperId,
+          lowerId,
+        });
+        expect(await state.getProjectCapsuleRevisions('atlas'), hasLength(1));
+        expect(
+          (await db.getRecentEvents()).where(
+            (event) => event.action == 'proposal_approved',
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test('dangling project tag at capture fails proposal validation', () async {
+      await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+      await db.assignTagToProject('atlas', 'missing-tag');
+
+      final proposal = await service.proposeManifestUpdate(
+        projectId: 'atlas',
+        fields: const {
+          'description': 'Must not apply.',
+          'tags': ['must-not-exist'],
+        },
+      );
+
+      expect(
+        proposal.validationErrors,
+        contains('Accepted project manifest state could not be loaded.'),
+      );
+      expect(proposal.acceptedForReview, isFalse);
+      expect(proposal.draftId, isNull);
+      expect(proposal.payload['baseManifestSnapshot'], isNull);
+      expect((await db.getProjectFull('atlas'))!.description, isNull);
+      expect(
+        (await db.getProjectTagAssignments(
+          'atlas',
+        )).map((assignment) => assignment.tagId),
+        ['missing-tag'],
+      );
+      expect(await db.findTagByName('must-not-exist'), isNull);
+      expect(await state.getProjectCapsuleRevisions('atlas'), hasLength(1));
+      expect(
+        (await db.getRecentEvents()).where(
+          (event) => event.action == 'proposal_approved',
+        ),
+        isEmpty,
+      );
+    });
+
+    test(
+      'dangling project tag after capture fails typed without mutation',
+      () async {
+        await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+        final proposal = await service.proposeManifestUpdate(
+          projectId: 'atlas',
+          fields: const {
+            'description': 'Must not apply.',
+            'tags': ['must-not-exist'],
+          },
+        );
+        await db.assignTagToProject('atlas', 'concurrent-missing-tag');
+
+        await expectLater(
+          service.approveAgentProposal(proposal.draftId!),
+          throwsA(
+            isA<AtlasProposalConflict>()
+                .having(
+                  (error) => error.reason,
+                  'reason',
+                  AtlasProposalConflictReason.invalidProjectTagSet,
+                )
+                .having(
+                  (error) => error.code,
+                  'code',
+                  'proposal_invalid_project_tag_set',
+                ),
+          ),
+        );
+        expect(
+          (await service.getAgentProposalReview(proposal.draftId!))!.isPending,
+          isTrue,
+        );
+        expect((await db.getProjectFull('atlas'))!.description, isNull);
+        expect(
+          (await db.getProjectTagAssignments(
+            'atlas',
+          )).map((assignment) => assignment.tagId),
+          ['concurrent-missing-tag'],
+        );
+        expect(await db.findTagByName('must-not-exist'), isNull);
+        expect(await state.getProjectCapsuleRevisions('atlas'), hasLength(1));
+        expect(
+          (await db.getRecentEvents()).where(
+            (event) => event.action == 'proposal_approved',
+          ),
+          isEmpty,
+        );
+      },
+    );
 
     test('non-pending transaction markers fail closed', () async {
       await db.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
@@ -766,6 +1177,89 @@ void main() {
         (await serviceA.getAgentProposalReview(losingDraftId))!.isPending,
         true,
       );
+      expect(
+        (await dbA.getRecentEvents()).where(
+          (event) => event.action == 'proposal_approved',
+        ),
+        hasLength(1),
+      );
+    } finally {
+      stateA.dispose();
+      stateB.dispose();
+      await Future.wait([dbA.close(), dbB.close()]);
+      await tempDir.delete(recursive: true);
+    }
+  });
+
+  test('same-base manifest tag proposals have one concurrent winner', () async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'atlas_manifest_proposal_cas_',
+    );
+    final file = File(p.join(tempDir.path, 'proposal.sqlite'));
+    final initializer = _openProposalDb(file);
+    await initializer.customSelect('SELECT 1').get();
+    await initializer.createProject('atlas', 'Atlas', DateTime(2026, 7, 21));
+    await initializer.close();
+
+    final dbA = _openProposalDb(file);
+    final dbB = _openProposalDb(file);
+    final stateA = AppState(dbA, enableBackgroundSummaryRefresh: false);
+    final stateB = AppState(dbB, enableBackgroundSummaryRefresh: false);
+    try {
+      final serviceA = AtlasAgentService(stateA);
+      final serviceB = AtlasAgentService(stateB);
+      final proposalA = await serviceA.proposeManifestUpdate(
+        projectId: 'atlas',
+        fields: const {
+          'tags': ['winner-a'],
+        },
+      );
+      final proposalB = await serviceB.proposeManifestUpdate(
+        projectId: 'atlas',
+        fields: const {
+          'tags': ['winner-b'],
+        },
+      );
+      final start = Completer<void>();
+
+      Future<Object> capture(AtlasAgentService service, String draftId) async {
+        await start.future;
+        try {
+          return await service.approveAgentProposal(draftId);
+        } catch (error) {
+          return error;
+        }
+      }
+
+      final attempts = [
+        capture(serviceA, proposalA.draftId!),
+        capture(serviceB, proposalB.draftId!),
+      ];
+      start.complete();
+      final outcomes = await Future.wait(attempts);
+      final winners = outcomes.whereType<AtlasProposalApplyResult>().toList();
+      final conflicts = outcomes.whereType<AtlasProposalConflict>().toList();
+
+      expect(winners, hasLength(1));
+      expect(conflicts, hasLength(1));
+      expect(
+        conflicts.single.reason,
+        AtlasProposalConflictReason.staleProjectTagSet,
+      );
+      final winningA = winners.single.draftId == proposalA.draftId;
+      expect((await dbA.getTagsForProject('atlas')).map((tag) => tag.name), [
+        winningA ? 'winner-a' : 'winner-b',
+      ]);
+      expect(
+        await dbA.findTagByName(winningA ? 'winner-b' : 'winner-a'),
+        isNull,
+      );
+      final losingDraft = winningA ? proposalB.draftId! : proposalA.draftId!;
+      expect(
+        (await serviceA.getAgentProposalReview(losingDraft))!.isPending,
+        isTrue,
+      );
+      expect(await stateA.getProjectCapsuleRevisions('atlas'), hasLength(1));
       expect(
         (await dbA.getRecentEvents()).where(
           (event) => event.action == 'proposal_approved',

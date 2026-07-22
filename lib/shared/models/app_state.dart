@@ -23,6 +23,7 @@ import '../../services/project_enrichment_audit_service.dart';
 import '../../services/project_bundle_recovery_service.dart';
 import '../../services/project_capsule_truth_service.dart';
 import '../../services/project_identity_enrichment_service.dart';
+import '../../services/project_non_truth_metadata_service.dart';
 import '../../services/project_runtime_service.dart';
 import '../../services/project_summary_models.dart';
 import '../../services/shopify_seo_review_service.dart';
@@ -31,6 +32,7 @@ import '../../services/windows_secret_store.dart';
 import '../../services/workload_planning_service.dart';
 import '../atlas_owned_file_snapshot_coordinator.dart';
 import 'atlas_operation_status.dart';
+import 'project_capsule_truth.dart';
 
 export '../../services/github_archive_service.dart' show GithubArchiveFetcher;
 export '../../services/project_enrichment_service.dart'
@@ -1986,16 +1988,48 @@ class AppState extends ChangeNotifier {
     String? reason,
     bool notify = true,
   }) async {
-    await ProjectCapsuleTruthService(db).acceptPatch(
-      projectId: id,
-      fields: fields,
-      expectedRevisionId: expectedTruthRevisionId,
-      actorLabel: actor,
-      sourceKind: sourceKind,
-      sourceId: sourceId,
-      reason: reason,
-      recordProjectMetadataAudit: true,
-    );
+    final allowedFields = {
+      ...projectCapsuleTruthFieldKeys,
+      ...projectNonTruthMetadataFieldKeys,
+    };
+    final unsupported =
+        fields.keys.where((key) => !allowedFields.contains(key)).toList()
+          ..sort();
+    if (unsupported.isNotEmpty) {
+      throw ProjectCapsuleTruthValidationException([
+        'Project metadata does not support: ${unsupported.join(', ')}.',
+      ]);
+    }
+    final truthFields = <String, Object?>{
+      for (final entry in fields.entries)
+        if (projectCapsuleTruthFieldKeys.contains(entry.key))
+          entry.key: entry.value,
+    };
+    final supplementalFields = <String, Object?>{
+      for (final entry in fields.entries)
+        if (projectNonTruthMetadataFieldKeys.contains(entry.key))
+          entry.key: entry.value,
+    };
+    await db.transaction(() async {
+      await ProjectCapsuleTruthService(db).acceptPatch(
+        projectId: id,
+        fields: truthFields,
+        expectedRevisionId: expectedTruthRevisionId,
+        actorLabel: actor,
+        sourceKind: sourceKind,
+        sourceId: sourceId,
+        reason: reason,
+        recordProjectMetadataAudit: true,
+      );
+      if (supplementalFields.isNotEmpty) {
+        await ProjectNonTruthMetadataService(db).updatePatch(
+          projectId: id,
+          fields: supplementalFields,
+          actorLabel: actor,
+          recordProjectMetadataAudit: true,
+        );
+      }
+    });
     if (notify) notifyListeners();
   }
 

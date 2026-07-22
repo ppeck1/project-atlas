@@ -193,9 +193,7 @@ class ProjectCapsuleTruthService {
   }) async {
     final revisions = await _verifiedRevisions(projectId);
     final start = offset.clamp(0, revisions.length);
-    return List.unmodifiable(
-      revisions.skip(start).take(limit.clamp(1, 200)),
-    );
+    return List.unmodifiable(revisions.skip(start).take(limit.clamp(1, 200)));
   }
 
   Future<ProjectCapsuleAcceptedRevision?> findAcceptedRevisionBySource({
@@ -203,18 +201,13 @@ class ProjectCapsuleTruthService {
     required String sourceKind,
     required String sourceId,
   }) async {
-    final row =
-        await (db.select(db.projectCapsuleRevisions)
-              ..where(
-                (table) =>
-                    table.projectId.equals(projectId) &
-                    table.sourceKind.equals(sourceKind) &
-                    table.sourceId.equals(sourceId),
-              )
-              ..orderBy([(table) => OrderingTerm.desc(table.revisionNumber)])
-              ..limit(1))
-            .getSingleOrNull();
-    return row == null ? null : ProjectCapsuleAcceptedRevision.fromRow(row);
+    final revisions = await _verifiedRevisions(projectId);
+    for (final revision in revisions) {
+      if (revision.sourceKind == sourceKind && revision.sourceId == sourceId) {
+        return revision;
+      }
+    }
+    return null;
   }
 
   Future<ProjectCapsuleTruthAcceptance> acceptPatch({
@@ -233,6 +226,17 @@ class ProjectCapsuleTruthService {
       final beforeState = await load(projectId);
       if (beforeState == null) {
         throw StateError('Project not found: $projectId');
+      }
+      final unsupportedFields =
+          fields.keys
+              .where((key) => !projectCapsuleTruthFieldKeys.contains(key))
+              .toList()
+            ..sort();
+      if (unsupportedFields.isNotEmpty) {
+        throw ProjectCapsuleTruthValidationException([
+          'Accepted project truth does not support: '
+              '${unsupportedFields.join(', ')}.',
+        ]);
       }
       final normalizedFields = _normalizeMetadataFields(fields);
       if (expectedRevisionId != null &&
@@ -259,10 +263,7 @@ class ProjectCapsuleTruthService {
         );
       }
 
-      final truthPatch = <String, Object?>{
-        for (final key in projectCapsuleTruthFieldKeys)
-          if (normalizedFields.containsKey(key)) key: normalizedFields[key],
-      };
+      final truthPatch = Map<String, Object?>.from(normalizedFields);
       if (truthPatch.containsKey('title') &&
           _clean(truthPatch['title']) == null) {
         throw const ProjectCapsuleTruthValidationException([

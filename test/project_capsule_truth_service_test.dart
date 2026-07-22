@@ -196,6 +196,41 @@ void main() {
     });
 
     test(
+      'non-truth, unknown, and mixed patches are rejected atomically',
+      () async {
+        await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+        final before = (await service.load('atlas'))!;
+        final rejectedPatches = <Map<String, Object?>>[
+          const {'lessonsLearned': 'Supplemental metadata only.'},
+          const {'desiredOutcomeTypo': 'Unknown fields must fail closed.'},
+          const {
+            'description': 'This truth change must roll back.',
+            'lessonsLearned': 'Mixed writes must not partially commit.',
+          },
+        ];
+
+        for (final patch in rejectedPatches) {
+          await expectLater(
+            service.acceptPatch(
+              projectId: 'atlas',
+              expectedRevisionId: before.revisionId,
+              fields: patch,
+              recordProjectMetadataAudit: true,
+            ),
+            throwsA(isA<ProjectCapsuleTruthValidationException>()),
+          );
+
+          final project = (await db.getProjectFull('atlas'))!;
+          final state = (await service.load('atlas'))!;
+          expect(project.description, isNull);
+          expect(project.lessonsLearned, isNull);
+          expect(state.revisionId, before.revisionId);
+          expect(await service.listRevisions('atlas'), hasLength(1));
+        }
+      },
+    );
+
+    test(
       'unknown status values fail closed instead of becoming active',
       () async {
         await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
@@ -268,6 +303,59 @@ void main() {
       expect(recovered.revision?.id, first.revision?.id);
       expect(await service.listRevisions('atlas'), hasLength(2));
     });
+
+    test(
+      'source lookup returns null when the verified chain has no match',
+      () async {
+        await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+
+        final found = await service.findAcceptedRevisionBySource(
+          projectId: 'atlas',
+          sourceKind: 'agent_proposal',
+          sourceId: 'missing-proposal',
+        );
+
+        expect(found, isNull);
+        expect(await service.listRevisions('atlas'), hasLength(1));
+      },
+    );
+
+    test(
+      'source lookup rejects corruption in a nonmatching ancestor',
+      () async {
+        await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+        final initial = (await service.load('atlas'))!;
+        final middle = await service.acceptPatch(
+          projectId: 'atlas',
+          expectedRevisionId: initial.revisionId,
+          fields: const {'description': 'Accepted middle revision.'},
+          sourceKind: 'manual_edit',
+          sourceId: 'unrelated-source',
+        );
+        await service.acceptPatch(
+          projectId: 'atlas',
+          expectedRevisionId: middle.state.revisionId,
+          fields: const {'desiredOutcome': 'Accepted target revision.'},
+          sourceKind: 'agent_proposal',
+          sourceId: 'target-proposal',
+        );
+        await disableLedgerGuards(db);
+        await db.customStatement(
+          "UPDATE project_capsule_revisions SET changed_fields_json = "
+          "'{\"description\":{\"before\":null,\"after\":\"Forged\"}}' "
+          "WHERE project_id = 'atlas' AND revision_number = 2",
+        );
+
+        await expectLater(
+          service.findAcceptedRevisionBySource(
+            projectId: 'atlas',
+            sourceKind: 'agent_proposal',
+            sourceId: 'target-proposal',
+          ),
+          throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+        );
+      },
+    );
 
     test('database rejects ordinary revision mutation and deletion', () async {
       await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
@@ -398,6 +486,62 @@ void main() {
         expect(revisions.first.changedFields.keys, contains('scopeIncluded'));
       },
     );
+
+    test(
+      'AppState routes mixed truth and supplemental metadata atomically',
+      () async {
+        await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+        final initial = (await service.load('atlas'))!;
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        try {
+          await state.updateProjectMeta('atlas', const {
+            'desiredOutcome': 'Accepted truth outcome.',
+            'lessonsLearned': 'Supplemental operational note.',
+          }, expectedTruthRevisionId: initial.revisionId);
+        } finally {
+          state.dispose();
+        }
+
+        final project = (await db.getProjectFull('atlas'))!;
+        final revisions = await service.listRevisions('atlas');
+        expect(project.desiredOutcome, 'Accepted truth outcome.');
+        expect(project.lessonsLearned, 'Supplemental operational note.');
+        expect(revisions, hasLength(2));
+        expect(revisions.first.changedFields.keys, {'desiredOutcome'});
+        expect(
+          revisions.first.truth.toJson(),
+          isNot(contains('lessonsLearned')),
+        );
+      },
+    );
+
+    test('AppState rolls back supplemental metadata on stale truth', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      final staleBase = (await service.load('atlas'))!;
+      await service.acceptPatch(
+        projectId: 'atlas',
+        expectedRevisionId: staleBase.revisionId,
+        fields: const {'description': 'Newer accepted truth.'},
+      );
+      final state = AppState(db, enableBackgroundSummaryRefresh: false);
+      try {
+        await expectLater(
+          state.updateProjectMeta('atlas', const {
+            'desiredOutcome': 'Stale truth must not commit.',
+            'lessonsLearned': 'Supplemental write must roll back.',
+          }, expectedTruthRevisionId: staleBase.revisionId),
+          throwsA(isA<ProjectCapsuleTruthConflict>()),
+        );
+      } finally {
+        state.dispose();
+      }
+
+      final project = (await db.getProjectFull('atlas'))!;
+      expect(project.description, 'Newer accepted truth.');
+      expect(project.desiredOutcome, isNull);
+      expect(project.lessonsLearned, isNull);
+      expect(await service.listRevisions('atlas'), hasLength(2));
+    });
 
     test('General Tasks repair records an accepted truth revision', () async {
       await db.createProject(
