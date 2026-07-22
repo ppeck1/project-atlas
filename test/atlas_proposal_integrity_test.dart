@@ -1344,6 +1344,8 @@ void main() {
         'single-tag',
         <Object?>['valid', 7],
         <String>[''],
+        <String>['duplicate', 'duplicate'],
+        <String>[' Duplicate ', 'dUPLICATE'],
       ];
 
       for (final value in invalidValues) {

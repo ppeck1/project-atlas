@@ -796,6 +796,10 @@ class AtlasMcpAdapter {
     if (result.any((item) => item.isEmpty)) {
       throw ArgumentError('$key must not contain blank strings.');
     }
+    final canonical = <String>{};
+    if (result.any((item) => !canonical.add(item.toLowerCase()))) {
+      throw ArgumentError('$key must not contain duplicate strings.');
+    }
     return result;
   }
 
