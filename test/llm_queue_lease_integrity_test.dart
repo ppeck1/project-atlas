@@ -30,8 +30,11 @@ void main() {
       // Initialize the schema before opening the two connections used by the
       // contention proofs. This keeps migration DDL out of the race itself.
       final initializer = _openQueueDb(databaseFile);
-      await initializer.customSelect('SELECT 1').get();
-      await initializer.close();
+      try {
+        await initializer.customSelect('SELECT 1').get();
+      } finally {
+        await initializer.close();
+      }
 
       dbA = _openQueueDb(databaseFile);
       dbB = _openQueueDb(databaseFile);
@@ -458,6 +461,9 @@ void main() {
             .getSingle();
         expect(rows.read<int>('count'), 1);
       },
+      // Two background SQLite connections may legitimately serialize near
+      // their 30-second busy timeout when the full Windows suite is saturated.
+      timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test('completion replay rejects result or draft mismatches', () async {
