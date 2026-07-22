@@ -1,7 +1,6 @@
 # Proposal acceptance integrity contract
 
-Status: implementation proof in progress on
-`fix/proposal-acceptance-integrity`.
+Status: implemented by PR #35 (`a3c88f6`) and verified on merged `main`.
 
 This contract defines the A-03/A-04 boundary for human approval of Atlas agent
 proposal drafts. It does not expand the trusted-local MCP boundary and does not
@@ -60,5 +59,6 @@ stored approval result.
 - A-06 through A-08 and A-11 remain independently tracked.
 - WP4 remains open after A-03/A-04 because A-06 through A-10 remain open.
 
-The attended single-worker operating constraint remains in force until A-03
-and A-04 merge and their post-merge proof passes on `main`.
+The attended single-worker constraint attached to A-03/A-04 was retired after
+post-merge proof passed on `a3c88f6`. A-09 and A-10 remain open under the
+exclusions above; this closure does not close WP4.
