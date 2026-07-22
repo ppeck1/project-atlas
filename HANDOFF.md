@@ -13,8 +13,8 @@ The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
 Recovery findings R-01 through R-10 and agent-integrity findings A-01 through
-A-05 plus A-11 are closed. R-11 through R-14 remain open, so WP2 is not fully
-closed.
+A-07 plus A-10 and A-11 are closed. R-11 through R-14 remain open, so WP2 is
+not fully closed.
 The attended single-worker operating constraint was retired only after
 A-03/A-04 merged and their post-merge proof passed. A-11's exact-main proof
 also passed, so WP3 is closed.
@@ -27,12 +27,12 @@ Last updated: 2026-07-22.
 
 ## Audit resume checkpoint
 
-Start from current `main` at `f8fed5f` (`Close A-11 after post-merge proof
-(#40)`). The working tree was clean and synchronized with
+Start from exact implementation `main` at `393ab6b` (`Harden accepted truth
+and manifest integrity (#41)`). The working tree was clean and synchronized with
 `origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 16 Closed, 3 In progress, and 32
-Open. The completed integrity sequence is:
+The canonical matrix contains 51 findings: 19 Closed and 32 Open. The
+completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
   rollback, final verification, child acknowledgement, and handoff security.
@@ -57,12 +57,13 @@ Open. The completed integrity sequence is:
 - PR #39 / `9d753cb`: A-11 schema v26 queue constraints plus exact-main
   post-merge proof.
 - PR #40 / `f8fed5f`: A-11 evidence-only closure and WP3 completion.
+- PR #41 / `393ab6b`: A-06/A-07/A-10 accepted-truth, supplemental metadata,
+  verified-source, and composite manifest/tag integrity plus exact-main proof.
 
 Current verification baseline on merged `main`:
 
-- focused full-backup and hostile project-recovery suite: 28/28;
-- production project-export suite, including export-to-staging recovery: 5/5;
-- full Flutter suite: 521 passed with 1 intentional skip;
+- focused A-06/A-07/A-10 suite: 159/159;
+- full Flutter suite: 545 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
@@ -82,7 +83,8 @@ guidance; `project_bundle.json` remains schema v1.
 The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
 R-11 through R-14 remain open, so WP2 is not closed. The recommended next
-package is the active A-06/A-07/A-10 branch.
+agent-integrity package is A-08/A-09, which completes the remaining WP4 audit
+work if both findings verify and close.
 
 Post-merge proof on exact implementation `main` at `9d0e792`:
 
@@ -134,8 +136,8 @@ schema or replacing the original queue table.
 
 The boundary is specified in the
 [`queue schema integrity contract`](docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md).
-A-11 is closed after exact-main post-merge proof. A-06, A-07, and A-10 remain
-the active accepted-truth package.
+A-11 is closed after exact-main post-merge proof. A-06, A-07, and A-10 are
+also closed after PR #41 and exact-main proof at `393ab6b`.
 
 Post-merge proof on exact `main` at `9d753cb`:
 
@@ -148,9 +150,9 @@ Post-merge proof on exact `main` at `9d753cb`:
 - Python policy/maintenance suite: 30/30; and
 - Windows release build: passed.
 
-### Active accepted-truth integrity package
+### Closed accepted-truth integrity package
 
-A-06, A-07, and A-10 are active on `fix/accepted-truth-integrity`. Accepted
+A-06, A-07, and A-10 merged in PR #41 as `393ab6b`. Accepted
 truth now rejects non-truth keys; `lessonsLearned` uses a narrow supplemental
 service; mixed AppState and identity-enrichment writes share one transaction.
 Source recovery selects evidence only from a fully verified revision chain.
@@ -163,10 +165,11 @@ unverifiable partial replay fail closed with typed conflicts.
 
 The boundary is specified in the
 [`accepted truth integrity contract`](docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md).
-The three findings remain In progress until merge and exact-main post-merge
-proof. A-08 and A-09 remain open, so WP4 is not closed.
+The three findings are closed after exact-main post-merge proof. The attended
+single-worker constraint for this package is retired only now that the proof
+is complete. A-08 and A-09 remain open, so WP4 is not closed.
 
-Current focused proof:
+Post-merge proof on exact implementation `main` at `393ab6b`:
 
 - combined truth, metadata, proposal, agent, MCP, and enrichment suite:
   159/159;
@@ -177,7 +180,9 @@ Current focused proof:
 - full static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - generated-code build: passed with no tracked generated diff; and
-- Windows release build: passed.
+- Windows release build: passed; and
+- hosted PR #41 CI passed, including generation, policy, analysis, full tests,
+  Windows release, seeded MCP fixture, and gateway smoke.
 
 ## Current public state
 

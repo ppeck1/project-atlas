@@ -1,6 +1,6 @@
 # Accepted truth and project-tag integrity contract
 
-Status: implementation proof in progress on `fix/accepted-truth-integrity`.
+Status: closed after PR #41 merged as `393ab6b` and exact-main proof passed.
 Date: 2026-07-22
 
 This contract defines the combined A-06, A-07, and A-10 boundary. Accepted

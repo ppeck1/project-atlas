@@ -53,14 +53,14 @@ stored approval result.
 
 - A-09 remains open: this package does not redefine absent versus explicitly
   empty task-tag input.
-- A-06, A-07, and A-10 are addressed by the active follow-up contract in
+- A-06, A-07, and A-10 are closed under the follow-up contract in
   [`ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`](ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md).
-  They remain In progress until that package merges and passes exact-main
-  post-merge proof.
+  PR #41 merged as `393ab6b`, and exact-main post-merge proof passed.
 - A-08 and A-09 remain open; A-11 is closed independently.
 - WP4 remains open after A-03/A-04 because its follow-up findings are not all
   closed.
 
 The attended single-worker constraint attached to A-03/A-04 was retired after
-post-merge proof passed on `a3c88f6`. The active follow-up package does not
-change that historical proof boundary, and this closure does not close WP4.
+post-merge proof passed on `a3c88f6`. The A-06/A-07/A-10 follow-up package did
+not change that historical proof boundary, and this closure does not close
+WP4.
