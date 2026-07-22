@@ -1,5 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:drift/drift.dart' show driftRuntimeOptions;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/services/project_capsule_truth_service.dart';
 import 'package:project_atlas/shared/models/project_capsule_truth.dart';
@@ -345,6 +350,10 @@ void main() {
           "'{\"description\":{\"before\":null,\"after\":\"Forged\"}}' "
           "WHERE project_id = 'atlas' AND revision_number = 2",
         );
+        await db.customStatement(
+          "UPDATE project_capsule_ledger_checkpoints SET dirty = 0 "
+          "WHERE project_id = 'atlas'",
+        );
 
         await expectLater(
           service.findAcceptedRevisionBySource(
@@ -354,6 +363,221 @@ void main() {
           ),
           throwsA(isA<ProjectCapsuleTruthLedgerException>()),
         );
+      },
+    );
+
+    test('accepted writes atomically advance the durable checkpoint', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      final initial = (await service.load('atlas'))!;
+      final accepted = await service.acceptPatch(
+        projectId: 'atlas',
+        expectedRevisionId: initial.revisionId,
+        fields: const {'description': 'Checkpointed change.'},
+      );
+
+      final checkpoint = await (db.select(
+        db.projectCapsuleLedgerCheckpoints,
+      )..where((table) => table.projectId.equals('atlas'))).getSingle();
+      expect(checkpoint.dirty, isFalse);
+      expect(checkpoint.headRevisionId, accepted.state.revisionId);
+      expect(checkpoint.headRevisionNumber, 2);
+      expect(checkpoint.revisionCount, 2);
+      expect(await service.auditLedger('atlas'), 2);
+    });
+
+    test(
+      'revision corruption dirties the checkpoint and fails closed',
+      () async {
+        await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+        await disableLedgerGuards(db);
+        await db.customStatement(
+          "UPDATE project_capsule_revisions SET actor_label = 'Forged' "
+          "WHERE project_id = 'atlas'",
+        );
+
+        for (final read in <Future<Object?> Function()>[
+          () => service.load('atlas'),
+          () => service.listRevisions('atlas'),
+          () => service.findAcceptedRevisionBySource(
+            projectId: 'atlas',
+            sourceKind: 'agent_proposal',
+            sourceId: 'missing',
+          ),
+          () => service.auditLedger('atlas'),
+        ]) {
+          await expectLater(
+            read(),
+            throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+          );
+        }
+      },
+    );
+
+    test('a valid raw append cannot become accepted source evidence', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      final baseline = (await db
+          .select(db.projectCapsuleRevisions)
+          .getSingle());
+      await db
+          .into(db.projectCapsuleRevisions)
+          .insert(
+            ProjectCapsuleRevisionRow(
+              id: 'forged-source-revision',
+              projectId: 'atlas',
+              revisionNumber: 2,
+              parentRevisionId: baseline.id,
+              contentHash: baseline.contentHash,
+              truthJson: baseline.truthJson,
+              changedFieldsJson: '{}',
+              actorType: 'ai_model',
+              actorLabel: 'Forged agent',
+              sourceKind: 'agent_proposal',
+              sourceId: 'forged-proposal',
+              reason: null,
+              acceptedAt: DateTime.utc(2026, 1, 2),
+            ),
+          );
+
+      await expectLater(
+        service.findAcceptedRevisionBySource(
+          projectId: 'atlas',
+          sourceKind: 'agent_proposal',
+          sourceId: 'forged-proposal',
+        ),
+        throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+      );
+    });
+
+    test('explicit audit detects a forged clean checkpoint digest', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      await db.customStatement(
+        "UPDATE project_capsule_ledger_checkpoints SET ledger_digest = "
+        "'forged' WHERE project_id = 'atlas'",
+      );
+
+      expect((await service.load('atlas'))!.revisionNumber, 1);
+      await expectLater(
+        service.auditLedger('atlas'),
+        throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+      );
+    });
+
+    test('loads and history pages materialize bounded revision rows', () async {
+      await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+      var revisionId = (await service.load('atlas'))!.revisionId;
+      for (var index = 1; index <= 80; index++) {
+        revisionId = (await service.acceptPatch(
+          projectId: 'atlas',
+          expectedRevisionId: revisionId,
+          fields: {'description': 'Bounded read revision $index.'},
+        )).state.revisionId;
+      }
+      final reads = <(String, int)>[];
+      final observed = ProjectCapsuleTruthService(
+        db,
+        revisionReadObserverForTesting: (operation, rows) {
+          reads.add((operation, rows));
+        },
+      );
+
+      for (var index = 0; index < 12; index++) {
+        expect((await observed.load('atlas'))!.revisionNumber, 81);
+      }
+      expect(reads, List.filled(12, ('checkpoint_head', 1)));
+
+      reads.clear();
+      final page = await observed.listRevisions('atlas', limit: 7, offset: 40);
+      expect(page.map((revision) => revision.revisionNumber), [
+        41,
+        40,
+        39,
+        38,
+        37,
+        36,
+        35,
+      ]);
+      expect(reads, [('checkpoint_head', 1), ('history_page', 8)]);
+    });
+
+    test('full audit scans once before rejecting checkpoint defects', () async {
+      final reads = <(String, int)>[];
+      final observed = ProjectCapsuleTruthService(
+        db,
+        revisionReadObserverForTesting: (operation, rows) {
+          reads.add((operation, rows));
+        },
+      );
+      for (final projectId in ['dirty', 'missing', 'mismatch']) {
+        await db.createProject(projectId, projectId, DateTime.utc(2026));
+      }
+      await db.customStatement(
+        "UPDATE project_capsule_ledger_checkpoints SET dirty = 1 "
+        "WHERE project_id = 'dirty'",
+      );
+      await db.customStatement(
+        "DELETE FROM project_capsule_ledger_checkpoints "
+        "WHERE project_id = 'missing'",
+      );
+      await db.customStatement(
+        "UPDATE project_capsule_ledger_checkpoints SET head_revision_id = "
+        "'wrong' WHERE project_id = 'mismatch'",
+      );
+
+      for (final projectId in ['dirty', 'missing', 'mismatch']) {
+        reads.clear();
+        await expectLater(
+          observed.auditLedger(projectId),
+          throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+        );
+        expect(reads, [('full_chain', 1)], reason: projectId);
+      }
+    });
+
+    test(
+      'checkpoint and latest revision mismatch fails bounded reads',
+      () async {
+        await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+        await db.customStatement(
+          "UPDATE project_capsule_ledger_checkpoints SET head_revision_id = "
+          "'wrong' WHERE project_id = 'atlas'",
+        );
+
+        await expectLater(
+          service.load('atlas'),
+          throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+        );
+        await expectLater(
+          service.listRevisions('atlas'),
+          throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+        );
+      },
+    );
+
+    test(
+      'failed checkpoint advancement rolls back project and append',
+      () async {
+        await db.createProject('atlas', 'Project Atlas', DateTime.utc(2026));
+        final initial = (await service.load('atlas'))!;
+        await db.customStatement(
+          'DROP TRIGGER dirty_project_capsule_checkpoint_insert',
+        );
+
+        await expectLater(
+          service.acceptPatch(
+            projectId: 'atlas',
+            expectedRevisionId: initial.revisionId,
+            fields: const {'description': 'Must roll back.'},
+          ),
+          throwsA(isA<ProjectCapsuleTruthLedgerException>()),
+        );
+        expect((await db.getProjectFull('atlas'))!.description, isNull);
+        expect(await db.select(db.projectCapsuleRevisions).get(), hasLength(1));
+        final checkpoint = await db
+            .select(db.projectCapsuleLedgerCheckpoints)
+            .getSingle();
+        expect(checkpoint.headRevisionId, initial.revisionId);
+        expect(checkpoint.revisionCount, 1);
+        expect(checkpoint.dirty, isFalse);
       },
     );
 
@@ -593,4 +817,92 @@ void main() {
       expect(revisions.first.reason, 'No longer in scope.');
     });
   });
+
+  group('ProjectCapsuleTruthService contention', () {
+    setUpAll(() {
+      driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
+    });
+    tearDownAll(() {
+      driftRuntimeOptions.dontWarnAboutMultipleDatabases = false;
+    });
+
+    test(
+      'two connections produce one same-base CAS winner',
+      () async {
+        final temp = await Directory.systemTemp.createTemp(
+          'atlas_capsule_cas_',
+        );
+        final file = File(p.join(temp.path, 'capsule.sqlite'));
+        final initializer = _openCapsuleDb(file);
+        await initializer.customSelect('SELECT 1').get();
+        await initializer.createProject(
+          'atlas',
+          'Project Atlas',
+          DateTime.utc(2026),
+        );
+        await initializer.close();
+
+        final dbA = _openCapsuleDb(file);
+        final dbB = _openCapsuleDb(file);
+        try {
+          await Future.wait([
+            dbA.customSelect('SELECT 1').get(),
+            dbB.customSelect('SELECT 1').get(),
+          ]);
+          final serviceA = ProjectCapsuleTruthService(dbA);
+          final serviceB = ProjectCapsuleTruthService(dbB);
+          final base = (await serviceA.load('atlas'))!.revisionId;
+          final start = Completer<void>();
+
+          Future<Object> accept(
+            ProjectCapsuleTruthService candidate,
+            String description,
+          ) async {
+            await start.future;
+            try {
+              return await candidate.acceptPatch(
+                projectId: 'atlas',
+                expectedRevisionId: base,
+                fields: {'description': description},
+              );
+            } catch (error) {
+              return error;
+            }
+          }
+
+          final attempts = [
+            accept(serviceA, 'Connection A accepted.'),
+            accept(serviceB, 'Connection B accepted.'),
+          ];
+          start.complete();
+          final outcomes = await Future.wait(attempts);
+
+          expect(
+            outcomes.whereType<ProjectCapsuleTruthAcceptance>(),
+            hasLength(1),
+          );
+          expect(
+            outcomes.whereType<ProjectCapsuleTruthConflict>(),
+            hasLength(1),
+          );
+          expect(await serviceA.listRevisions('atlas'), hasLength(2));
+          expect(await serviceA.auditLedger('atlas'), 2);
+        } finally {
+          await Future.wait([dbA.close(), dbB.close()]);
+          await temp.delete(recursive: true);
+        }
+      },
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+  });
 }
+
+AppDb _openCapsuleDb(File file) => AppDb.withExecutor(
+  NativeDatabase.createInBackground(
+    file,
+    setup: (rawDb) {
+      rawDb.execute('PRAGMA busy_timeout = 30000;');
+      rawDb.execute('PRAGMA foreign_keys = ON;');
+    },
+  ),
+);

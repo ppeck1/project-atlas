@@ -23,9 +23,10 @@ step rolls the whole mixed workflow back.
 
 ## Verified source evidence
 
-Source-based replay or recovery evidence is selected only after the complete
-project revision ledger passes content-hash, contiguous-number, parent-link,
-and exact-diff verification. Corruption anywhere in the chain fails closed,
+Source-based replay or recovery evidence is selected only after a clean durable
+checkpoint matches the exact physical head and the complete project revision
+ledger passes content-hash, contiguous-number, parent-link, exact-diff, and
+cumulative-digest verification. Corruption anywhere in the chain fails closed,
 including when the corrupt revision does not match the requested source.
 
 Status proposals retain verified truth-source recovery. A partially applied
@@ -56,6 +57,21 @@ preserves assignments; present-empty clears them. Tag lookup/creation occurs
 only after snapshot validation and rejects ambiguous case variants before
 creating any row.
 
+## Checkpointed ledger reads
+
+Schema v27 creates one project-scoped verified checkpoint only after a complete
+legacy-chain verification. Revision INSERT, UPDATE, and DELETE triggers mark it
+dirty. The accepted writer obtains a checkpoint write lock, appends the next
+revision, and advances the expected head/count/hash/digest by compare-and-swap
+inside the same transaction. A failed or contended advance rolls back both the
+materialized project fields and revision append.
+
+Current truth loads compare the clean checkpoint with the indexed physical
+head. History pages fetch at most `limit + 1` rows and verify hashes plus the
+page's parent/diff boundary. `auditLedger` is an explicit read-only full scan:
+it verifies and recomputes before comparing checkpoint state and never repairs
+or blesses a dirty ledger.
+
 ## Atomic write and replay boundary
 
 Truth revisions, supplemental metadata, tag creation and assignment, review
@@ -70,5 +86,5 @@ ledger ancestors, snapshot shape and ownership, stale truth/tag cross-races,
 assignment/name/color changes, absent versus empty tags, legacy inputs,
 dangling assignments, case ambiguity, deleted projects, crash rollback,
 approved replay, MCP creation, enrichment, and two-connection same-base
-contention. A-08 full-history verification performance and A-09 task-tag clear
-semantics remain separate findings.
+contention. The A-08/A-09 implementation extends this boundary; canonical
+closure remains gated on merge and exact-main post-merge proof.

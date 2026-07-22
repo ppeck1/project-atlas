@@ -35,8 +35,12 @@ accepted change causes the stale save to fail instead of overwriting it.
 Registry-derived filesystem locations remain source posture rather than
 authored truth; Operations does not copy those paths into new revisions, and
 the v24 baseline projection removes the known legacy registry path markers.
-Schema v25 adds SQLite immutability triggers, while ledger reads validate the
-complete accepted-revision chain before presenting it.
+Schema v25 adds SQLite immutability triggers. Schema v27 adds a verified,
+invalidation-aware ledger checkpoint: current truth loads validate the exact
+physical head in constant revision-row work, history uses bounded SQL pages,
+and an explicit read-only audit recomputes the complete chain and cumulative
+digest. Source-based proposal recovery still verifies the complete chain after
+passing the clean-checkpoint gate.
 
 Agent-originated metadata changes still enter the existing draft review
 boundary. Their base truth revision is checked when the draft is accepted.

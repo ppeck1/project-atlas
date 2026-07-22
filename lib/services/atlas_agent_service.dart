@@ -1433,7 +1433,7 @@ class AtlasAgentService {
     String priority = 'normal',
     DateTime? dueAt,
     String? blockedReason,
-    Iterable<String> tagNames = const [],
+    Iterable<String>? tagNames,
   }) async {
     final errors = <String>[];
     final warnings = <String>[];
@@ -1483,7 +1483,8 @@ class AtlasAgentService {
         'priority': cleanPriority,
         'dueAt': dueAt?.toIso8601String(),
         'blockedReason': _clean(blockedReason),
-        'tagNames': _cleanList(tagNames),
+        'tagNamesSpecified': tagNames != null,
+        if (tagNames != null) 'tagNames': _cleanList(tagNames),
         'baseTaskSnapshot': ?baseTaskSnapshot,
       },
       validationErrors: errors,
@@ -1800,7 +1801,29 @@ class AtlasAgentService {
     if (!priorities.contains(priority)) {
       throw StateError('Unsupported priority: $priority');
     }
-    final tagNames = _payloadStringList(proposal.payload, 'tagNames');
+    final hasTagNames = proposal.payload.containsKey('tagNames');
+    final parsedTagNames = hasTagNames
+        ? _parseManifestTagNames(proposal.payload['tagNames'])
+        : const <String>[];
+    if (parsedTagNames == null) {
+      throw StateError('Task tag names are invalid and must be recreated.');
+    }
+    final rawTagNamesSpecified = proposal.payload['tagNamesSpecified'];
+    final hasTagNamesSpecified = proposal.payload.containsKey(
+      'tagNamesSpecified',
+    );
+    if (hasTagNamesSpecified && rawTagNamesSpecified is! bool) {
+      throw StateError('Task tag intent is invalid and must be recreated.');
+    }
+    final tagNamesSpecified = rawTagNamesSpecified is bool
+        ? rawTagNamesSpecified
+        : parsedTagNames.isNotEmpty;
+    if (hasTagNamesSpecified && hasTagNames != tagNamesSpecified) {
+      throw StateError(
+        'Task tag intent is inconsistent and must be recreated.',
+      );
+    }
+    final tagNames = parsedTagNames;
     final dueAt = _payloadDate(proposal.payload, 'dueAt');
     final workItemId = _payloadString(proposal.payload, 'workItemId');
     if (workItemId != null) {
@@ -1839,7 +1862,7 @@ class AtlasAgentService {
       notify: false,
     );
     await _proposalApprovalStepHook?.call('after-task-write');
-    if (tagNames.isNotEmpty) {
+    if (tagNamesSpecified) {
       await state.setWorkItemTags(workItemId, tagIds);
       await _proposalApprovalStepHook?.call('after-task-tags-write');
     }
