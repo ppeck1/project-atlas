@@ -40,11 +40,11 @@ passed on current `main`. The attended single-worker constraint is therefore
 retired. A-11 remains open in WP3, and A-06 through A-10 remain open in WP4,
 so neither work package is fully closed.
 
-R-07 through R-10 are in progress on `fix/bundle-validation-integrity`.
-R-07 hardens exact full-backup directory inventory; R-08 through R-10 define
-bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11 through
-R-14 remain open, so WP2 is not closed. The ledger contains 11 Closed, 4 In
-progress, and 36 Open findings.
+R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
+post-merge proof passed. They provide exact full-backup directory inventory
+and bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11
+through R-14 remain open, so WP2 is not closed. The ledger contains 15 Closed
+and 36 Open findings.
 
 ## Finding ledger
 
@@ -56,10 +56,10 @@ progress, and 36 Open findings.
 | SPA-20260721-R-04 | P1 | Accepted | Closed | WP1 | Parent exits without child plan-acceptance acknowledgement. | Codex | PR #30 | Validated child acknowledgement and early-exit handling merged as `1e18ebd`; post-merge focused suite passed 18/18. |
 | SPA-20260721-R-05 | P1 | Accepted | Closed | WP1 | Mutable recovery plan carries arbitrary paths and executable path. | Codex | PR #30 | Owned-root atomic v2 plan, strict schema/checksum/identity/path validation, and threat model merged as `1e18ebd`; post-merge focused suite passed 18/18. |
 | SPA-20260721-R-06 | P0 | Accepted | Closed | WP2 | Full backup may mix database and file states during concurrent mutation. | Codex | PR #31 | Exclusive backup/mutation coordination, fixed owned-root inventory, source length/SHA-256 recheck, and concurrent document/media proof merged as `31f966c`; post-merge focused suite passed 10/10. Contract: `docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md`. |
-| SPA-20260721-R-07 | P1 | Accepted | In progress | WP2 | Full-backup manifest inventory is not exact. | Codex | `fix/bundle-validation-integrity` | Strict v1 descriptors, one matching SQLite snapshot, and exact case-folded regular-file inventory must reject missing, duplicate, aliased, malformed, linked, and undeclared content. |
-| SPA-20260721-R-08 | P1 | Accepted | In progress | WP2 | Project recovery decodes unbounded ZIP content in memory. | Codex | `fix/bundle-validation-integrity` | File-backed two-pass recovery must enforce pre-decode source/directory/entry limits plus actual compressed, per-entry, metadata, and aggregate expansion bounds with forged-header proof. |
-| SPA-20260721-R-09 | P1 | Accepted | In progress | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Codex | `fix/bundle-validation-integrity` | Manifest v2 exact path/kind/bytes/SHA-256 inventory and second-pass rebinding must reject missing, extra, modified, malformed, and wrong-kind payloads. |
-| SPA-20260721-R-10 | P1 | Accepted | In progress | WP2 | Archive path validation is not canonical Windows containment validation. | Codex | `fix/bundle-validation-integrity` | Platform-independent Windows path, alias, ancestor, and containment checks must reject traversal, drive, ADS, device, control, invalid-character, and trailing-dot/space inputs before staging. |
+| SPA-20260721-R-07 | P1 | Accepted | Closed | WP2 | Full-backup manifest inventory is not exact. | Codex | PR #37 | Strict v1 descriptors, one matching SQLite snapshot, and exact case-folded regular-file inventory reject missing, duplicate, aliased, malformed, linked, and undeclared content. Merged as `9d0e792`; exact-main post-merge proof passed. |
+| SPA-20260721-R-08 | P1 | Accepted | Closed | WP2 | Project recovery decodes unbounded ZIP content in memory. | Codex | PR #37 | File-backed two-pass recovery enforces pre-decode source/directory/entry limits plus actual compressed, per-entry, metadata, and aggregate expansion bounds with forged-header proof. Merged as `9d0e792`; exact-main post-merge proof passed. |
+| SPA-20260721-R-09 | P1 | Accepted | Closed | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Codex | PR #37 | Manifest v2 exact path/kind/bytes/SHA-256 inventory and second-pass rebinding reject missing, extra, modified, malformed, wrong-kind, and source-swapped payloads. Merged as `9d0e792`; exact-main post-merge proof passed. |
+| SPA-20260721-R-10 | P1 | Accepted | Closed | WP2 | Archive path validation is not canonical Windows containment validation. | Codex | PR #37 | Platform-independent Windows path, alias, ancestor, and containment checks reject traversal, drive, ADS, device, control, invalid-character, trailing-dot/space, and preexisting-stage inputs. Merged as `9d0e792`; exact-main post-merge proof passed. |
 | SPA-20260721-R-11 | P2 | Needs verification | Open | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Unassigned | TBD | `.incomplete` lifecycle and bounded cleanup/quarantine tests. |
 | SPA-20260721-R-12 | P2 | Needs verification | Open | WP2 | Recovery artifacts have no retention policy. | Unassigned | TBD | Local previewed retention preserves newest safety backup and active plan. |
 | SPA-20260721-R-13 | P2 | Needs verification | Open | WP2 | Portable export builds the full archive in memory. | Unassigned | TBD | Streaming/isolate export with progress, cancellation, and bounds. |
@@ -103,6 +103,30 @@ progress, and 36 Open findings.
 | SPA-20260721-D-06 | P3 | Needs verification | Open | WP11 | Public metadata, captures, reported version, and database opener have stale residue. | Unassigned | TBD | Metadata/version/capture manifest and truthful database opener naming. |
 
 ## Progress evidence
+
+### WP2 R-07/R-10 closure — 2026-07-22
+
+PR #37 merged as `9d0e792`. R-07 through R-10 are closed after focused and
+full post-merge proof passed on exact current `main`.
+
+- Full-backup v1 validation requires strict descriptors and exact regular-file
+  inventory, including one matching SQLite snapshot.
+- Project recovery performs bounded pre-decode ZIP structure validation and
+  enforces actual compressed and expanded byte limits while streaming.
+- Project-manifest v2 binds every payload path, kind, byte length, and SHA-256;
+  extraction repeats preflight and rebinds the exact validated descriptors.
+- Platform-independent Windows rules reject traversal, aliases, device names,
+  invalid characters, ancestor collisions, and unsafe or reused stage roots.
+- Focused full-backup and hostile project-recovery suite: 28 tests passed.
+- Production project-export suite, including export-to-staging recovery: 5
+  tests passed.
+- Full Flutter suite: 511 tests passed with 1 intentional skip.
+- Static analysis: clean.
+- Python policy/maintenance suite: 30 tests passed.
+- Windows release build: passed.
+- Hosted PR #37 CI passed, including generated-code verification, analysis,
+  full tests, Windows release build, seeded MCP fixture, and gateway smoke.
+- R-11 through R-14 remain open, so WP2 remains open.
 
 ### WP4 A-03/A-04 closure — 2026-07-21
 

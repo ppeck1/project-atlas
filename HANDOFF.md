@@ -12,10 +12,11 @@ for the guarded worker is recorded in the
 The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
-Recovery findings R-01 through R-06 and agent-integrity findings A-01 through
-A-05 are closed. The attended single-worker operating constraint was retired
-only after A-03/A-04 merged and their post-merge proof passed. A-11 remains
-open, so WP3 is not fully closed.
+Recovery findings R-01 through R-10 and agent-integrity findings A-01 through
+A-05 are closed. R-11 through R-14 remain open, so WP2 is not fully closed.
+The attended single-worker operating constraint was retired only after
+A-03/A-04 merged and their post-merge proof passed. A-11 remains open, so WP3
+is not fully closed.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
@@ -25,12 +26,12 @@ Last updated: 2026-07-22.
 
 ## Audit resume checkpoint
 
-Start from current `main` at `5574b77` (`Close proposal integrity findings
-after proof (#36)`). The working tree was clean and synchronized with
+Start from current `main` at `9d0e792` (`Harden bundle validation and recovery
+(#37)`). The working tree was clean and synchronized with
 `origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 11 Closed, 4 In progress, and 36
-Open. The completed integrity sequence is:
+The canonical matrix contains 51 findings: 15 Closed and 36 Open. The
+completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
   rollback, final verification, child acknowledgement, and handoff security.
@@ -47,42 +48,45 @@ Open. The completed integrity sequence is:
   contention proof.
 - PR #36 / `5574b77`: A-03/A-04 post-merge proof, canonical closure, and
   retirement of the audit-specific attended single-worker constraint.
+- PR #37 / `9d0e792`: R-07 through R-10 exact full-backup inventory, bounded
+  two-pass ZIP recovery, project-manifest v2 integrity, and Windows-safe
+  staging validation.
 
-Current verification baseline after A-03/A-04:
+Current verification baseline on merged `main`:
 
-- focused recovery suite: 18/18;
-- focused full-backup suite: 10/10 on merged `main`;
-- proposal-integrity suite: 18/18 on merged `main`;
-- focused proposal/service/MCP suite: 54/54;
-- full Flutter suite: 495 passed with 1 intentional skip on merged `main`;
+- focused full-backup and hostile project-recovery suite: 28/28;
+- production project-export suite, including export-to-staging recovery: 5/5;
+- full Flutter suite: 511 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
 - hosted CI, including seeded isolated MCP smoke: passed.
 
-### Active bundle-integrity package
+### Closed bundle-integrity package
 
-R-07 through R-10 are active on `fix/bundle-validation-integrity` as two
-explicit subcontracts: exact full-backup v1 directory inventory, and bounded
-checksummed Windows-safe project-bundle v2 recovery. Historical valid
+R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
+post-merge proof passed. The implementation provides two explicit
+subcontracts: exact full-backup v1 directory inventory, and bounded,
+checksummed, Windows-safe project-bundle v2 recovery. Historical valid
 full-backup v1 bundles remain supported. Project manifest v1 cannot provide
 per-file cryptographic proof and therefore fails closed with re-export
 guidance; `project_bundle.json` remains schema v1.
 
-The active limits, manifest, path, and staging boundary are specified in the
+The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
-R-11 through R-14 remain open, so this package does not close WP2. After this
-package, take A-11 to finish WP3's queue schema constraints, followed by
+R-11 through R-14 remain open, so WP2 is not closed. The recommended next
+package is A-11 to finish WP3's queue schema constraints, followed by
 A-06/A-07/A-10.
 
-Current pre-merge proof for the active package:
+Post-merge proof on exact `main` at `9d0e792`:
 
 - focused full-backup and hostile project-recovery suite: 28/28;
 - production project-export suite, including export-to-staging recovery: 5/5;
 - full Flutter suite: 511 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30; and
-- Windows release build: passed.
+- Windows release build: passed; and
+- hosted PR #37 CI, including seeded isolated MCP smoke: passed.
 
 The lifecycle and hash boundary are specified in the
 [`proposal acceptance integrity contract`](docs/PROPOSAL_ACCEPTANCE_INTEGRITY_CONTRACT.md).
