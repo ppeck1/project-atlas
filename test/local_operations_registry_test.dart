@@ -11,6 +11,7 @@ import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/services/github_remote_metadata_service.dart';
 import 'package:project_atlas/services/local_operations_scanner.dart';
 import 'package:project_atlas/services/local_project_refresh_service.dart';
+import 'package:project_atlas/services/project_bundle_recovery_service.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 
@@ -2899,6 +2900,17 @@ Pressure flakes a useful edge.
     final archive = ZipDecoder().decodeBytes(bytes);
     expect(archive.findFile('README.md'), isNotNull);
     expect(archive.findFile('manifest/export_manifest.json'), isNotNull);
+    final recovery = await state.verifyAndStageProjectRecovery(
+      File(zipPath),
+      Directory(p.join(tempDir.path, 'project-recovery-stage')),
+      expectedProjectId: projectId,
+    );
+    expect(recovery.projectId, projectId);
+    expect(recovery.stagedFiles, archive.length);
+    expect(
+      await File(p.join(recovery.stagingPath, 'project_bundle.json')).exists(),
+      isTrue,
+    );
   });
 
   test(
@@ -3002,7 +3014,8 @@ Pressure flakes a useful edge.
                 ),
               )
               as Map<String, Object?>;
-      expect(manifest['schema'], 'project_atlas_project_bundle_manifest_v1');
+      expect(manifest['schema'], atlasProjectBundleManifestSchema);
+      expect(manifest['files'], isA<List<Object?>>());
       final manifestContents = manifest['contents'] as Map<String, Object?>;
       expect(manifestContents['summary'], 'summary/latest_project_summary.md');
       expect(manifestContents['eventLogs'], 'logs/project_event_log.json');

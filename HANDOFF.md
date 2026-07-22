@@ -21,16 +21,16 @@ This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
 contact data, machine-specific paths, and unrelated project references.
 
-Last updated: 2026-07-21.
+Last updated: 2026-07-22.
 
 ## Audit resume checkpoint
 
-Start from current `main` at `a3c88f6` (`Harden proposal acceptance integrity
-(#35)`). The working tree was clean and synchronized with
+Start from current `main` at `5574b77` (`Close proposal integrity findings
+after proof (#36)`). The working tree was clean and synchronized with
 `origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 11 Closed and 40 Open. The
-completed integrity sequence is:
+The canonical matrix contains 51 findings: 11 Closed, 4 In progress, and 36
+Open. The completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
   rollback, final verification, child acknowledgement, and handoff security.
@@ -45,6 +45,8 @@ completed integrity sequence is:
 - PR #35 / `a3c88f6`: A-03/A-04 transactional proposal acceptance, stable
   replay, canonical task/tag freshness tokens, typed conflicts, and fault and
   contention proof.
+- PR #36 / `5574b77`: A-03/A-04 post-merge proof, canonical closure, and
+  retirement of the audit-specific attended single-worker constraint.
 
 Current verification baseline after A-03/A-04:
 
@@ -58,13 +60,29 @@ Current verification baseline after A-03/A-04:
 - Windows release build: passed; and
 - hosted CI, including seeded isolated MCP smoke: passed.
 
-### Recommended next package
+### Active bundle-integrity package
 
-Resume the canonical package order with R-07 through R-10 as one P1
-bundle-validation and recovery-safety slice. Then take A-11 to finish WP3's
-queue schema constraints, followed by A-06/A-07/A-10 as the remaining P1
-truth/proposal-integrity work. Keep A-08 and A-09 as separately evidenced P2
-follow-ups. None of these findings is closed by the proposal work.
+R-07 through R-10 are active on `fix/bundle-validation-integrity` as two
+explicit subcontracts: exact full-backup v1 directory inventory, and bounded
+checksummed Windows-safe project-bundle v2 recovery. Historical valid
+full-backup v1 bundles remain supported. Project manifest v1 cannot provide
+per-file cryptographic proof and therefore fails closed with re-export
+guidance; `project_bundle.json` remains schema v1.
+
+The active limits, manifest, path, and staging boundary are specified in the
+[`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
+R-11 through R-14 remain open, so this package does not close WP2. After this
+package, take A-11 to finish WP3's queue schema constraints, followed by
+A-06/A-07/A-10.
+
+Current pre-merge proof for the active package:
+
+- focused full-backup and hostile project-recovery suite: 28/28;
+- production project-export suite, including export-to-staging recovery: 5/5;
+- full Flutter suite: 511 passed with 1 intentional skip;
+- static analysis: clean;
+- Python policy/maintenance suite: 30/30; and
+- Windows release build: passed.
 
 The lifecycle and hash boundary are specified in the
 [`proposal acceptance integrity contract`](docs/PROPOSAL_ACCEPTANCE_INTEGRITY_CONTRACT.md).

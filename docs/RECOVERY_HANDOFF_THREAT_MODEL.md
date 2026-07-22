@@ -1,6 +1,6 @@
 # Live recovery handoff threat model
 
-Status: implemented local contract, pending merge verification  
+Status: implemented by PR #30 (`1e18ebd`) and verified on merged `main`
 Date: 2026-07-21
 
 Project Atlas treats the live-recovery handoff as a one-time, same-account

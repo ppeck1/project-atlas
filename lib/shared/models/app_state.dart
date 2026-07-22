@@ -8672,7 +8672,7 @@ class AppState extends ChangeNotifier {
       'mediaFiles': includeFiles ? preview.copiedMediaFiles : 0,
     };
     final exportManifest = <String, Object?>{
-      'schema': 'project_atlas_project_bundle_manifest_v1',
+      'schema': atlasProjectBundleManifestSchema,
       'exportedAt': exportedAt,
       'project': {'id': project.id, 'title': project.title},
       'options': options,
@@ -8735,16 +8735,6 @@ class AppState extends ChangeNotifier {
     );
     archive.addFile(
       ArchiveFile('project_bundle.json', jsonBytes.length, jsonBytes),
-    );
-    final manifestBytes = utf8.encode(
-      const JsonEncoder.withIndent('  ').convert(exportManifest),
-    );
-    archive.addFile(
-      ArchiveFile(
-        'manifest/export_manifest.json',
-        manifestBytes.length,
-        manifestBytes,
-      ),
     );
     final readmeBytes = utf8.encode(
       _projectBundleReadme(
@@ -8898,6 +8888,35 @@ class AppState extends ChangeNotifier {
       }
     }
 
+    final fileDescriptors = archive.files
+        .map((entry) {
+          final content = entry.content;
+          if (!entry.isFile || content is! List<int>) {
+            throw StateError('Project bundle contains a non-regular entry.');
+          }
+          return projectBundleFileDescriptor(entry.name, content);
+        })
+        .toList(growable: false);
+    fileDescriptors.sort(
+      (a, b) => (a['path']! as String).compareTo(b['path']! as String),
+    );
+    contents['documentFiles'] = fileDescriptors
+        .where((entry) => entry['kind'] == 'document')
+        .length;
+    contents['mediaFiles'] = fileDescriptors
+        .where((entry) => entry['kind'] == 'media')
+        .length;
+    exportManifest['files'] = fileDescriptors;
+    final manifestBytes = utf8.encode(
+      const JsonEncoder.withIndent('  ').convert(exportManifest),
+    );
+    archive.addFile(
+      ArchiveFile(
+        atlasProjectBundleManifestPath,
+        manifestBytes.length,
+        manifestBytes,
+      ),
+    );
     final zipBytes = ZipEncoder().encode(archive)!;
     await File(path).writeAsBytes(zipBytes);
     await db.logEvent(

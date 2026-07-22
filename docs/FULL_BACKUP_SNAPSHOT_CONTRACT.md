@@ -1,6 +1,6 @@
 # Full backup point-in-time contract
 
-Status: implemented on `fix/backup-point-in-time-contract`, pending review  
+Status: implemented by PR #31 (`31f966c`) and verified on merged `main`
 Date: 2026-07-21
 
 ## Guaranteed snapshot boundary
