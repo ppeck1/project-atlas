@@ -206,6 +206,52 @@ class RecoveryArtifactCleanupReport {
       .length;
 }
 
+/// An opaque, checksummed snapshot of one regular file or real directory.
+///
+/// Retention callers may show the public size and timestamp fields in a
+/// preview, but deletion must return this exact object to
+/// [RecoveryArtifactLifecycle.deletePreviewedArtifact]. The lifecycle service
+/// re-snapshots the path before deleting anything.
+class RecoveryArtifactDeletionPreview {
+  final FileSystemEntity entity;
+  final Directory trustedParent;
+  final int entries;
+  final int bytes;
+  final DateTime observedAt;
+  final String snapshotId;
+  final FileSystemEntityType _type;
+  final _ArtifactSnapshot? _directorySnapshot;
+  final _SnapshotEntry? _fileSnapshot;
+
+  const RecoveryArtifactDeletionPreview._({
+    required this.entity,
+    required this.trustedParent,
+    required this.entries,
+    required this.bytes,
+    required this.observedAt,
+    required this.snapshotId,
+    required FileSystemEntityType type,
+    required _ArtifactSnapshot? directorySnapshot,
+    required _SnapshotEntry? fileSnapshot,
+  }) : _type = type,
+       _directorySnapshot = directorySnapshot,
+       _fileSnapshot = fileSnapshot;
+}
+
+class RecoveryArtifactDeletionResult {
+  final FileSystemEntity entity;
+  final RecoveryArtifactCleanupDisposition disposition;
+  final int entries;
+  final int bytes;
+
+  const RecoveryArtifactDeletionResult({
+    required this.entity,
+    required this.disposition,
+    this.entries = 0,
+    this.bytes = 0,
+  });
+}
+
 typedef RecoveryArtifactDelete =
     Future<void> Function(Directory artifactDirectory);
 typedef RecoveryArtifactDeleteEntry =
@@ -420,6 +466,201 @@ class RecoveryArtifactLifecycle {
       candidateLimitReached: candidateLimitReached,
       results: List.unmodifiable(results),
     );
+  }
+
+  /// Produces a bounded, no-follow snapshot suitable for an operator preview.
+  ///
+  /// Only a direct child of [trustedParent] can be previewed. Links, reparse
+  /// points, unsupported filesystem entities, and paths outside that parent
+  /// fail closed.
+  Future<RecoveryArtifactDeletionPreview> previewArtifactForDeletion(
+    FileSystemEntity entity, {
+    required Directory trustedParent,
+    RecoveryArtifactDeletionLimits limits =
+        const RecoveryArtifactDeletionLimits(),
+  }) async {
+    _validateDeletionLimits(limits);
+    final entityPath = p.normalize(p.absolute(entity.path));
+    final parentPath = p.normalize(p.absolute(trustedParent.path));
+    if (!p.equals(p.dirname(entityPath), parentPath)) {
+      throw FileSystemException(
+        'Recovery artifact must be a direct child of its trusted parent.',
+        entity.path,
+      );
+    }
+    await _assertDirectoryChainSafe(parentPath);
+    final type = await FileSystemEntity.type(entityPath, followLinks: false);
+    if (type == FileSystemEntityType.directory) {
+      final directory = Directory(entityPath);
+      await _assertArtifactRootSafe(directory, trustedParent: trustedParent);
+      final snapshot = await _snapshotArtifact(directory, limits);
+      final stat = await directory.stat();
+      if (stat.type != FileSystemEntityType.directory) {
+        throw FileSystemException(
+          'Recovery artifact changed during preview.',
+          entity.path,
+        );
+      }
+      final observedMicros = snapshot.entries.values.fold<int>(
+        stat.modified.microsecondsSinceEpoch,
+        (latest, entry) => max(latest, entry.modifiedMicros),
+      );
+      return RecoveryArtifactDeletionPreview._(
+        entity: directory,
+        trustedParent: trustedParent,
+        entries: snapshot.entries.length + 1,
+        bytes: snapshot.bytes,
+        observedAt: DateTime.fromMicrosecondsSinceEpoch(
+          observedMicros,
+          isUtc: true,
+        ),
+        snapshotId: _snapshotId(
+          entityPath,
+          type,
+          stat.modified.microsecondsSinceEpoch,
+          snapshot,
+        ),
+        type: type,
+        directorySnapshot: snapshot,
+        fileSnapshot: null,
+      );
+    }
+    if (type == FileSystemEntityType.file) {
+      if (limits.maxEntries < 1) {
+        throw const _ArtifactBudgetException();
+      }
+      final file = File(entityPath);
+      final snapshot = await _snapshotRegularFile(file, limits.maxBytes);
+      return RecoveryArtifactDeletionPreview._(
+        entity: file,
+        trustedParent: trustedParent,
+        entries: 1,
+        bytes: snapshot.bytes,
+        observedAt: DateTime.fromMicrosecondsSinceEpoch(
+          snapshot.modifiedMicros,
+          isUtc: true,
+        ),
+        snapshotId: _snapshotId(
+          entityPath,
+          type,
+          snapshot.modifiedMicros,
+          null,
+          file: snapshot,
+        ),
+        type: type,
+        directorySnapshot: null,
+        fileSnapshot: snapshot,
+      );
+    }
+    throw FileSystemException(
+      'Recovery artifact must be a regular file or real directory.',
+      entity.path,
+    );
+  }
+
+  /// Deletes only if [preview] still describes the exact filesystem entity.
+  ///
+  /// A fresh full snapshot is compared before deletion. Directory deletion
+  /// then uses the existing two-pass R11 deletion boundary, so mutation after
+  /// the preview also fails closed.
+  Future<RecoveryArtifactDeletionResult> deletePreviewedArtifact(
+    RecoveryArtifactDeletionPreview preview, {
+    RecoveryArtifactCleanupRecheckHook? mutationHook,
+    RecoveryArtifactDeletionLimits limits =
+        const RecoveryArtifactDeletionLimits(),
+  }) async {
+    _validateDeletionLimits(limits);
+    RecoveryArtifactDeletionPreview current;
+    try {
+      current = await previewArtifactForDeletion(
+        preview.entity,
+        trustedParent: preview.trustedParent,
+        limits: limits,
+      );
+    } on _ArtifactLinkException {
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: RecoveryArtifactCleanupDisposition.refusedLink,
+      );
+    } on _ArtifactBudgetException {
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: RecoveryArtifactCleanupDisposition.refusedBudget,
+      );
+    } on Object {
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: RecoveryArtifactCleanupDisposition.refusedMutation,
+      );
+    }
+    if (current.snapshotId != preview.snapshotId ||
+        current._type != preview._type ||
+        (preview._directorySnapshot != null &&
+            current._directorySnapshot?.sameAs(preview._directorySnapshot) !=
+                true)) {
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: RecoveryArtifactCleanupDisposition.refusedMutation,
+        entries: current.entries,
+        bytes: current.bytes,
+      );
+    }
+    await mutationHook?.call(
+      preview._type == FileSystemEntityType.directory
+          ? Directory(preview.entity.path)
+          : Directory(preview.trustedParent.path),
+    );
+    if (preview._type == FileSystemEntityType.directory) {
+      final result = await _boundedDelete(
+        Directory(preview.entity.path),
+        limits: limits,
+        trustedParent: preview.trustedParent,
+      );
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: result.disposition,
+        entries: result.entries,
+        bytes: result.bytes,
+      );
+    }
+    try {
+      final second = await previewArtifactForDeletion(
+        preview.entity,
+        trustedParent: preview.trustedParent,
+        limits: limits,
+      );
+      if (second.snapshotId != preview.snapshotId ||
+          second._fileSnapshot?.sameAs(preview._fileSnapshot!) != true) {
+        return RecoveryArtifactDeletionResult(
+          entity: preview.entity,
+          disposition: RecoveryArtifactCleanupDisposition.refusedMutation,
+          entries: second.entries,
+          bytes: second.bytes,
+        );
+      }
+      await File(preview.entity.path).delete();
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: RecoveryArtifactCleanupDisposition.deleted,
+        entries: 1,
+        bytes: preview.bytes,
+      );
+    } on _ArtifactLinkException {
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: RecoveryArtifactCleanupDisposition.refusedLink,
+      );
+    } on _ArtifactBudgetException {
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: RecoveryArtifactCleanupDisposition.refusedBudget,
+      );
+    } on Object {
+      return RecoveryArtifactDeletionResult(
+        entity: preview.entity,
+        disposition: RecoveryArtifactCleanupDisposition.refusedMutation,
+      );
+    }
   }
 
   Future<RecoveryArtifactCleanupResult> _cleanupPersistedCandidate(
@@ -899,6 +1140,75 @@ class _SnapshotEntry {
       bytes == other.bytes &&
       modifiedMicros == other.modifiedMicros &&
       sha256 == other.sha256;
+}
+
+Future<_SnapshotEntry> _snapshotRegularFile(File file, int maxBytes) async {
+  if (await FileSystemEntity.type(file.path, followLinks: false) !=
+      FileSystemEntityType.file) {
+    throw const _ArtifactLinkException();
+  }
+  if (Platform.isWindows) {
+    final nativePath = file.path.toNativeUtf16();
+    try {
+      final attributes = GetFileAttributes(nativePath);
+      if (attributes == 0xffffffff ||
+          attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0) {
+        throw const _ArtifactLinkException();
+      }
+    } finally {
+      calloc.free(nativePath);
+    }
+  }
+  final stat = await file.stat();
+  if (stat.type != FileSystemEntityType.file || stat.size > maxBytes) {
+    throw const _ArtifactBudgetException();
+  }
+  final digest = (await sha256.bind(file.openRead(0, stat.size)).first)
+      .toString();
+  final afterRead = await file.stat();
+  if (afterRead.type != FileSystemEntityType.file ||
+      afterRead.size != stat.size ||
+      afterRead.modified != stat.modified) {
+    throw const _ArtifactMutationException();
+  }
+  return _SnapshotEntry(
+    FileSystemEntityType.file,
+    stat.size,
+    stat.modified.microsecondsSinceEpoch,
+    digest,
+  );
+}
+
+String _snapshotId(
+  String path,
+  FileSystemEntityType type,
+  int rootModifiedMicros,
+  _ArtifactSnapshot? directory, {
+  _SnapshotEntry? file,
+}) {
+  final entries = <Map<String, Object?>>[];
+  if (directory != null) {
+    final sorted = directory.entries.entries.toList()
+      ..sort((left, right) => left.key.compareTo(right.key));
+    for (final entry in sorted) {
+      entries.add({
+        'path': entry.key,
+        'type': entry.value.type.toString(),
+        'bytes': entry.value.bytes,
+        'modifiedMicros': entry.value.modifiedMicros,
+        'sha256': entry.value.sha256,
+      });
+    }
+  }
+  final canonical = {
+    'path': p.normalize(p.absolute(path)),
+    'type': type.toString(),
+    'rootModifiedMicros': rootModifiedMicros,
+    'fileBytes': file?.bytes,
+    'fileSha256': file?.sha256,
+    'entries': entries,
+  };
+  return sha256.convert(utf8.encode(jsonEncode(canonical))).toString();
 }
 
 class _ArtifactSnapshot {

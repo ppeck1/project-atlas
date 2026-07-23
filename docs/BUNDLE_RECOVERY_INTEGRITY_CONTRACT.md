@@ -123,6 +123,8 @@ SHA-256 detects inconsistent or corrupted bundles; it is not authentication
 against malicious same-user code that can rewrite both payload and manifest.
 Nested Git ZIPs remain opaque hashed payloads and are not recursively expanded.
 
+R-12 is specified separately by the
+[`recovery artifact retention contract`](RECOVERY_ARTIFACT_RETENTION_CONTRACT.md).
 R-12 through R-14 remain open pending their individual closure gates. The
-R-11 lifecycle above does not claim recovery-artifact retention, streaming
-export, or bounded DOCX/HTML extraction. WP2 therefore remains open.
+R-11 lifecycle above does not by itself claim recovery-artifact retention,
+streaming export, or bounded DOCX/HTML extraction. WP2 therefore remains open.

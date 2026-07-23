@@ -341,6 +341,17 @@ void main() {
     );
   });
 
+  test('discard removes an unlaunched plan and acknowledgement', () async {
+    final fixture = await _RecoveryFixture.create();
+    addTearDown(fixture.dispose);
+    await fixture.plan.writeAcceptance();
+
+    await fixture.service().discardPreparedPlan(fixture.plan);
+
+    expect(await fixture.plan.planFile.exists(), isFalse);
+    expect(await fixture.plan.acceptanceFile.exists(), isFalse);
+  });
+
   test('rejects overlapping source and safety roots', () async {
     final fixture = await _RecoveryFixture.create();
     addTearDown(fixture.dispose);

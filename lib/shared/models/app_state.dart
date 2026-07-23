@@ -13,6 +13,7 @@ import '../../services/github_archive_service.dart';
 import '../../services/github_remote_metadata_service.dart';
 import '../../services/atlas_full_backup_service.dart';
 import '../../services/atlas_live_recovery_service.dart';
+import '../../services/recovery_artifact_retention_service.dart';
 import '../../services/local_git_visibility_service.dart';
 import '../../services/local_git_archive_service.dart';
 import '../../services/local_project_refresh_service.dart';
@@ -8282,6 +8283,56 @@ class AppState extends ChangeNotifier {
     ]);
     await recovery.awaitPlanAcceptance(plan, workerExitCode: worker.exitCode);
   }
+
+  Future<void> discardPreparedLiveRecovery(AtlasLiveRecoveryPlan plan) =>
+      AtlasLiveRecoveryService().discardPreparedPlan(plan);
+
+  Future<RecoveryArtifactRetentionPreview> previewRecoveryArtifactRetention({
+    Directory? safetyBackupRoot,
+    RecoveryArtifactRetentionPolicy policy =
+        const RecoveryArtifactRetentionPolicy(),
+  }) async {
+    final service = await RecoveryArtifactRetentionService.forCurrentAtlasApp();
+    return service.preview(
+      safetyBackupRoots: safetyBackupRoot == null
+          ? const []
+          : [safetyBackupRoot],
+      policy: policy,
+    );
+  }
+
+  Future<RecoveryArtifactRetentionApplyReport> applyRecoveryArtifactRetention(
+    RecoveryArtifactRetentionPreview preview, {
+    Iterable<String>? candidateIds,
+  }) => _trackOperation(
+    title: 'Recovery artifact cleanup',
+    startingMessage: 'Revalidating previewed recovery artifacts…',
+    run: () async {
+      final service =
+          await RecoveryArtifactRetentionService.forCurrentAtlasApp();
+      final result = await service.apply(preview, candidateIds: candidateIds);
+      await db.logEvent(
+        area: 'recovery',
+        action: 'recovery_artifact_retention_applied',
+        outputJson: jsonEncode({
+          'previewedCandidates': preview.candidates.length,
+          'selectedCandidates':
+              candidateIds?.toSet().length ?? preview.candidates.length,
+          'deleted': result.deletedCount,
+          'results': result.results
+              .map(
+                (item) => {
+                  'path': item.requested.path,
+                  'kind': item.requested.kind.name,
+                  'disposition': item.disposition.name,
+                },
+              )
+              .toList(),
+        }),
+      );
+      return result;
+    },
+  );
 
   /// Writes a portable archive for inspection and selective transfer. It does
   /// not include every Atlas table and cannot restore an Atlas instance.
