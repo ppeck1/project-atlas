@@ -30,9 +30,12 @@ Last updated: 2026-07-23.
 
 ## Audit resume checkpoint
 
-Start from exact implementation `main` at `fce3769` (`Harden recovery artifact
-lifecycle (#46)`). The working tree was clean and synchronized with
-`origin/main` when this handoff was written.
+Use `f228b62` (`Close R11 recovery artifact lifecycle finding (#47)`) as the
+canonical closure anchor. It is a clean descendant of implementation commit
+`fce3769` (`Harden recovery artifact lifecycle (#46)`) and contains only the
+R-11 evidence closure after that implementation. A later handoff-only commit
+may be present; verify that current `main` is a clean descendant of this
+anchor before resuming.
 
 The canonical matrix contains 51 findings: 22 Closed and 29 Open. The
 completed integrity sequence is:
@@ -73,16 +76,39 @@ completed integrity sequence is:
 - PR #46 / `fce3769`: R-11 typed incomplete/failed artifact lifecycle,
   Windows alias and reparse-point hardening, no-follow marker validation,
   active-operation race closure, hosted CI, and exact-main proof.
+- PR #47 / `f228b62`: R-11 canonical closure evidence after the implementation
+  and exact-main proof passed.
 
-Current verification baseline on merged `main` at `fce3769`:
+Current verification baseline on merged closure `main` at `f228b62`:
 
 - focused recovery-artifact lifecycle and integration suite: 63/63;
 - full Flutter suite: 598 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
-- hosted PR CI run 144 and exact-main push run 145, including seeded isolated
-  MCP smoke: passed.
+- hosted implementation PR CI run 144 and exact-implementation-main push run
+  145: passed;
+- hosted closure PR CI run 146 passed on retry after an isolated local 13/13
+  queue-lease proof confirmed its first-attempt hosted SQLite contention was
+  transient; and
+- exact-closure-main push run 147, including generation, policy, analysis,
+  MCP adapter, full tests, Windows release, seeded fixture, and gateway smoke:
+  passed.
+
+### Recommended resume sequence
+
+Do not begin implementation until the canonical matrix and current status have
+been reviewed. Keep the WP2 queue attended and single-worker throughout:
+
+1. R-12: verify and design a local, previewed recovery-artifact retention
+   policy that preserves the newest safety backup and every active recovery
+   plan. Obtain hosted merge and exact-main proof before proceeding.
+2. R-13: verify portable-export memory behavior, then implement bounded
+   streaming/isolate export with progress and cancellation. Obtain hosted
+   merge and exact-main proof before proceeding.
+3. R-14: verify DOCX/HTML extraction behavior, then implement async/isolate
+   extraction with source and expanded-size limits. Obtain hosted merge and
+   exact-main proof before retiring the WP2 constraint.
 
 ### Closed bundle-integrity package
 
@@ -102,16 +128,18 @@ so WP4 is complete.
 
 ### Closed R-11 artifact-lifecycle package
 
-PR #46 merged R-11 as `fce3769`. It implements typed incomplete/failed sibling
-paths, operation-owned lifecycle markers, serialized terminal transitions,
-and bounded persisted cleanup for full backups, full-backup staging restores,
-and project-bundle staging. Windows validation rejects reparse points without
-misclassifying safe 8.3 aliases, lifecycle markers are no-follow regular
-files, and active operation IDs are registered before publication and released
-on every begin failure. Hosted PR CI run 144 and exact-main push run 145
-passed. Local exact-main proof at `fce3769` passed the focused suite (63/63),
-full Flutter suite (598 passed, 1 intentional skip), static analysis, 30
-Python policy/maintenance tests, and the Windows release build. R-11 is
+PR #46 merged R-11 as `fce3769`, and PR #47 merged its canonical closure
+evidence as `f228b62`. The implementation provides typed incomplete/failed
+sibling paths, operation-owned lifecycle markers, serialized terminal
+transitions, and bounded persisted cleanup for full backups, full-backup
+staging restores, and project-bundle staging. Windows validation rejects
+reparse points without misclassifying safe 8.3 aliases, lifecycle markers are
+no-follow regular files, and active operation IDs are registered before
+publication and released on every begin failure. Hosted implementation PR CI
+run 144, exact-implementation-main push run 145, and exact-closure-main push
+run 147 passed. Local exact-main proof at `fce3769` passed the focused suite
+(63/63), full Flutter suite (598 passed, 1 intentional skip), static analysis,
+30 Python policy/maintenance tests, and the Windows release build. R-11 is
 closed.
 
 Earlier R-07 through R-10 post-merge proof on exact implementation `main` at
