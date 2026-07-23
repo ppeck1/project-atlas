@@ -16,22 +16,21 @@ Recovery findings R-01 through R-10 and agent-integrity findings A-01 through
 A-11 are closed. R-11 through R-14 remain open, so WP2 is not fully closed.
 The attended single-worker operating constraint was retired only after
 A-03/A-04 merged and their post-merge proof passed. A-11's exact-main proof
-also passed, so WP3 is closed. A-08/A-09 exact-main proof passed, so WP4 is
-closed; the package-specific attended single-worker constraint remains in
-force until the evidence-only closure PR merges.
+also passed, so WP3 is closed. A-08/A-09 exact-main proof passed, PR #45
+merged the canonical closure evidence, and WP4 is closed. The package-specific
+attended single-worker constraint is retired.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
 contact data, machine-specific paths, and unrelated project references.
 
-Last updated: 2026-07-22.
+Last updated: 2026-07-23.
 
 ## Audit resume checkpoint
 
-Start from exact implementation `main` at `f73c081` (PR #44 residual fix after
-`13ff42e`, `Harden ledger checkpoints and task tag intent (#43)`). The working
-tree was clean and synchronized with `origin/main` when this handoff was
-written.
+Start from exact implementation `main` at `ff03b34` (`Close A08 A09 integrity
+findings (#45)`). The working tree was clean and synchronized with
+`origin/main` when this handoff was written.
 
 The canonical matrix contains 51 findings: 21 Closed and 30 Open. The
 completed integrity sequence is:
@@ -67,6 +66,8 @@ completed integrity sequence is:
   reads and explicit full audit, plus A-09 versioned absent/empty task-tag
   intent and contention proof.
 - PR #44 / `f73c081`: residual fail-closed fix and exact-main A-08/A-09 proof.
+- PR #45 / `ff03b34`: A-08/A-09 canonical closure evidence, WP4 completion,
+  and retirement of the package-specific attended single-worker constraint.
 
 Current verification baseline on merged `main`:
 
@@ -92,6 +93,17 @@ The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
 R-11 through R-14 remain open, so WP2 is not closed. A-08 and A-09 are closed,
 so WP4 is complete.
+
+### Active R-11 candidate
+
+The current branch accepts R-11 and implements typed incomplete/failed sibling
+paths, operation-owned lifecycle markers, serialized terminal transitions,
+and bounded persisted cleanup for full backups, full-backup staging restores,
+and project-bundle staging. Its focused lifecycle and integration suite passes
+60 tests. The current branch also passes the full Flutter suite (595 passed,
+1 intentional skip), static analysis, 30 Python policy/maintenance tests, and
+the Windows release build. Do not mark R-11 closed until this candidate
+merges, hosted CI passes, and the same proof is rerun on exact `main`.
 
 Post-merge proof on exact implementation `main` at `9d0e792`:
 
@@ -174,9 +186,9 @@ The boundary is specified in the
 [`accepted truth integrity contract`](docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md).
 A-06, A-07, and A-10 are closed after exact-main post-merge proof. A-08 and
 A-09 subsequently closed after PR #43 merged as `13ff42e`, PR #44 merged as
-`f73c081`, hosted CI passed, and exact-main proof passed. WP4 is closed. The
-A-08/A-09 package-specific attended single-worker constraint remains in force
-until this evidence-only closure PR merges.
+`f73c081`, hosted CI passed, and exact-main proof passed. PR #45 merged as
+`ff03b34`, WP4 is closed, and the A-08/A-09 package-specific attended
+single-worker constraint is retired.
 
 Post-merge proof on exact implementation `main` at `393ab6b`:
 
@@ -218,8 +230,8 @@ Post-merge proof on exact implementation `main` at `f73c081`:
 - hosted CI, including generation, policy, analysis, full tests, Windows
   release, seeded MCP fixture, and gateway smoke: passed.
 
-The two findings and WP4 are closed. The attended single-worker constraint for
-this package is retired only after this evidence-only closure PR merges.
+The two findings and WP4 are closed. PR #45 merged the evidence-only closure,
+so the attended single-worker constraint for this package is retired.
 
 ## Current public state
 

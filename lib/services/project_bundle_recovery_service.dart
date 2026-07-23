@@ -5,6 +5,8 @@ import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import 'recovery_artifact_lifecycle.dart';
+
 const atlasProjectBundleSchema = 'project_atlas_project_bundle_v1';
 const atlasProjectBundleManifestSchema =
     'project_atlas_project_bundle_manifest_v2';
@@ -66,11 +68,14 @@ String projectBundleKindForPath(String path) {
 class ProjectBundleRecoveryService {
   final ProjectBundleRecoveryLimits limits;
   final Future<void> Function(String step)? _recoveryStepHook;
+  final RecoveryArtifactLifecycle _artifactLifecycle;
 
-  const ProjectBundleRecoveryService({
+  ProjectBundleRecoveryService({
     this.limits = const ProjectBundleRecoveryLimits(),
     Future<void> Function(String step)? recoveryStepHook,
-  }) : _recoveryStepHook = recoveryStepHook;
+    RecoveryArtifactLifecycle? artifactLifecycle,
+  }) : _recoveryStepHook = recoveryStepHook,
+       _artifactLifecycle = artifactLifecycle ?? RecoveryArtifactLifecycle();
 
   Future<ProjectBundleStagingReport> validateAndStage(
     File bundle,
@@ -111,34 +116,53 @@ class ProjectBundleRecoveryService {
         'project-recovery-stage-${DateTime.now().toUtc().toIso8601String().replaceAll(':', '-')}-${_safeStem(validated.projectTitle)}',
       ),
     );
-    if (await stage.exists()) {
-      throw const ProjectBundleRecoveryException(
-        'Project bundle staging destination already exists.',
-      );
-    }
-    await stage.create(recursive: true);
-    final stagedFiles = await _extractValidatedArchive(
-      bundle,
+    final artifact = await _artifactLifecycle.begin(
       stage,
-      validated,
+      kind: RecoveryArtifactKind.projectBundleStaging,
     );
-    if (await _sha256File(bundle) != sourceDigest) {
-      throw const ProjectBundleRecoveryException(
-        'Project bundle changed during staging.',
+    final workStage = artifact.artifactDirectory;
+    try {
+      await _recoveryStepHook?.call('stage-created');
+      final stagedFiles = await _extractValidatedArchive(
+        bundle,
+        workStage,
+        validated,
       );
+      await _recoveryStepHook?.call('stage-extracted');
+      if (await _sha256File(bundle) != sourceDigest) {
+        throw const ProjectBundleRecoveryException(
+          'Project bundle changed during staging.',
+        );
+      }
+      await _recoveryStepHook?.call('before-report');
+      final report = ProjectBundleStagingReport(
+        sourceBundlePath: bundle.path,
+        stagingPath: artifact.finalDirectory.path,
+        projectId: validated.projectId,
+        projectTitle: validated.projectTitle,
+        stagedFiles: stagedFiles,
+      );
+      await File(
+        p.join(workStage.path, 'project_bundle_staged.json'),
+      ).writeAsString(
+        const JsonEncoder.withIndent('  ').convert(report.toJson()),
+        flush: true,
+      );
+      await _recoveryStepHook?.call('report-written');
+      await artifact.complete();
+      return report;
+    } on Object catch (error, stackTrace) {
+      try {
+        final report = File(
+          p.join(artifact.artifactDirectory.path, 'project_bundle_staged.json'),
+        );
+        if (await report.exists()) await report.delete();
+      } on Object {
+        // Completion-report cleanup is subordinate to the initiating failure.
+      }
+      await artifact.fail();
+      Error.throwWithStackTrace(error, stackTrace);
     }
-    final report = ProjectBundleStagingReport(
-      sourceBundlePath: bundle.path,
-      stagingPath: stage.path,
-      projectId: validated.projectId,
-      projectTitle: validated.projectTitle,
-      stagedFiles: stagedFiles,
-    );
-    await File(p.join(stage.path, 'project_bundle_staged.json')).writeAsString(
-      const JsonEncoder.withIndent('  ').convert(report.toJson()),
-      flush: true,
-    );
-    return report;
   }
 
   Future<_ValidatedProjectBundle> _validateArchive(
@@ -299,6 +323,7 @@ class ProjectBundleRecoveryService {
           );
         }
         count++;
+        await _recoveryStepHook?.call('entry-staged:${entry.name}');
       }
       return count;
     } finally {

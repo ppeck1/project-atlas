@@ -1,12 +1,14 @@
 # Bundle recovery integrity contract
 
-Status: implemented by PR #37 (`9d0e792`) and verified on exact merged `main`.
-Date: 2026-07-22
+Status: R-07–R-10 implemented by PR #37 (`9d0e792`) and verified on exact
+merged `main`; R-11 is an unmerged implementation candidate.
+Date: 2026-07-23
 
-This contract defines the R-07 through R-10 boundary. Full backups are
-directory trees with a completion marker; project bundles are ZIP archives.
-They retain separate schemas and validators because their trust roots and
-materialization rules differ.
+This contract defines the merged R-07 through R-10 boundary and the pending
+R-11 incomplete-artifact lifecycle. Full backups are directory trees with a
+completion marker; project bundles are ZIP archives. They retain separate
+schemas and validators because their trust roots and materialization rules
+differ.
 
 ## Exact full-backup inventory
 
@@ -71,13 +73,46 @@ The second pass repeats source/directory/path limits and rebinds every written
 byte to the already verified descriptor. The source ZIP and live Atlas state
 are never modified.
 
+## Incomplete-artifact lifecycle candidate
+
+The R-11 implementation candidate creates full backups, full-backup staging
+restores, and project-bundle staging trees under typed
+`.atlas-incomplete-<operationId>` sibling names. A successful operation
+promotes that working tree to its absent final path while its ownership marker
+is still present, then removes the marker. A crash or fault before promotion
+therefore cannot leave an ordinary-looking final artifact.
+
+Failure is a serialized terminal transition. When owned failure publication
+succeeds, the owner exclusively creates a separate typed failed marker,
+quarantines the tree under `.atlas-failed-<operationId>`, and attempts deletion
+only within explicit entry and byte budgets. If ownership or failed-marker
+publication cannot be proven, the operation remains terminal under its typed
+incomplete path and never overwrites foreign evidence. Markers contain only
+schema, enumerated kind/state, a 128-bit operation identifier, and canonical
+UTC timestamps; they never contain paths, filenames, user content, or
+exception text.
+
+The lifecycle also exposes bounded persisted-artifact cleanup. It scans only a
+limited number of direct children with the exact typed-name grammar, refuses
+links and invalid or mismatched ownership markers, enforces candidate,
+entry, byte, and minimum-age limits, and rechecks an artifact snapshot before
+deletion. Changed or over-budget trees remain quarantined.
+
+Public full-backup validation rejects all lifecycle files. Only the creating
+operation may temporarily admit its exact marker while validating its own
+working tree. If ordinary completion evidence was written before a later
+failure, the integration attempts to remove that evidence; the typed failed or
+incomplete path remains authoritative if the host denies removal.
+
+This candidate remains open until hosted merge and exact-`main` proof are
+recorded in the canonical follow-up matrix.
+
 ## Threat boundary and exclusions
 
 SHA-256 detects inconsistent or corrupted bundles; it is not authentication
 against malicious same-user code that can rewrite both payload and manifest.
 Nested Git ZIPs remain opaque hashed payloads and are not recursively expanded.
 
-R-11 through R-14 remain open. In particular, a later extraction I/O failure
-can leave a partial staging directory; this package does not claim an
-`.incomplete` lifecycle, retention, streaming export, or bounded DOCX/HTML
-extraction. WP2 therefore remains open after R-07 through R-10.
+R-11 through R-14 remain open pending their individual closure gates. The R-11
+candidate above does not claim recovery-artifact retention, streaming export,
+or bounded DOCX/HTML extraction. WP2 therefore remains open.
