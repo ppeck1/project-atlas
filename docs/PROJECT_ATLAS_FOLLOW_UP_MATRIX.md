@@ -17,6 +17,8 @@ reproduction or design disposition before implementation.
 ## Immediate operating constraints
 
 - Do not record formal Capsule Edit Truth v1 acceptance until WP6 completes.
+- Keep the A-08/A-09 package-specific attended single-worker constraint until
+  this evidence-only closure PR merges; retire it only after that merge.
 
 ## Work packages and order
 
@@ -39,14 +41,15 @@ A-03 and A-04 closed after PR #35 merged as `a3c88f6` and post-merge proof
 passed on current `main`. The attended single-worker constraint is therefore
 retired. A-11 closed after PR #39 merged as `9d753cb` and exact-main proof
 passed, so WP3 is closed. A-06, A-07, and A-10 closed after PR #41 merged as
-`393ab6b` and exact-main proof passed. A-08 and A-09 remain open, so WP4 is not
-closed.
+`393ab6b` and exact-main proof passed. A-08 and A-09 closed after PR #43 merged
+as `13ff42e`, PR #44 merged the residual duplicate-ingress correction as
+`f73c081`, and hosted plus exact-main proof passed, so WP4 is closed.
 
 R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
 post-merge proof passed. They provide exact full-backup directory inventory
 and bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11
-through R-14 remain open, so WP2 is not closed. The ledger contains 19 Closed
-and 32 Open findings.
+through R-14 remain open, so WP2 is not closed. The ledger contains 21 Closed
+and 30 Open findings.
 
 ## Finding ledger
 
@@ -73,8 +76,8 @@ and 32 Open findings.
 | SPA-20260721-A-05 | P0 | Accepted | Closed | WP3 | Completion can create an orphan/duplicate handoff draft. | Codex | PR #33 | Transactional deterministic draft completion merged as `8a90d6e`; post-insert rollback, concurrent/retry deduplication, and service replay proof passed on merged `main`. |
 | SPA-20260721-A-06 | P1 | Accepted | Closed | WP4 | Accepted-truth service may mutate non-truth fields. | Codex | PR #41 | Canonical truth keys fail closed; `lessonsLearned` uses a narrow supplemental boundary; mixed AppState/enrichment writes and audits are atomic. Merged as `393ab6b`; exact-main proof passed. Contract: `docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-07 | P1 | Accepted | Closed | WP4 | Source revision lookup bypasses complete ledger verification. | Codex | PR #41 | Source evidence is selected only from a fully verified hash/parent/number/diff chain; corrupt matching or unrelated history fails closed. Merged as `393ab6b`; exact-main proof passed. Contract: `docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`. |
-| SPA-20260721-A-08 | P2 | Needs verification | Open | WP4 | Repeated history reads verify the entire chain. | Unassigned | TBD | Write/checkpoint verification plus paged audit behavior and performance proof. |
-| SPA-20260721-A-09 | P2 | Needs verification | Open | WP4 | Explicit empty tags cannot clear a task's tags. | Unassigned | TBD | Present-empty differs from absent and clears tags in tests. |
+| SPA-20260721-A-08 | P2 | Accepted | Closed | WP4 | Repeated history reads verify the entire chain. | Codex | PR #43 | Schema-v27 clean checkpoints, atomic checkpoint advancement, bounded head/page reads, explicit full audit, and hostile migration/corruption/rollback/read-count proof merged as `13ff42e`; exact-main proof passed at `f73c081`. Contract: `docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`. |
+| SPA-20260721-A-09 | P2 | Accepted | Closed | WP4 | Explicit empty tags cannot clear a task's tags. | Codex | PR #43/#44 | Explicit task-tag intent distinguishes absent, empty, and non-empty values; strict current/legacy validation, MCP no-draft rejection, rollback/retry proof, and the residual case-insensitive duplicate-ingress correction merged as `13ff42e` and `f73c081`; exact-main proof passed. Contract: `docs/PROPOSAL_ACCEPTANCE_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-10 | P1 | Accepted | Closed | WP4 | Manifest truth and tags are accepted separately. | Codex | PR #41 | Server-owned composite truth/project-tag snapshot is revalidated before atomic truth, supplemental, tag, review, and audit writes; unverifiable replay fails closed. Merged as `393ab6b`; exact-main proof passed. Contract: `docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-11 | P1 | Accepted | Closed | WP3 | Raw queue table lacks foreign-key and state constraints. | Codex | PR #39 | Schema v26 fail-closed rebuild, foreign keys, ownership triggers, exact scalar/enum/JSON/state/chronology constraints, valid legacy-state preservation, invalid migration rollback, and `foreign_key_check` proof merged as `9d753cb`; exact-main post-merge proof passed. Contract: `docs/QUEUE_SCHEMA_INTEGRITY_CONTRACT.md`. |
 | SPA-20260721-A-12 | P1 | Needs verification | Open | WP5 | Malformed planning values fail open to executable defaults. | Unassigned | TBD | Unknown values enter a review lane and cannot become ready. |
@@ -99,12 +102,36 @@ and 32 Open findings.
 | SPA-20260721-U-06 | P2 | Needs verification | Open | WP10 | The central productivity claim is unmeasured. | Unassigned | TBD | Local benchmark for resume, choice, delegation, acceptance, and rework. |
 | SPA-20260721-D-01 | P1 | Accepted | Open | WP6 | Current-schema documentation can drift from the runtime schema. | Unassigned | TBD | All current-state docs agree with code; automated drift check passes. |
 | SPA-20260721-D-02 | P1 | Accepted | Open | WP6 | Capsule Edit Truth v1 lacks a recorded formal acceptance decision. | Unassigned | TBD | Current build/copied-database checklist records accepted/rejected/follow-ups. |
-| SPA-20260721-D-03 | P1 | Needs verification | Open | WP6 | Real migration coverage is stale, inconsistent, and normally skipped. | Unassigned | TBD | Sanitized/deterministic old schemas prove current-schema v26 preservation, Capsule ledger guards, and queue integrity guards. |
+| SPA-20260721-D-03 | P1 | Needs verification | Open | WP6 | Real migration coverage is stale, inconsistent, and normally skipped. | Unassigned | TBD | Sanitized/deterministic old schemas prove current-schema v27 preservation, Capsule ledger guards, and queue integrity guards. |
 | SPA-20260721-D-04 | P2 | Needs verification | Open | WP11 | CI is broad but incompletely pinned and self-auditing. | Unassigned | TBD | Pinned toolchain/deps, format/generation diff, privacy/freshness, artifact scans. |
 | SPA-20260721-D-05 | P2 | Needs verification | Open | WP11 | Large architectural concentrations remain regression risks. | Unassigned | TBD | Extract-as-you-touch work tied to functional changes and typed diagnostics. |
 | SPA-20260721-D-06 | P3 | Needs verification | Open | WP11 | Public metadata, captures, reported version, and database opener have stale residue. | Unassigned | TBD | Metadata/version/capture manifest and truthful database opener naming. |
 
 ## Progress evidence
+
+### WP4 A-08/A-09 closure — 2026-07-22
+
+PR #43 merged as `13ff42e`; PR #44 merged the residual A-09
+duplicate-ingress correction as `f73c081`. A-08 and A-09 are closed after
+hosted and exact-main post-merge proof passed on clean `main` at `f73c081`.
+
+- Schema v27 creates verified project-scoped ledger checkpoints only after a
+  complete legacy-chain audit. Accepted writes append and advance the
+  checkpoint atomically; dirty, missing, forged, corrupt, or contended state
+  fails closed without partial project or revision changes.
+- Ordinary truth loads read the indexed head, history pages read at most
+  `limit + 1` rows with page-boundary verification, and explicit full audits
+  remain available without repairing or blessing invalid state.
+- Task proposals distinguish omitted, explicitly empty, and non-empty tag
+  intent. Current and legacy malformed envelopes fail pending before writes;
+  MCP rejects null, scalar, mixed, blank, exact-duplicate, and trimmed
+  case-insensitive duplicate arrays without creating a draft.
+- Exact-main full Flutter suite: 563 passed with 1 intentional skip.
+- Exact-main static analysis: clean.
+- Exact-main Python policy/maintenance suite: 30/30.
+- Exact-main Windows release build: passed.
+- Hosted PR #43 and PR #44 checks passed, including the required build gate.
+- WP4 is closed.
 
 ### WP4 A-06/A-07/A-10 closure — 2026-07-22
 
@@ -133,7 +160,8 @@ clean `main`.
   two-connection proposal contention proofs whose SQLite busy wait is 30
   seconds; production behavior and assertions are unchanged.
 - The package-specific attended single-worker constraint is retired only after
-  this exact-main proof. A-08 and A-09 remain open, so WP4 remains open.
+  this exact-main proof. A-08 and A-09 subsequently closed under the evidence
+  above, so WP4 is closed.
 
 ### WP3 A-11 closure — 2026-07-22
 
@@ -198,8 +226,8 @@ post-merge proof passed on current `main`.
 - Hosted PR #35 CI passed, including generated-code verification, analysis,
   full tests, Windows release build, seeded MCP fixture, and gateway smoke.
 - The attended single-worker constraint was retired only after this post-merge
-  evidence passed. A-06, A-07, and A-10 subsequently closed; A-08 and A-09
-  remain open, so WP4 remains open.
+  evidence passed. A-06 through A-10 subsequently closed under the evidence
+  above, so WP4 is closed.
 
 ### WP3 A-01/A-02/A-05 closure — 2026-07-21
 

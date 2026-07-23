@@ -13,11 +13,12 @@ The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
 Recovery findings R-01 through R-10 and agent-integrity findings A-01 through
-A-07 plus A-10 and A-11 are closed. R-11 through R-14 remain open, so WP2 is
-not fully closed.
+A-11 are closed. R-11 through R-14 remain open, so WP2 is not fully closed.
 The attended single-worker operating constraint was retired only after
 A-03/A-04 merged and their post-merge proof passed. A-11's exact-main proof
-also passed, so WP3 is closed.
+also passed, so WP3 is closed. A-08/A-09 exact-main proof passed, so WP4 is
+closed; the package-specific attended single-worker constraint remains in
+force until the evidence-only closure PR merges.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
@@ -27,11 +28,12 @@ Last updated: 2026-07-22.
 
 ## Audit resume checkpoint
 
-Start from exact implementation `main` at `393ab6b` (`Harden accepted truth
-and manifest integrity (#41)`). The working tree was clean and synchronized with
-`origin/main` when this handoff was written.
+Start from exact implementation `main` at `f73c081` (PR #44 residual fix after
+`13ff42e`, `Harden ledger checkpoints and task tag intent (#43)`). The working
+tree was clean and synchronized with `origin/main` when this handoff was
+written.
 
-The canonical matrix contains 51 findings: 19 Closed and 32 Open. The
+The canonical matrix contains 51 findings: 21 Closed and 30 Open. The
 completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
@@ -61,11 +63,15 @@ completed integrity sequence is:
   verified-source, and composite manifest/tag integrity plus exact-main proof.
 - PR #42: A-06/A-07/A-10 canonical closure evidence plus scoped Windows CI
   bounds for the four intentional two-connection proposal contention tests.
+- PR #43 / `13ff42e`: A-08 schema v27 durable ledger checkpoints, bounded
+  reads and explicit full audit, plus A-09 versioned absent/empty task-tag
+  intent and contention proof.
+- PR #44 / `f73c081`: residual fail-closed fix and exact-main A-08/A-09 proof.
 
 Current verification baseline on merged `main`:
 
-- focused A-06/A-07/A-10 suite: 159/159;
-- full Flutter suite: 545 passed with 1 intentional skip;
+- exact-main A-08/A-09 focused proof: passed;
+- full Flutter suite: 563 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
@@ -84,9 +90,8 @@ guidance; `project_bundle.json` remains schema v1.
 
 The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
-R-11 through R-14 remain open, so WP2 is not closed. The recommended next
-agent-integrity package is A-08/A-09, which completes the remaining WP4 audit
-work if both findings verify and close.
+R-11 through R-14 remain open, so WP2 is not closed. A-08 and A-09 are closed,
+so WP4 is complete.
 
 Post-merge proof on exact implementation `main` at `9d0e792`:
 
@@ -167,9 +172,11 @@ unverifiable partial replay fail closed with typed conflicts.
 
 The boundary is specified in the
 [`accepted truth integrity contract`](docs/ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md).
-The three findings are closed after exact-main post-merge proof. The attended
-single-worker constraint for this package is retired only now that the proof
-is complete. A-08 and A-09 remain open, so WP4 is not closed.
+A-06, A-07, and A-10 are closed after exact-main post-merge proof. A-08 and
+A-09 subsequently closed after PR #43 merged as `13ff42e`, PR #44 merged as
+`f73c081`, hosted CI passed, and exact-main proof passed. WP4 is closed. The
+A-08/A-09 package-specific attended single-worker constraint remains in force
+until this evidence-only closure PR merges.
 
 Post-merge proof on exact implementation `main` at `393ab6b`:
 
@@ -186,6 +193,34 @@ Post-merge proof on exact implementation `main` at `393ab6b`:
 - hosted PR #41 CI passed, including generation, policy, analysis, full tests,
   Windows release, seeded MCP fixture, and gateway smoke.
 
+### Closed ledger-read and task-tag intent package
+
+A-08 and A-09 merged in PR #43 as `13ff42e`; PR #44 merged the residual
+fail-closed fix as `f73c081`. Schema v27 creates verified project-scoped ledger
+checkpoints transactionally, invalidates them on revision writes, advances
+them with the accepted revision inside one transaction, serves current state
+and SQL-paged history through bounded reads, and retains an explicit read-only
+full-chain audit. Source replay still verifies the complete chain.
+
+Task proposals now carry versioned server-owned tag mutation intent. Absent
+tags preserve assignments, present-empty tags clear them, and present
+nonempty tags replace them. Legacy, malformed, stale, rollback, replay, MCP,
+and two-connection contention cases fail closed or preserve their documented
+compatibility semantics.
+
+Post-merge proof on exact implementation `main` at `f73c081`:
+
+- independent A-08 and A-09 review: GO;
+- full Flutter suite: 563 passed with 1 intentional skip;
+- full static analysis: clean;
+- Python policy/maintenance suite: 30/30;
+- Windows release build: passed; and
+- hosted CI, including generation, policy, analysis, full tests, Windows
+  release, seeded MCP fixture, and gateway smoke: passed.
+
+The two findings and WP4 are closed. The attended single-worker constraint for
+this package is retired only after this evidence-only closure PR merges.
+
 ## Current public state
 
 - Repository: `ppeck1/project-atlas`
@@ -196,13 +231,14 @@ Post-merge proof on exact implementation `main` at `393ab6b`:
 - Public authorship: Paul Peck / `ppeck1`
 - README images: captures of the real Windows application using an isolated
   public-safe demo database
-- Current database line: schema `26`. Version 23 added
+- Current database line: schema `27`. Version 23 added
   `documents.deleted_at` soft delete with undo and deferred purge; version 24
   adds the immutable accepted Project Capsule revision ledger and baseline
   migration; version 25 enforces update/delete immutability guards on that
   ledger; version 26 adds foreign-key, enum, and state constraints for the LLM
-  task queue. Project Sources retains reconciliation preview, local/remote source
-  roles, and Atlas-only source bookkeeping updates.
+  task queue; version 27 adds durable verified Capsule ledger checkpoints.
+  Project Sources retains reconciliation preview, local/remote source roles,
+  and Atlas-only source bookkeeping updates.
 - Capsule Resume is the fourth primary navigation surface. It derives Act,
   Understand, and Audit views from one versioned project snapshot; Operations
   remains available at `/operations` as Sources & Health.

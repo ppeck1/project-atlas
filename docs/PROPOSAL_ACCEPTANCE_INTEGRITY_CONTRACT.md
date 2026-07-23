@@ -65,17 +65,17 @@ rolls back with the task, review state, events, and retry state.
 
 ## Scope exclusions
 
-- A-09's implementation defines absent versus explicitly empty task-tag input;
-  canonical closure still requires merge and exact-main post-merge proof.
+- A-09 defines absent versus explicitly empty task-tag input. PR #43 merged
+  the implementation as `13ff42e`; PR #44 merged the residual case-insensitive
+  duplicate-ingress correction as `f73c081`. Hosted and exact-main post-merge
+  proof passed on clean `main` at `f73c081`.
 - A-06, A-07, and A-10 are closed under the follow-up contract in
   [`ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md`](ACCEPTED_TRUTH_INTEGRITY_CONTRACT.md).
   PR #41 merged as `393ab6b`, and exact-main post-merge proof passed.
-- A-08 and A-09 remain canonically open pending merge proof; A-11 is closed
-  independently.
-- WP4 remains open after A-03/A-04 because its follow-up findings are not all
-  closed.
+- A-08 and A-09 are closed; A-11 is closed independently.
+- All WP4 findings are closed.
 
 The attended single-worker constraint attached to A-03/A-04 was retired after
 post-merge proof passed on `a3c88f6`. The A-06/A-07/A-10 follow-up package did
-not change that historical proof boundary, and this closure does not close
-WP4.
+not change that historical proof boundary. A-08/A-09 subsequently closed under
+the PR #43/#44 exact-main evidence above, completing WP4.
