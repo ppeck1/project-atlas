@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:project_atlas/services/atlas_full_backup_service.dart';
+import 'package:project_atlas/services/recovery_artifact_lifecycle.dart';
 import 'package:project_atlas/shared/atlas_owned_file_snapshot_coordinator.dart';
 import 'package:sqlite3/sqlite3.dart';
 
@@ -524,7 +525,8 @@ void main() {
 
       expect(restored.validation.isValid, isTrue);
       expect(await restored.bundle.exists(), isTrue);
-      expect(restored.bundle.path, isNot(endsWith('.incomplete')));
+      expect(restored.validation.bundle.path, restored.bundle.path);
+      expect(restored.bundle.path, isNot(contains('.atlas-incomplete-')));
       expect(
         await File(
           p.join(restored.bundle.path, 'backup_complete.json'),
@@ -593,6 +595,369 @@ void main() {
     );
     expect(await restoreRoot.exists(), isFalse);
   });
+
+  test(
+    'public validation rejects malformed and foreign lifecycle markers',
+    () async {
+      for (final malformed in [true, false]) {
+        final result = await service().createBundle(
+          Directory(
+            p.join(
+              tempDir.path,
+              malformed ? 'malformed-public' : 'foreign-public',
+            ),
+          ),
+        );
+        final marker = File(
+          p.join(result.bundle.path, recoveryArtifactLifecycleMarkerFile),
+        );
+        if (malformed) {
+          await marker.writeAsString('{not-json');
+        } else {
+          await marker.writeAsString(
+            jsonEncode({
+              'schema': recoveryArtifactLifecycleSchema,
+              'kind': 'full_backup',
+              'state': 'incomplete',
+              'operationId': '99999999999999999999999999999999',
+              'createdAt': '2026-07-23T00:00:00.000Z',
+              'updatedAt': '2026-07-23T00:00:00.000Z',
+            }),
+          );
+        }
+
+        final validation = await service().validateBundle(result.bundle);
+
+        expect(validation.isValid, isFalse, reason: 'malformed=$malformed');
+        expect(
+          validation.errors,
+          contains(
+            'Bundle contains an undeclared file: '
+            '$recoveryArtifactLifecycleMarkerFile.',
+          ),
+        );
+      }
+    },
+  );
+
+  test('mid-copy failure deletes partial backup without completion', () async {
+    final backups = Directory(p.join(tempDir.path, 'backups'));
+    final primary = StateError('primary mid-copy failure');
+    final guarded = AtlasFullBackupService(
+      sourceDatabase: sourceDatabase,
+      appOwnedRoots: {'atlas_documents': documentsDir},
+      clock: () => DateTime.utc(2026, 7, 23),
+      random: Random(71),
+      snapshotStepHook: (step) async {
+        if (step.startsWith('after-copy:atlas_documents:')) throw primary;
+      },
+    );
+
+    await expectLater(guarded.createBundle(backups), throwsA(same(primary)));
+
+    expect(await backups.exists(), isTrue);
+    expect(await backups.list().toList(), isEmpty);
+  });
+
+  test('post-completion-marker failure deletes the backup', () async {
+    final backups = Directory(p.join(tempDir.path, 'backups'));
+    final primary = StateError('primary post-marker failure');
+    final guarded = AtlasFullBackupService(
+      sourceDatabase: sourceDatabase,
+      appOwnedRoots: {'atlas_documents': documentsDir},
+      clock: () => DateTime.utc(2026, 7, 23),
+      random: Random(72),
+      snapshotStepHook: (step) async {
+        if (step == 'completion-marker-written') throw primary;
+      },
+    );
+
+    await expectLater(guarded.createBundle(backups), throwsA(same(primary)));
+
+    expect(await backups.list().toList(), isEmpty);
+  });
+
+  test(
+    'internal promotion refuses tampered lifecycle ownership and removes completion',
+    () async {
+      for (final malformed in [true, false]) {
+        final backups = Directory(
+          p.join(
+            tempDir.path,
+            malformed ? 'malformed-internal' : 'foreign-internal',
+          ),
+        );
+        final guarded = AtlasFullBackupService(
+          sourceDatabase: sourceDatabase,
+          appOwnedRoots: {'atlas_documents': documentsDir},
+          clock: () => DateTime.utc(2026, 7, 23),
+          random: Random(malformed ? 721 : 722),
+          snapshotStepHook: (step) async {
+            if (step != 'before-completion-marker') return;
+            final artifact =
+                (await backups
+                            .list()
+                            .where((entry) => entry is Directory)
+                            .toList())
+                        .single
+                    as Directory;
+            final marker = File(
+              p.join(artifact.path, recoveryArtifactLifecycleMarkerFile),
+            );
+            if (malformed) {
+              await marker.writeAsString('{not-json');
+            } else {
+              final decoded =
+                  jsonDecode(await marker.readAsString())
+                      as Map<String, dynamic>;
+              decoded['operationId'] = '99999999999999999999999999999999';
+              await marker.writeAsString(jsonEncode(decoded));
+            }
+          },
+        );
+
+        await expectLater(
+          guarded.createBundle(backups),
+          throwsA(isA<AtlasFullBackupException>()),
+        );
+
+        final retained =
+            (await backups.list().where((entry) => entry is Directory).toList())
+                    .single
+                as Directory;
+        expect(
+          await File(p.join(retained.path, 'backup_complete.json')).exists(),
+          isFalse,
+          reason: 'malformed=$malformed',
+        );
+        expect(
+          await File(
+            p.join(retained.path, recoveryArtifactLifecycleMarkerFile),
+          ).exists(),
+          isTrue,
+        );
+        expect((await guarded.validateBundle(retained)).isValid, isFalse);
+      }
+    },
+  );
+
+  test(
+    'cleanup failure retains failed marker and preserves post-marker error',
+    () async {
+      final backups = Directory(p.join(tempDir.path, 'backups'));
+      final primary = StateError('primary retained post-marker failure');
+      final guarded = AtlasFullBackupService(
+        sourceDatabase: sourceDatabase,
+        appOwnedRoots: {'atlas_documents': documentsDir},
+        clock: () => DateTime.utc(2026, 7, 23),
+        random: Random(73),
+        snapshotStepHook: (step) async {
+          if (step == 'completion-marker-written') throw primary;
+        },
+        artifactLifecycle: RecoveryArtifactLifecycle(
+          clock: () => DateTime.utc(2026, 7, 23),
+          deleteArtifact: (_) async {
+            throw const FileSystemException('injected cleanup denial');
+          },
+        ),
+      );
+
+      await expectLater(guarded.createBundle(backups), throwsA(same(primary)));
+
+      final retained = (await backups.list().toList()).single as Directory;
+      final incompleteFile = File(
+        p.join(retained.path, recoveryArtifactLifecycleMarkerFile),
+      );
+      final failedFile = File(
+        p.join(retained.path, recoveryArtifactFailedMarkerFile),
+      );
+      final incomplete = await RecoveryArtifactMarker.read(incompleteFile);
+      final failed = await RecoveryArtifactMarker.read(failedFile);
+      expect(incomplete.kind, RecoveryArtifactKind.fullBackup);
+      expect(incomplete.state, RecoveryArtifactState.incomplete);
+      expect(failed.kind, RecoveryArtifactKind.fullBackup);
+      expect(failed.state, RecoveryArtifactState.failed);
+      expect(failed.operationId, incomplete.operationId);
+      final markerText =
+          '${await incompleteFile.readAsString()}'
+          '${await failedFile.readAsString()}';
+      expect(markerText, isNot(contains(primary.message)));
+      expect(markerText, isNot(contains('cleanup denial')));
+      expect(
+        await File(p.join(retained.path, 'backup_complete.json')).exists(),
+        isFalse,
+      );
+      expect((await guarded.validateBundle(retained)).isValid, isFalse);
+    },
+  );
+
+  test(
+    'restore mid-entry failure deletes staging and leaves source and live unchanged',
+    () async {
+      final backup = await service().createBundle(
+        Directory(p.join(tempDir.path, 'backups')),
+      );
+      final sourceMarker = File(
+        p.join(backup.bundle.path, 'backup_complete.json'),
+      );
+      final sourceMarkerBefore = await sourceMarker.readAsBytes();
+      final liveBefore = await sourceDatabase.readAsBytes();
+      final documentBefore = await File(
+        p.join(documentsDir.path, 'brief.txt'),
+      ).readAsBytes();
+      final restores = Directory(p.join(tempDir.path, 'restores-mid-entry'));
+      final primary = StateError('primary restore mid-entry failure');
+      final guarded = AtlasFullBackupService(
+        sourceDatabase: sourceDatabase,
+        appOwnedRoots: {'atlas_documents': documentsDir},
+        clock: () => DateTime.utc(2026, 7, 23),
+        random: Random(741),
+        snapshotStepHook: (step) async {
+          if (step.startsWith('staging-entry-copied:')) throw primary;
+        },
+      );
+
+      await expectLater(
+        guarded.restoreToStaging(backup.bundle, restores),
+        throwsA(same(primary)),
+      );
+
+      expect(await restores.exists(), isTrue);
+      expect(await restores.list().toList(), isEmpty);
+      expect(await sourceMarker.readAsBytes(), sourceMarkerBefore);
+      expect(await sourceDatabase.readAsBytes(), liveBefore);
+      expect(
+        await File(p.join(documentsDir.path, 'brief.txt')).readAsBytes(),
+        documentBefore,
+      );
+      expect((await service().validateBundle(backup.bundle)).isValid, isTrue);
+    },
+  );
+
+  test(
+    'restore post-marker failure deletes staging and leaves source and live unchanged',
+    () async {
+      final backup = await service().createBundle(
+        Directory(p.join(tempDir.path, 'backups')),
+      );
+      final sourceMarker = File(
+        p.join(backup.bundle.path, 'backup_complete.json'),
+      );
+      final sourceMarkerBefore = await sourceMarker.readAsBytes();
+      final liveBefore = await sourceDatabase.readAsBytes();
+      final documentBefore = await File(
+        p.join(documentsDir.path, 'brief.txt'),
+      ).readAsBytes();
+      final restores = Directory(p.join(tempDir.path, 'restores'));
+      final primary = StateError('primary restore post-marker failure');
+      final guarded = AtlasFullBackupService(
+        sourceDatabase: sourceDatabase,
+        appOwnedRoots: {'atlas_documents': documentsDir},
+        clock: () => DateTime.utc(2026, 7, 23),
+        random: Random(74),
+        snapshotStepHook: (step) async {
+          if (step == 'staging-completion-marker-copied') throw primary;
+        },
+      );
+
+      await expectLater(
+        guarded.restoreToStaging(backup.bundle, restores),
+        throwsA(same(primary)),
+      );
+
+      expect(await restores.list().toList(), isEmpty);
+      expect(await sourceMarker.readAsBytes(), sourceMarkerBefore);
+      expect(await sourceDatabase.readAsBytes(), liveBefore);
+      expect(
+        await File(p.join(documentsDir.path, 'brief.txt')).readAsBytes(),
+        documentBefore,
+      );
+      expect((await service().validateBundle(backup.bundle)).isValid, isTrue);
+    },
+  );
+
+  test(
+    'restore post-marker cleanup denial retains typed failure without mutating sources',
+    () async {
+      final backup = await service().createBundle(
+        Directory(p.join(tempDir.path, 'backups')),
+      );
+      final sourceBackupBefore = <String, List<int>>{};
+      await for (final entity in backup.bundle.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (entity is File) {
+          sourceBackupBefore[p.relative(
+            entity.path,
+            from: backup.bundle.path,
+          )] = await entity
+              .readAsBytes();
+        }
+      }
+      final liveBefore = await sourceDatabase.readAsBytes();
+      final ownedFile = File(p.join(documentsDir.path, 'brief.txt'));
+      final ownedBefore = await ownedFile.readAsBytes();
+      final restores = Directory(p.join(tempDir.path, 'restores-retained'));
+      final primary = StateError(
+        'primary retained restore post-marker failure',
+      );
+      final guarded = AtlasFullBackupService(
+        sourceDatabase: sourceDatabase,
+        appOwnedRoots: {'atlas_documents': documentsDir},
+        clock: () => DateTime.utc(2026, 7, 23),
+        random: Random(742),
+        snapshotStepHook: (step) async {
+          if (step == 'staging-completion-marker-copied') throw primary;
+        },
+        artifactLifecycle: RecoveryArtifactLifecycle(
+          clock: () => DateTime.utc(2026, 7, 23),
+          deleteArtifact: (_) async {
+            throw const FileSystemException('injected cleanup denial');
+          },
+        ),
+      );
+
+      await expectLater(
+        guarded.restoreToStaging(backup.bundle, restores),
+        throwsA(same(primary)),
+      );
+
+      final retained = (await restores.list().toList()).single as Directory;
+      final incompleteFile = File(
+        p.join(retained.path, recoveryArtifactLifecycleMarkerFile),
+      );
+      final failedFile = File(
+        p.join(retained.path, recoveryArtifactFailedMarkerFile),
+      );
+      final incomplete = await RecoveryArtifactMarker.read(incompleteFile);
+      final failed = await RecoveryArtifactMarker.read(failedFile);
+      expect(incomplete.kind, RecoveryArtifactKind.fullBackupStagingRestore);
+      expect(incomplete.state, RecoveryArtifactState.incomplete);
+      expect(failed.kind, RecoveryArtifactKind.fullBackupStagingRestore);
+      expect(failed.state, RecoveryArtifactState.failed);
+      expect(failed.operationId, incomplete.operationId);
+      expect(
+        await File(p.join(retained.path, 'backup_complete.json')).exists(),
+        isFalse,
+      );
+
+      final sourceBackupAfter = <String, List<int>>{};
+      await for (final entity in backup.bundle.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (entity is File) {
+          sourceBackupAfter[p.relative(entity.path, from: backup.bundle.path)] =
+              await entity.readAsBytes();
+        }
+      }
+      expect(sourceBackupAfter, sourceBackupBefore);
+      expect(await sourceDatabase.readAsBytes(), liveBefore);
+      expect(await ownedFile.readAsBytes(), ownedBefore);
+      expect((await service().validateBundle(backup.bundle)).isValid, isTrue);
+    },
+  );
 }
 
 Future<Map<String, dynamic>> _readManifest(Directory bundle) async {

@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:archive/archive_io.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:project_atlas/services/project_bundle_recovery_service.dart';
+import 'package:project_atlas/services/recovery_artifact_lifecycle.dart';
 
 void main() {
   test('stages a matching project bundle without changing its source', () async {
@@ -33,6 +35,12 @@ void main() {
         '${report.stagingPath}${Platform.pathSeparator}documents${Platform.pathSeparator}note.txt',
       ).readAsString(),
       'hello',
+    );
+    expect(
+      await File(
+        p.join(report.stagingPath, recoveryArtifactLifecycleMarkerFile),
+      ).exists(),
+      isFalse,
     );
     expect(await source.exists(), isTrue);
   });
@@ -472,6 +480,112 @@ void main() {
     );
     expect(await staging.exists(), isFalse);
   });
+
+  test('entry-staged failure deletes the partial staging artifact', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'atlas_bundle_entry_failure',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final source = File(p.join(root.path, 'source.zip'));
+    await _writeBundle(source, projectId: 'alpha', includeDocument: true);
+    final sourceBefore = await source.readAsBytes();
+    final staging = Directory(p.join(root.path, 'staging'));
+    final primary = StateError('primary entry-staged failure');
+
+    await expectLater(
+      ProjectBundleRecoveryService(
+        recoveryStepHook: (step) async {
+          if (step.startsWith('entry-staged:')) throw primary;
+        },
+      ).validateAndStage(source, staging),
+      throwsA(same(primary)),
+    );
+
+    expect(await staging.exists(), isTrue);
+    expect(await staging.list().toList(), isEmpty);
+    expect(await source.readAsBytes(), sourceBefore);
+  });
+
+  test('report-written failure deletes the completed partial stage', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'atlas_bundle_report_failure',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final source = File(p.join(root.path, 'source.zip'));
+    await _writeBundle(source, projectId: 'alpha', includeDocument: true);
+    final sourceBefore = await source.readAsBytes();
+    final staging = Directory(p.join(root.path, 'staging'));
+    final primary = StateError('primary report-written failure');
+
+    await expectLater(
+      ProjectBundleRecoveryService(
+        recoveryStepHook: (step) async {
+          if (step == 'report-written') throw primary;
+        },
+      ).validateAndStage(source, staging),
+      throwsA(same(primary)),
+    );
+
+    expect(await staging.list().toList(), isEmpty);
+    expect(await source.readAsBytes(), sourceBefore);
+  });
+
+  test(
+    'cleanup failure retains typed markers without report and preserves primary',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'atlas_bundle_cleanup_failure',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final source = File(p.join(root.path, 'source.zip'));
+      await _writeBundle(source, projectId: 'alpha', includeDocument: true);
+      final sourceBefore = await source.readAsBytes();
+      final staging = Directory(p.join(root.path, 'staging'));
+      final primary = StateError('primary report-written failure');
+
+      await expectLater(
+        ProjectBundleRecoveryService(
+          recoveryStepHook: (step) async {
+            if (step == 'report-written') throw primary;
+          },
+          artifactLifecycle: RecoveryArtifactLifecycle(
+            clock: () => DateTime.utc(2026, 7, 23),
+            deleteArtifact: (_) async {
+              throw const FileSystemException('injected cleanup denial');
+            },
+          ),
+        ).validateAndStage(source, staging),
+        throwsA(same(primary)),
+      );
+
+      final retained = (await staging.list().toList()).single as Directory;
+      final incompleteFile = File(
+        p.join(retained.path, recoveryArtifactLifecycleMarkerFile),
+      );
+      final failedFile = File(
+        p.join(retained.path, recoveryArtifactFailedMarkerFile),
+      );
+      final incomplete = await RecoveryArtifactMarker.read(incompleteFile);
+      final failed = await RecoveryArtifactMarker.read(failedFile);
+      expect(incomplete.kind, RecoveryArtifactKind.projectBundleStaging);
+      expect(incomplete.state, RecoveryArtifactState.incomplete);
+      expect(failed.kind, RecoveryArtifactKind.projectBundleStaging);
+      expect(failed.state, RecoveryArtifactState.failed);
+      expect(failed.operationId, incomplete.operationId);
+      final markerText =
+          '${await incompleteFile.readAsString()}'
+          '${await failedFile.readAsString()}';
+      expect(markerText, isNot(contains(primary.message)));
+      expect(markerText, isNot(contains('cleanup denial')));
+      expect(
+        await File(
+          p.join(retained.path, 'project_bundle_staged.json'),
+        ).exists(),
+        isFalse,
+      );
+      expect(await source.readAsBytes(), sourceBefore);
+    },
+  );
 
   test('accepts exact configured ZIP resource boundaries', () async {
     final root = await Directory.systemTemp.createTemp('atlas_bundle_exact');

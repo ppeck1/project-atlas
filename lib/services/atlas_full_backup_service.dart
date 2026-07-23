@@ -10,6 +10,7 @@ import 'package:sqlite3/sqlite3.dart';
 
 import '../db/db_open.dart';
 import '../shared/atlas_owned_file_snapshot_coordinator.dart';
+import 'recovery_artifact_lifecycle.dart';
 
 /// The on-disk contract for a full Atlas recovery bundle.
 const atlasFullBackupManifestSchema = 'project_atlas_full_backup_v1';
@@ -22,6 +23,8 @@ const _atlasFullBackupDescriptorKinds = {'sqlite_snapshot', 'app_owned_file'};
 const _atlasFullBackupReservedFiles = {
   _atlasFullBackupManifestFile,
   _atlasFullBackupCompletionFile,
+  recoveryArtifactLifecycleMarkerFile,
+  recoveryArtifactFailedMarkerFile,
 };
 
 enum AtlasFullBackupPhase {
@@ -152,6 +155,7 @@ class AtlasFullBackupService {
   final Random _random;
   final AtlasOwnedFileSnapshotCoordinator _snapshotCoordinator;
   final Future<void> Function(String step)? _snapshotStepHook;
+  final RecoveryArtifactLifecycle _artifactLifecycle;
 
   AtlasFullBackupService({
     required this.sourceDatabase,
@@ -160,11 +164,14 @@ class AtlasFullBackupService {
     Random? random,
     AtlasOwnedFileSnapshotCoordinator? snapshotCoordinator,
     Future<void> Function(String step)? snapshotStepHook,
+    RecoveryArtifactLifecycle? artifactLifecycle,
   }) : _clock = clock ?? DateTime.now,
        _random = random ?? Random.secure(),
        _snapshotCoordinator =
            snapshotCoordinator ?? AtlasOwnedFileSnapshotCoordinator.instance,
-       _snapshotStepHook = snapshotStepHook {
+       _snapshotStepHook = snapshotStepHook,
+       _artifactLifecycle =
+           artifactLifecycle ?? RecoveryArtifactLifecycle(clock: clock) {
     for (final name in appOwnedRoots.keys) {
       if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(name)) {
         throw ArgumentError.value(
@@ -228,137 +235,175 @@ class AtlasFullBackupService {
     );
 
     final name = _bundleName();
-    final bundle = Directory(p.join(destinationRoot.path, name));
-    if (await bundle.exists()) {
+    final targetBundle = Directory(p.join(destinationRoot.path, name));
+    if (await targetBundle.exists()) {
       throw AtlasFullBackupException(
-        'Refusing to overwrite an existing recovery bundle: ${bundle.path}',
+        'Refusing to overwrite an existing recovery bundle: '
+        '${targetBundle.path}',
       );
     }
-    await bundle.create(recursive: true);
-
-    final filesByRoot = <String, List<File>>{};
-    final roots = <Map<String, Object?>>[];
-    var totalFiles = 0;
-    for (final root in appOwnedRoots.entries) {
-      final files = await _listAppOwnedFiles(root.value);
-      filesByRoot[root.key] = files;
-      totalFiles += files.length;
-      roots.add({'name': root.key, 'sourcePresent': await root.value.exists()});
-    }
-
-    emit(
-      const AtlasFullBackupProgress(
-        phase: AtlasFullBackupPhase.snapshotting,
-        message: 'Creating a consistent SQLite snapshot…',
-      ),
+    final lifecycle = await _artifactLifecycle.begin(
+      targetBundle,
+      kind: RecoveryArtifactKind.fullBackup,
     );
-    final snapshot = File(
-      p.join(bundle.path, 'database', 'project_atlas.sqlite'),
-    );
-    await snapshot.parent.create(recursive: true);
-    await _createOnlineSnapshot(snapshot);
-    await _snapshotStepHook?.call('database-snapshotted');
+    final bundle = lifecycle.artifactDirectory;
+    try {
+      await _snapshotStepHook?.call('backup-artifact-created');
+      final filesByRoot = <String, List<File>>{};
+      final roots = <Map<String, Object?>>[];
+      var totalFiles = 0;
+      for (final root in appOwnedRoots.entries) {
+        final files = await _listAppOwnedFiles(root.value);
+        filesByRoot[root.key] = files;
+        totalFiles += files.length;
+        roots.add({
+          'name': root.key,
+          'sourcePresent': await root.value.exists(),
+        });
+      }
 
-    final copiedFiles = <Map<String, Object?>>[
-      await _fileManifestEntry(
-        bundle,
-        snapshot,
-        path: 'database/project_atlas.sqlite',
-        kind: 'sqlite_snapshot',
-      ),
-    ];
-    var copiedFileCount = 0;
-    emit(
-      AtlasFullBackupProgress(
-        phase: AtlasFullBackupPhase.copyingFiles,
-        message: totalFiles == 0
-            ? 'No app-owned files to copy.'
-            : 'Copying app-owned files…',
-        totalFiles: totalFiles,
-      ),
-    );
-    for (final root in appOwnedRoots.entries) {
-      copiedFiles.addAll(
-        await _copyRootIntoBundle(
-          bundle,
-          root.key,
-          root.value,
-          filesByRoot[root.key]!,
-          onFileCopied: () {
-            copiedFileCount++;
-            emit(
-              AtlasFullBackupProgress(
-                phase: AtlasFullBackupPhase.copyingFiles,
-                message: 'Copying app-owned files…',
-                copiedFiles: copiedFileCount,
-                totalFiles: totalFiles,
-              ),
-            );
-          },
+      emit(
+        const AtlasFullBackupProgress(
+          phase: AtlasFullBackupPhase.snapshotting,
+          message: 'Creating a consistent SQLite snapshot…',
         ),
       );
-    }
-    await _verifyOwnedFileInventoryStable(filesByRoot);
-    await _snapshotStepHook?.call('owned-files-copied');
-
-    emit(
-      AtlasFullBackupProgress(
-        phase: AtlasFullBackupPhase.writingManifest,
-        message: 'Recording checksums and backup inventory…',
-        copiedFiles: copiedFileCount,
-        totalFiles: totalFiles,
-      ),
-    );
-    final inventory = _readDatabaseInventory(snapshot);
-    final manifest = <String, Object?>{
-      'schema': atlasFullBackupManifestSchema,
-      'snapshotContract': atlasFullBackupSnapshotContract,
-      'createdAt': _clock().toUtc().toIso8601String(),
-      'databaseSnapshot': 'database/project_atlas.sqlite',
-      'databaseInventory': inventory,
-      'appOwnedRoots': roots,
-      'files': copiedFiles,
-    };
-    final manifestFile = File(p.join(bundle.path, 'manifest.json'));
-    await manifestFile.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(manifest),
-      flush: true,
-    );
-
-    emit(
-      AtlasFullBackupProgress(
-        phase: AtlasFullBackupPhase.validating,
-        message: 'Validating checksums and database integrity…',
-        copiedFiles: copiedFileCount,
-        totalFiles: totalFiles,
-      ),
-    );
-    final stagedValidation = await validateBundle(
-      bundle,
-      requireCompletion: false,
-    );
-    if (!stagedValidation.isValid) {
-      throw AtlasFullBackupException(
-        'The staged recovery bundle failed validation: '
-        '${stagedValidation.errors.join('; ')}',
+      final snapshot = File(
+        p.join(bundle.path, 'database', 'project_atlas.sqlite'),
       );
+      await snapshot.parent.create(recursive: true);
+      await _createOnlineSnapshot(snapshot);
+      await _snapshotStepHook?.call('database-snapshotted');
+
+      final copiedFiles = <Map<String, Object?>>[
+        await _fileManifestEntry(
+          bundle,
+          snapshot,
+          path: 'database/project_atlas.sqlite',
+          kind: 'sqlite_snapshot',
+        ),
+      ];
+      var copiedFileCount = 0;
+      emit(
+        AtlasFullBackupProgress(
+          phase: AtlasFullBackupPhase.copyingFiles,
+          message: totalFiles == 0
+              ? 'No app-owned files to copy.'
+              : 'Copying app-owned files…',
+          totalFiles: totalFiles,
+        ),
+      );
+      for (final root in appOwnedRoots.entries) {
+        copiedFiles.addAll(
+          await _copyRootIntoBundle(
+            bundle,
+            root.key,
+            root.value,
+            filesByRoot[root.key]!,
+            onFileCopied: () {
+              copiedFileCount++;
+              emit(
+                AtlasFullBackupProgress(
+                  phase: AtlasFullBackupPhase.copyingFiles,
+                  message: 'Copying app-owned files…',
+                  copiedFiles: copiedFileCount,
+                  totalFiles: totalFiles,
+                ),
+              );
+            },
+          ),
+        );
+      }
+      await _verifyOwnedFileInventoryStable(filesByRoot);
+      await _snapshotStepHook?.call('owned-files-copied');
+
+      emit(
+        AtlasFullBackupProgress(
+          phase: AtlasFullBackupPhase.writingManifest,
+          message: 'Recording checksums and backup inventory…',
+          copiedFiles: copiedFileCount,
+          totalFiles: totalFiles,
+        ),
+      );
+      final inventory = _readDatabaseInventory(snapshot);
+      final manifest = <String, Object?>{
+        'schema': atlasFullBackupManifestSchema,
+        'snapshotContract': atlasFullBackupSnapshotContract,
+        'createdAt': _clock().toUtc().toIso8601String(),
+        'databaseSnapshot': 'database/project_atlas.sqlite',
+        'databaseInventory': inventory,
+        'appOwnedRoots': roots,
+        'files': copiedFiles,
+      };
+      final manifestFile = File(p.join(bundle.path, 'manifest.json'));
+      await manifestFile.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(manifest),
+        flush: true,
+      );
+
+      emit(
+        AtlasFullBackupProgress(
+          phase: AtlasFullBackupPhase.validating,
+          message: 'Validating checksums and database integrity…',
+          copiedFiles: copiedFileCount,
+          totalFiles: totalFiles,
+        ),
+      );
+      final stagedValidation = await _validateBundle(
+        bundle,
+        requireCompletion: false,
+        incompleteLifecycle: lifecycle,
+      );
+      if (!stagedValidation.isValid) {
+        throw AtlasFullBackupException(
+          'The staged recovery bundle failed validation: '
+          '${stagedValidation.errors.join('; ')}',
+        );
+      }
+      await _snapshotStepHook?.call('before-completion-marker');
+      await _writeCompletionMarker(bundle, manifestFile);
+      await _snapshotStepHook?.call('completion-marker-written');
+      final completedValidation = await _validateBundle(
+        bundle,
+        requireCompletion: true,
+        incompleteLifecycle: lifecycle,
+      );
+      if (!completedValidation.isValid) {
+        throw AtlasFullBackupException(
+          'The completed recovery bundle failed validation: '
+          '${completedValidation.errors.join('; ')}',
+        );
+      }
+      emit(
+        AtlasFullBackupProgress(
+          phase: AtlasFullBackupPhase.complete,
+          message: 'Full backup validated: ${lifecycle.finalDirectory.path}',
+          copiedFiles: copiedFileCount,
+          totalFiles: totalFiles,
+        ),
+      );
+      await lifecycle.complete();
+      return AtlasFullBackupCreation(
+        bundle: lifecycle.finalDirectory,
+        manifest: manifest,
+      );
+    } on Object catch (error, stackTrace) {
+      await _removeCompletionMarkerWithoutMasking(lifecycle.artifactDirectory);
+      await lifecycle.fail();
+      Error.throwWithStackTrace(error, stackTrace);
     }
-    await _writeCompletionMarker(bundle, manifestFile);
-    emit(
-      AtlasFullBackupProgress(
-        phase: AtlasFullBackupPhase.complete,
-        message: 'Full backup validated: ${bundle.path}',
-        copiedFiles: copiedFileCount,
-        totalFiles: totalFiles,
-      ),
-    );
-    return AtlasFullBackupCreation(bundle: bundle, manifest: manifest);
   }
 
   /// Validates checksums, SQLite integrity, foreign keys, and table inventory.
   Future<AtlasFullBackupValidationReport> validateBundle(
     Directory bundle, {
     bool requireCompletion = true,
+  }) => _validateBundle(bundle, requireCompletion: requireCompletion);
+
+  Future<AtlasFullBackupValidationReport> _validateBundle(
+    Directory bundle, {
+    required bool requireCompletion,
+    RecoveryArtifactOperation? incompleteLifecycle,
   }) async {
     final errors = <String>[];
     Map<String, Object?>? manifest;
@@ -392,6 +437,25 @@ class AtlasFullBackupService {
       await _validateCompletionMarker(bundle, manifestFile, errors);
     }
     final actualFiles = await _enumerateBundleFiles(bundle, errors);
+    if (incompleteLifecycle != null) {
+      final marker = actualFiles[recoveryArtifactLifecycleMarkerFile];
+      if (marker == null) {
+        errors.add('The recovery artifact lifecycle marker is missing.');
+      } else {
+        try {
+          final decoded = await RecoveryArtifactMarker.read(marker);
+          if (decoded.kind != incompleteLifecycle.kind ||
+              decoded.state != RecoveryArtifactState.incomplete ||
+              decoded.operationId != incompleteLifecycle.operationId ||
+              decoded.createdAt != incompleteLifecycle.createdAt ||
+              decoded.updatedAt != incompleteLifecycle.createdAt) {
+            errors.add('The recovery artifact lifecycle marker is invalid.');
+          }
+        } on Object {
+          errors.add('The recovery artifact lifecycle marker is invalid.');
+        }
+      }
+    }
     final declaredPaths = <String>{};
     final sqliteSnapshotPaths = <String>[];
     final entries = manifest['files'];
@@ -512,6 +576,9 @@ class AtlasFullBackupService {
       _atlasFullBackupManifestFile,
       if (actualFiles.containsKey(_atlasFullBackupCompletionFile))
         _atlasFullBackupCompletionFile,
+      if (incompleteLifecycle != null &&
+          actualFiles.containsKey(recoveryArtifactLifecycleMarkerFile))
+        recoveryArtifactLifecycleMarkerFile,
     };
     for (final path in actualFiles.keys) {
       if (!expectedFiles.contains(path)) {
@@ -558,43 +625,70 @@ class AtlasFullBackupService {
         'Refusing to overwrite an existing staging restore: ${restored.path}',
       );
     }
-    await restored.create(recursive: true);
-    await File(
-      p.join(bundle.path, 'manifest.json'),
-    ).copy(p.join(restored.path, 'manifest.json'));
-    for (final rawEntry in entries) {
-      final entry = rawEntry as Map;
-      final relativePath = entry['path'] as String;
-      final source = File(p.joinAll([bundle.path, ...p.split(relativePath)]));
-      final target = File(p.joinAll([restored.path, ...p.split(relativePath)]));
-      await target.parent.create(recursive: true);
-      await source.copy(target.path);
-    }
-
-    final stagingValidation = await validateBundle(
+    final lifecycle = await _artifactLifecycle.begin(
       restored,
-      requireCompletion: false,
+      kind: RecoveryArtifactKind.fullBackupStagingRestore,
     );
-    if (!stagingValidation.isValid) {
-      throw AtlasFullBackupException(
-        'The staging restore failed validation: '
-        '${stagingValidation.errors.join('; ')}',
+    final staging = lifecycle.artifactDirectory;
+    try {
+      await _snapshotStepHook?.call('staging-artifact-created');
+      await File(
+        p.join(bundle.path, 'manifest.json'),
+      ).copy(p.join(staging.path, 'manifest.json'));
+      for (final rawEntry in entries) {
+        final entry = rawEntry as Map;
+        final relativePath = entry['path'] as String;
+        final source = File(p.joinAll([bundle.path, ...p.split(relativePath)]));
+        final target = File(
+          p.joinAll([staging.path, ...p.split(relativePath)]),
+        );
+        await target.parent.create(recursive: true);
+        await source.copy(target.path);
+        await _snapshotStepHook?.call('staging-entry-copied:$relativePath');
+      }
+
+      final stagingValidation = await _validateBundle(
+        staging,
+        requireCompletion: false,
+        incompleteLifecycle: lifecycle,
       );
-    }
-    await File(
-      p.join(bundle.path, _atlasFullBackupCompletionFile),
-    ).copy(p.join(restored.path, _atlasFullBackupCompletionFile));
-    final completedValidation = await validateBundle(restored);
-    if (!completedValidation.isValid) {
-      throw AtlasFullBackupException(
-        'The completed staging restore failed validation: '
-        '${completedValidation.errors.join('; ')}',
+      if (!stagingValidation.isValid) {
+        throw AtlasFullBackupException(
+          'The staging restore failed validation: '
+          '${stagingValidation.errors.join('; ')}',
+        );
+      }
+      await _snapshotStepHook?.call('before-staging-completion-marker');
+      await File(
+        p.join(bundle.path, _atlasFullBackupCompletionFile),
+      ).copy(p.join(staging.path, _atlasFullBackupCompletionFile));
+      await _snapshotStepHook?.call('staging-completion-marker-copied');
+      final completedValidation = await _validateBundle(
+        staging,
+        requireCompletion: true,
+        incompleteLifecycle: lifecycle,
       );
+      if (!completedValidation.isValid) {
+        throw AtlasFullBackupException(
+          'The completed staging restore failed validation: '
+          '${completedValidation.errors.join('; ')}',
+        );
+      }
+      await lifecycle.complete();
+      final promotedValidation = AtlasFullBackupValidationReport(
+        bundle: lifecycle.finalDirectory,
+        errors: completedValidation.errors,
+        manifest: completedValidation.manifest,
+      );
+      return AtlasFullBackupStagingRestore(
+        bundle: lifecycle.finalDirectory,
+        validation: promotedValidation,
+      );
+    } on Object catch (error, stackTrace) {
+      await _removeCompletionMarkerWithoutMasking(lifecycle.artifactDirectory);
+      await lifecycle.fail();
+      Error.throwWithStackTrace(error, stackTrace);
     }
-    return AtlasFullBackupStagingRestore(
-      bundle: restored,
-      validation: completedValidation,
-    );
   }
 
   /// Performs a non-destructive recovery acceptance check.
@@ -721,6 +815,15 @@ class AtlasFullBackupService {
       const JsonEncoder.withIndent('  ').convert(payload),
       flush: true,
     );
+  }
+
+  Future<void> _removeCompletionMarkerWithoutMasking(Directory bundle) async {
+    try {
+      final marker = File(p.join(bundle.path, _atlasFullBackupCompletionFile));
+      if (await marker.exists()) await marker.delete();
+    } on Object {
+      // Lifecycle failure handling must preserve the initiating exception.
+    }
   }
 
   Future<void> _validateCompletionMarker(

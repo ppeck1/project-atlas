@@ -1,6 +1,6 @@
 # Project Atlas follow-up matrix
 
-Status date: 2026-07-22
+Status date: 2026-07-23
 Authority: canonical live follow-up ledger for the 2026-07-21 second-pass audit  
 Source: [preserved audit artifact](audits/PROJECT_ATLAS_SECOND_PASS_AUDIT_2026-07-21.txt)
 
@@ -17,8 +17,6 @@ reproduction or design disposition before implementation.
 ## Immediate operating constraints
 
 - Do not record formal Capsule Edit Truth v1 acceptance until WP6 completes.
-- Keep the A-08/A-09 package-specific attended single-worker constraint until
-  this evidence-only closure PR merges; retire it only after that merge.
 
 ## Work packages and order
 
@@ -43,7 +41,9 @@ retired. A-11 closed after PR #39 merged as `9d753cb` and exact-main proof
 passed, so WP3 is closed. A-06, A-07, and A-10 closed after PR #41 merged as
 `393ab6b` and exact-main proof passed. A-08 and A-09 closed after PR #43 merged
 as `13ff42e`, PR #44 merged the residual duplicate-ingress correction as
-`f73c081`, and hosted plus exact-main proof passed, so WP4 is closed.
+`f73c081`, and hosted plus exact-main proof passed. PR #45 merged the canonical
+closure evidence as `ff03b34`, so WP4 is closed and its package-specific
+attended single-worker constraint is retired.
 
 R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
 post-merge proof passed. They provide exact full-backup directory inventory
@@ -65,7 +65,7 @@ and 30 Open findings.
 | SPA-20260721-R-08 | P1 | Accepted | Closed | WP2 | Project recovery decodes unbounded ZIP content in memory. | Codex | PR #37 | File-backed two-pass recovery enforces pre-decode source/directory/entry limits plus actual compressed, per-entry, metadata, and aggregate expansion bounds with forged-header proof. Merged as `9d0e792`; exact-main post-merge proof passed. |
 | SPA-20260721-R-09 | P1 | Accepted | Closed | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Codex | PR #37 | Manifest v2 exact path/kind/bytes/SHA-256 inventory and second-pass rebinding reject missing, extra, modified, malformed, wrong-kind, and source-swapped payloads. Merged as `9d0e792`; exact-main post-merge proof passed. |
 | SPA-20260721-R-10 | P1 | Accepted | Closed | WP2 | Archive path validation is not canonical Windows containment validation. | Codex | PR #37 | Platform-independent Windows path, alias, ancestor, and containment checks reject traversal, drive, ADS, device, control, invalid-character, trailing-dot/space, and preexisting-stage inputs. Merged as `9d0e792`; exact-main post-merge proof passed. |
-| SPA-20260721-R-11 | P2 | Needs verification | Open | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Unassigned | TBD | `.incomplete` lifecycle and bounded cleanup/quarantine tests. |
+| SPA-20260721-R-11 | P2 | Accepted | In progress | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Codex | `codex/r11-artifact-lifecycle` | Candidate uses typed incomplete/failed sibling paths, operation-owned markers, serialized terminal promotion/failure, and bounded persisted cleanup with collision, fault, concurrency, non-directory refusal, budget, and mutation proof. Keep open until merge and exact-main verification. |
 | SPA-20260721-R-12 | P2 | Needs verification | Open | WP2 | Recovery artifacts have no retention policy. | Unassigned | TBD | Local previewed retention preserves newest safety backup and active plan. |
 | SPA-20260721-R-13 | P2 | Needs verification | Open | WP2 | Portable export builds the full archive in memory. | Unassigned | TBD | Streaming/isolate export with progress, cancellation, and bounds. |
 | SPA-20260721-R-14 | P2 | Needs verification | Open | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Unassigned | TBD | Async/isolate extraction with source and expanded-size limits. |
@@ -109,11 +109,33 @@ and 30 Open findings.
 
 ## Progress evidence
 
+### WP2 R-11 implementation candidate — 2026-07-23
+
+R-11 is accepted and in progress on the current branch. It is not closed
+before hosted merge and exact-main proof.
+
+- Full backups, full-backup staging restores, and project-bundle staging use
+  typed `.atlas-incomplete-<operationId>` working paths and promote only after
+  ordinary completion evidence and validation succeed.
+- Failure is terminal and serialized. Owned failures are quarantined under
+  typed failed paths; ownership/publication collisions retain the typed
+  incomplete path and never overwrite evidence.
+- Persisted cleanup is bounded by direct-child scan, candidate, entry, byte,
+  and minimum-age limits; links, malformed ownership, over-budget trees, and
+  mutations between validation and deletion are refused.
+- Current focused lifecycle/full-backup/project-recovery suite: 60 tests
+  passed.
+- Full Flutter suite: 595 passed with 1 intentional skip; static analysis is
+  clean; Python policy/maintenance suite passed 30/30; Windows release build
+  passed.
+- Hosted and exact-main results remain pending.
+
 ### WP4 A-08/A-09 closure — 2026-07-22
 
 PR #43 merged as `13ff42e`; PR #44 merged the residual A-09
 duplicate-ingress correction as `f73c081`. A-08 and A-09 are closed after
 hosted and exact-main post-merge proof passed on clean `main` at `f73c081`.
+PR #45 merged the canonical closure evidence as `ff03b34`.
 
 - Schema v27 creates verified project-scoped ledger checkpoints only after a
   complete legacy-chain audit. Accepted writes append and advance the
@@ -159,9 +181,9 @@ clean `main`.
 - PR #42 scopes a two-minute test bound to the four intentional
   two-connection proposal contention proofs whose SQLite busy wait is 30
   seconds; production behavior and assertions are unchanged.
-- The package-specific attended single-worker constraint is retired only after
-  this exact-main proof. A-08 and A-09 subsequently closed under the evidence
-  above, so WP4 is closed.
+- A-08 and A-09 subsequently closed under the evidence above. PR #45 merged
+  their canonical closure, so WP4 is closed and its package-specific attended
+  single-worker constraint is retired.
 
 ### WP3 A-11 closure — 2026-07-22
 
