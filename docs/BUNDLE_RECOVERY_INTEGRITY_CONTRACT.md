@@ -1,11 +1,12 @@
 # Bundle recovery integrity contract
 
 Status: R-07–R-10 implemented by PR #37 (`9d0e792`) and verified on exact
-merged `main`; R-11 is an unmerged implementation candidate.
+merged `main`; R-11 is implemented by PR #46 (`fce3769`) and verified on
+exact merged `main`.
 Date: 2026-07-23
 
-This contract defines the merged R-07 through R-10 boundary and the pending
-R-11 incomplete-artifact lifecycle. Full backups are directory trees with a
+This contract defines the merged R-07 through R-11 boundary, including the
+incomplete-artifact lifecycle. Full backups are directory trees with a
 completion marker; project bundles are ZIP archives. They retain separate
 schemas and validators because their trust roots and materialization rules
 differ.
@@ -73,9 +74,9 @@ The second pass repeats source/directory/path limits and rebinds every written
 byte to the already verified descriptor. The source ZIP and live Atlas state
 are never modified.
 
-## Incomplete-artifact lifecycle candidate
+## Incomplete-artifact lifecycle
 
-The R-11 implementation candidate creates full backups, full-backup staging
+The R-11 implementation creates full backups, full-backup staging
 restores, and project-bundle staging trees under typed
 `.atlas-incomplete-<operationId>` sibling names. A successful operation
 promotes that working tree to its absent final path while its ownership marker
@@ -98,14 +99,23 @@ links and invalid or mismatched ownership markers, enforces candidate,
 entry, byte, and minimum-age limits, and rechecks an artifact snapshot before
 deletion. Changed or over-budget trees remain quarantined.
 
+Directory-chain validation checks both lexical and resolved components. On
+Windows it rejects native reparse-point attributes while accepting safe 8.3
+spellings of the same directory. Lifecycle markers must be no-follow regular
+files; linked markers are refused. An operation ID is registered as active
+before its working path is published and is released on every begin failure,
+so cleanup cannot race an operation into existence or retain a leaked active
+registration.
+
 Public full-backup validation rejects all lifecycle files. Only the creating
 operation may temporarily admit its exact marker while validating its own
 working tree. If ordinary completion evidence was written before a later
 failure, the integration attempts to remove that evidence; the typed failed or
 incomplete path remains authoritative if the host denies removal.
 
-This candidate remains open until hosted merge and exact-`main` proof are
-recorded in the canonical follow-up matrix.
+PR #46 hosted CI run 144, exact-main push run 145, and local exact-`main`
+proof at `fce3769` passed. The canonical follow-up matrix records the closure
+evidence.
 
 ## Threat boundary and exclusions
 
@@ -113,6 +123,6 @@ SHA-256 detects inconsistent or corrupted bundles; it is not authentication
 against malicious same-user code that can rewrite both payload and manifest.
 Nested Git ZIPs remain opaque hashed payloads and are not recursively expanded.
 
-R-11 through R-14 remain open pending their individual closure gates. The R-11
-candidate above does not claim recovery-artifact retention, streaming export,
-or bounded DOCX/HTML extraction. WP2 therefore remains open.
+R-12 through R-14 remain open pending their individual closure gates. The
+R-11 lifecycle above does not claim recovery-artifact retention, streaming
+export, or bounded DOCX/HTML extraction. WP2 therefore remains open.

@@ -17,6 +17,8 @@ reproduction or design disposition before implementation.
 ## Immediate operating constraints
 
 - Do not record formal Capsule Edit Truth v1 acceptance until WP6 completes.
+- Keep the WP2 follow-up queue attended and single-worker until R-12 through
+  R-14 each have hosted merge and exact-main proof.
 
 ## Work packages and order
 
@@ -47,9 +49,10 @@ attended single-worker constraint is retired.
 
 R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
 post-merge proof passed. They provide exact full-backup directory inventory
-and bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11
-through R-14 remain open, so WP2 is not closed. The ledger contains 21 Closed
-and 30 Open findings.
+and bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11 closed
+after PR #46 merged as `fce3769`, hosted PR CI run 144 and exact-main push run
+145 passed, and local exact-main proof passed. R-12 through R-14 remain open,
+so WP2 is not closed. The ledger contains 22 Closed and 29 Open findings.
 
 ## Finding ledger
 
@@ -65,7 +68,7 @@ and 30 Open findings.
 | SPA-20260721-R-08 | P1 | Accepted | Closed | WP2 | Project recovery decodes unbounded ZIP content in memory. | Codex | PR #37 | File-backed two-pass recovery enforces pre-decode source/directory/entry limits plus actual compressed, per-entry, metadata, and aggregate expansion bounds with forged-header proof. Merged as `9d0e792`; exact-main post-merge proof passed. |
 | SPA-20260721-R-09 | P1 | Accepted | Closed | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Codex | PR #37 | Manifest v2 exact path/kind/bytes/SHA-256 inventory and second-pass rebinding reject missing, extra, modified, malformed, wrong-kind, and source-swapped payloads. Merged as `9d0e792`; exact-main post-merge proof passed. |
 | SPA-20260721-R-10 | P1 | Accepted | Closed | WP2 | Archive path validation is not canonical Windows containment validation. | Codex | PR #37 | Platform-independent Windows path, alias, ancestor, and containment checks reject traversal, drive, ADS, device, control, invalid-character, trailing-dot/space, and preexisting-stage inputs. Merged as `9d0e792`; exact-main post-merge proof passed. |
-| SPA-20260721-R-11 | P2 | Accepted | In progress | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Codex | `codex/r11-artifact-lifecycle` | Candidate uses typed incomplete/failed sibling paths, operation-owned markers, serialized terminal promotion/failure, and bounded persisted cleanup with collision, fault, concurrency, non-directory refusal, budget, and mutation proof. Keep open until merge and exact-main verification. |
+| SPA-20260721-R-11 | P2 | Accepted | Closed | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Codex | PR #46 | Typed incomplete/failed sibling paths, operation-owned no-follow markers, serialized terminal promotion/failure, bounded persisted cleanup, Windows reparse/8.3 validation, and active-operation race handling merged as `fce3769`; hosted PR CI run 144, exact-main push run 145, and local exact-main proof passed. |
 | SPA-20260721-R-12 | P2 | Needs verification | Open | WP2 | Recovery artifacts have no retention policy. | Unassigned | TBD | Local previewed retention preserves newest safety backup and active plan. |
 | SPA-20260721-R-13 | P2 | Needs verification | Open | WP2 | Portable export builds the full archive in memory. | Unassigned | TBD | Streaming/isolate export with progress, cancellation, and bounds. |
 | SPA-20260721-R-14 | P2 | Needs verification | Open | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Unassigned | TBD | Async/isolate extraction with source and expanded-size limits. |
@@ -109,10 +112,10 @@ and 30 Open findings.
 
 ## Progress evidence
 
-### WP2 R-11 implementation candidate — 2026-07-23
+### WP2 R-11 closure — 2026-07-23
 
-R-11 is accepted and in progress on the current branch. It is not closed
-before hosted merge and exact-main proof.
+PR #46 merged as `fce3769`. R-11 is closed after hosted CI and exact-main
+proof passed.
 
 - Full backups, full-backup staging restores, and project-bundle staging use
   typed `.atlas-incomplete-<operationId>` working paths and promote only after
@@ -123,12 +126,19 @@ before hosted merge and exact-main proof.
 - Persisted cleanup is bounded by direct-child scan, candidate, entry, byte,
   and minimum-age limits; links, malformed ownership, over-budget trees, and
   mutations between validation and deletion are refused.
-- Current focused lifecycle/full-backup/project-recovery suite: 60 tests
-  passed.
-- Full Flutter suite: 595 passed with 1 intentional skip; static analysis is
-  clean; Python policy/maintenance suite passed 30/30; Windows release build
-  passed.
-- Hosted and exact-main results remain pending.
+- Windows directory validation rejects reparse points without misclassifying
+  safe 8.3 aliases; markers are no-follow regular files; active operation IDs
+  are registered before publication and released on every begin failure.
+- Hosted run 143 exposed the Windows 8.3 alias regression. Commit `6849a2d`
+  corrected it, hosted PR CI run 144 passed all jobs, and exact-main push run
+  145 repeated the hosted proof on `fce3769`.
+- Exact-main focused lifecycle/full-backup/project-recovery suite: 63/63.
+- Exact-main full Flutter suite: 598 passed with 1 intentional skip.
+- Exact-main static analysis: clean.
+- Exact-main Python policy/maintenance suite: 30/30.
+- Exact-main Windows release build: passed.
+- R-12 through R-14 remain open, so WP2 remains open and its attended
+  single-worker follow-up constraint remains in force.
 
 ### WP4 A-08/A-09 closure — 2026-07-22
 
@@ -225,7 +235,7 @@ full post-merge proof passed on exact current `main`.
 - Windows release build: passed.
 - Hosted PR #37 CI passed, including generated-code verification, analysis,
   full tests, Windows release build, seeded MCP fixture, and gateway smoke.
-- R-11 through R-14 remain open, so WP2 remains open.
+- R-12 through R-14 remain open, so WP2 remains open.
 
 ### WP4 A-03/A-04 closure — 2026-07-21
 
