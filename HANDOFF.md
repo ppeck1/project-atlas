@@ -110,6 +110,21 @@ been reviewed. Keep the WP2 queue attended and single-worker throughout:
    extraction with source and expanded-size limits. Obtain hosted merge and
    exact-main proof before retiring the WP2 constraint.
 
+### Hosted full-suite serialization
+
+After the handoff-only PR #48 merged, exact-main Actions run `30036321757`
+reproduced the hosted Windows queue-isolate timing problem on both attempts.
+The failures were confined to `llm_queue_lease_integrity_test.dart`: 30-second
+timeouts, Drift channel closure, and locked per-test temporary directories.
+The unchanged PR attempt had already passed the full suite, and the focused
+queue-lease suite had passed 13/13 with `--concurrency=1`.
+
+The CI full-suite command is therefore serialized with
+`flutter test --concurrency=1`. This is test-runner hardening only: it changes
+no production behavior and does not reopen A-01, A-02, or A-05. Before
+starting R-12, verify that the serialization PR and its exact-main follow-up
+run passed, and keep the WP2 attended single-worker constraint in force.
+
 ### Closed bundle-integrity package
 
 R-07 through R-10 closed after PR #37 merged as `9d0e792`, exact-main

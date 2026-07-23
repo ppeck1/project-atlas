@@ -46,7 +46,11 @@ jobs:
         run: flutter test test\atlas_mcp_stdio_server_test.dart test\atlas_mcp_adapter_test.dart --concurrency=1
 
       - name: Test
-        run: flutter test
+        # The queue lease suite uses background Drift isolates and real
+        # two-connection SQLite contention. Serial execution prevents hosted
+        # Windows runners from exhausting those 30-second tests while still
+        # exercising the full suite.
+        run: flutter test --concurrency=1
 
       - name: Build Windows release
         run: flutter build windows --release
