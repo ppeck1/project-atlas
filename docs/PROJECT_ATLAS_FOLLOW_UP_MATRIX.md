@@ -51,8 +51,10 @@ R-07 through R-10 closed after PR #37 merged as `9d0e792` and exact-main
 post-merge proof passed. They provide exact full-backup directory inventory
 and bounded, checksummed, Windows-safe project-bundle v2 recovery. R-11 closed
 after PR #46 merged as `fce3769`, hosted PR CI run 144 and exact-main push run
-145 passed, and local exact-main proof passed. R-12 through R-14 remain open,
-so WP2 is not closed. The ledger contains 22 Closed and 29 Open findings.
+145 passed, and local exact-main proof passed. PR #47 merged the canonical
+closure evidence as `f228b62`, and exact-closure-main push run 147 passed all
+jobs. R-12 through R-14 remain open, so WP2 is not closed. The ledger contains
+22 Closed and 29 Open findings.
 
 ## Finding ledger
 
@@ -68,7 +70,7 @@ so WP2 is not closed. The ledger contains 22 Closed and 29 Open findings.
 | SPA-20260721-R-08 | P1 | Accepted | Closed | WP2 | Project recovery decodes unbounded ZIP content in memory. | Codex | PR #37 | File-backed two-pass recovery enforces pre-decode source/directory/entry limits plus actual compressed, per-entry, metadata, and aggregate expansion bounds with forged-header proof. Merged as `9d0e792`; exact-main post-merge proof passed. |
 | SPA-20260721-R-09 | P1 | Accepted | Closed | WP2 | Project bundle integrity lacks per-file cryptographic proof. | Codex | PR #37 | Manifest v2 exact path/kind/bytes/SHA-256 inventory and second-pass rebinding reject missing, extra, modified, malformed, wrong-kind, and source-swapped payloads. Merged as `9d0e792`; exact-main post-merge proof passed. |
 | SPA-20260721-R-10 | P1 | Accepted | Closed | WP2 | Archive path validation is not canonical Windows containment validation. | Codex | PR #37 | Platform-independent Windows path, alias, ancestor, and containment checks reject traversal, drive, ADS, device, control, invalid-character, trailing-dot/space, and preexisting-stage inputs. Merged as `9d0e792`; exact-main post-merge proof passed. |
-| SPA-20260721-R-11 | P2 | Accepted | Closed | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Codex | PR #46 | Typed incomplete/failed sibling paths, operation-owned no-follow markers, serialized terminal promotion/failure, bounded persisted cleanup, Windows reparse/8.3 validation, and active-operation race handling merged as `fce3769`; hosted PR CI run 144, exact-main push run 145, and local exact-main proof passed. |
+| SPA-20260721-R-11 | P2 | Accepted | Closed | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Codex | PR #46/#47 | Typed incomplete/failed sibling paths, operation-owned no-follow markers, serialized terminal promotion/failure, bounded persisted cleanup, Windows reparse/8.3 validation, and active-operation race handling merged as `fce3769`; hosted PR CI run 144, exact-implementation-main push run 145, local exact-main proof, canonical closure PR #47 at `f228b62`, and exact-closure-main push run 147 passed. |
 | SPA-20260721-R-12 | P2 | Needs verification | Open | WP2 | Recovery artifacts have no retention policy. | Unassigned | TBD | Local previewed retention preserves newest safety backup and active plan. |
 | SPA-20260721-R-13 | P2 | Needs verification | Open | WP2 | Portable export builds the full archive in memory. | Unassigned | TBD | Streaming/isolate export with progress, cancellation, and bounds. |
 | SPA-20260721-R-14 | P2 | Needs verification | Open | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Unassigned | TBD | Async/isolate extraction with source and expanded-size limits. |
@@ -114,8 +116,8 @@ so WP2 is not closed. The ledger contains 22 Closed and 29 Open findings.
 
 ### WP2 R-11 closure — 2026-07-23
 
-PR #46 merged as `fce3769`. R-11 is closed after hosted CI and exact-main
-proof passed.
+PR #46 merged as `fce3769`, and PR #47 merged the canonical closure evidence
+as `f228b62`. R-11 is closed after hosted CI and exact-main proof passed.
 
 - Full backups, full-backup staging restores, and project-bundle staging use
   typed `.atlas-incomplete-<operationId>` working paths and promote only after
@@ -132,6 +134,12 @@ proof passed.
 - Hosted run 143 exposed the Windows 8.3 alias regression. Commit `6849a2d`
   corrected it, hosted PR CI run 144 passed all jobs, and exact-main push run
   145 repeated the hosted proof on `fce3769`.
+- Closure PR CI run 146 passed on retry after an isolated local 13/13
+  queue-lease run confirmed the first attempt's hosted parallel SQLite
+  contention was transient; no production change was required.
+- Exact-closure-main push run 147 passed generation, policy, analysis, MCP
+  adapter, full tests, Windows release, seeded fixture, and gateway smoke on
+  `f228b62`.
 - Exact-main focused lifecycle/full-backup/project-recovery suite: 63/63.
 - Exact-main full Flutter suite: 598 passed with 1 intentional skip.
 - Exact-main static analysis: clean.
