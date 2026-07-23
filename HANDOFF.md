@@ -12,13 +12,15 @@ for the guarded worker is recorded in the
 The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
-Recovery findings R-01 through R-10 and agent-integrity findings A-01 through
-A-11 are closed. R-11 through R-14 remain open, so WP2 is not fully closed.
+Recovery findings R-01 through R-11 and agent-integrity findings A-01 through
+A-11 are closed. R-12 through R-14 remain open, so WP2 is not fully closed.
 The attended single-worker operating constraint was retired only after
 A-03/A-04 merged and their post-merge proof passed. A-11's exact-main proof
 also passed, so WP3 is closed. A-08/A-09 exact-main proof passed, PR #45
 merged the canonical closure evidence, and WP4 is closed. The package-specific
-attended single-worker constraint is retired.
+attended single-worker constraint for WP4 is retired. Keep the remaining WP2
+follow-up queue attended and single-worker until R-12 through R-14 each have
+hosted merge and exact-main proof.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
@@ -28,11 +30,11 @@ Last updated: 2026-07-23.
 
 ## Audit resume checkpoint
 
-Start from exact implementation `main` at `ff03b34` (`Close A08 A09 integrity
-findings (#45)`). The working tree was clean and synchronized with
+Start from exact implementation `main` at `fce3769` (`Harden recovery artifact
+lifecycle (#46)`). The working tree was clean and synchronized with
 `origin/main` when this handoff was written.
 
-The canonical matrix contains 51 findings: 21 Closed and 30 Open. The
+The canonical matrix contains 51 findings: 22 Closed and 29 Open. The
 completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
@@ -68,15 +70,19 @@ completed integrity sequence is:
 - PR #44 / `f73c081`: residual fail-closed fix and exact-main A-08/A-09 proof.
 - PR #45 / `ff03b34`: A-08/A-09 canonical closure evidence, WP4 completion,
   and retirement of the package-specific attended single-worker constraint.
+- PR #46 / `fce3769`: R-11 typed incomplete/failed artifact lifecycle,
+  Windows alias and reparse-point hardening, no-follow marker validation,
+  active-operation race closure, hosted CI, and exact-main proof.
 
-Current verification baseline on merged `main`:
+Current verification baseline on merged `main` at `fce3769`:
 
-- exact-main A-08/A-09 focused proof: passed;
-- full Flutter suite: 563 passed with 1 intentional skip;
+- focused recovery-artifact lifecycle and integration suite: 63/63;
+- full Flutter suite: 598 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
-- hosted CI, including seeded isolated MCP smoke: passed.
+- hosted PR CI run 144 and exact-main push run 145, including seeded isolated
+  MCP smoke: passed.
 
 ### Closed bundle-integrity package
 
@@ -91,21 +97,25 @@ guidance; `project_bundle.json` remains schema v1.
 
 The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
-R-11 through R-14 remain open, so WP2 is not closed. A-08 and A-09 are closed,
+R-12 through R-14 remain open, so WP2 is not closed. A-08 and A-09 are closed,
 so WP4 is complete.
 
-### Active R-11 candidate
+### Closed R-11 artifact-lifecycle package
 
-The current branch accepts R-11 and implements typed incomplete/failed sibling
+PR #46 merged R-11 as `fce3769`. It implements typed incomplete/failed sibling
 paths, operation-owned lifecycle markers, serialized terminal transitions,
 and bounded persisted cleanup for full backups, full-backup staging restores,
-and project-bundle staging. Its focused lifecycle and integration suite passes
-60 tests. The current branch also passes the full Flutter suite (595 passed,
-1 intentional skip), static analysis, 30 Python policy/maintenance tests, and
-the Windows release build. Do not mark R-11 closed until this candidate
-merges, hosted CI passes, and the same proof is rerun on exact `main`.
+and project-bundle staging. Windows validation rejects reparse points without
+misclassifying safe 8.3 aliases, lifecycle markers are no-follow regular
+files, and active operation IDs are registered before publication and released
+on every begin failure. Hosted PR CI run 144 and exact-main push run 145
+passed. Local exact-main proof at `fce3769` passed the focused suite (63/63),
+full Flutter suite (598 passed, 1 intentional skip), static analysis, 30
+Python policy/maintenance tests, and the Windows release build. R-11 is
+closed.
 
-Post-merge proof on exact implementation `main` at `9d0e792`:
+Earlier R-07 through R-10 post-merge proof on exact implementation `main` at
+`9d0e792`:
 
 - focused full-backup and hostile project-recovery suite: 28/28;
 - production project-export suite, including export-to-staging recovery: 5/5;
@@ -115,7 +125,10 @@ Post-merge proof on exact implementation `main` at `9d0e792`:
 - Windows release build: passed; and
 - hosted PR #37 CI, including seeded isolated MCP smoke: passed.
 
-The lifecycle and hash boundary are specified in the
+The recovery lifecycle and hash boundary are specified in the
+[`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
+
+The proposal acceptance boundary is specified in the
 [`proposal acceptance integrity contract`](docs/PROPOSAL_ACCEPTANCE_INTEGRITY_CONTRACT.md).
 
 Post-merge proof for the closed A-03/A-04 package on `a3c88f6`:
