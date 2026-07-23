@@ -86,5 +86,6 @@ ledger ancestors, snapshot shape and ownership, stale truth/tag cross-races,
 assignment/name/color changes, absent versus empty tags, legacy inputs,
 dangling assignments, case ambiguity, deleted projects, crash rollback,
 approved replay, MCP creation, enrichment, and two-connection same-base
-contention. The A-08/A-09 implementation extends this boundary; canonical
-closure remains gated on merge and exact-main post-merge proof.
+contention. A-08 and A-09 closed after PR #43 merged as `13ff42e`, PR #44
+merged the residual duplicate-ingress correction as `f73c081`, and hosted plus
+exact-main post-merge proof passed on clean `main` at `f73c081`.
