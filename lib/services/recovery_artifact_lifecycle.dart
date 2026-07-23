@@ -4,7 +4,9 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
+import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
+import 'package:win32/win32.dart';
 
 const recoveryArtifactLifecycleSchema =
     'project_atlas_recovery_artifact_lifecycle_v1';
@@ -274,50 +276,56 @@ class RecoveryArtifactLifecycle {
         'Operation IDs must be 32 lowercase hexadecimal characters.',
       );
     }
-    if (!await finalDirectory.parent.exists()) {
-      throw FileSystemException(
-        'The recovery artifact parent directory does not exist.',
-        finalDirectory.parent.path,
-      );
-    }
-    if (await finalDirectory.exists()) {
-      throw FileSystemException(
-        'Refusing to overwrite an existing recovery artifact.',
-        finalDirectory.path,
-      );
-    }
-    final artifactDirectory = Directory(
-      '${finalDirectory.path}.atlas-incomplete-$operationId',
-    );
-    if (await FileSystemEntity.type(
-          artifactDirectory.path,
-          followLinks: false,
-        ) !=
-        FileSystemEntityType.notFound) {
-      throw FileSystemException(
-        'Refusing to adopt an existing recovery artifact.',
-        artifactDirectory.path,
-      );
-    }
-    await artifactDirectory.create();
-    final createdAt = _clock().toUtc();
-    final operation = RecoveryArtifactOperation._(
-      lifecycle: this,
-      artifactDirectory: artifactDirectory,
-      finalDirectory: finalDirectory,
-      kind: kind,
-      operationId: operationId,
-      createdAt: createdAt,
-    );
-    // A create/write fault deliberately leaves the typed sibling path in place.
-    // Persisted cleanup refuses it unless a complete owned marker can be read.
-    await _createMarker(operation.marker);
-    await operation._writeIncompleteMarker();
-    await operation._assertOwnedIncompleteMarker();
     if (!_activeOperationIds.add(operationId)) {
       throw StateError('The recovery artifact operation ID is already active.');
     }
-    return operation;
+    try {
+      if (!await finalDirectory.parent.exists()) {
+        throw FileSystemException(
+          'The recovery artifact parent directory does not exist.',
+          finalDirectory.parent.path,
+        );
+      }
+      if (await finalDirectory.exists()) {
+        throw FileSystemException(
+          'Refusing to overwrite an existing recovery artifact.',
+          finalDirectory.path,
+        );
+      }
+      final artifactDirectory = Directory(
+        '${finalDirectory.path}.atlas-incomplete-$operationId',
+      );
+      if (await FileSystemEntity.type(
+            artifactDirectory.path,
+            followLinks: false,
+          ) !=
+          FileSystemEntityType.notFound) {
+        throw FileSystemException(
+          'Refusing to adopt an existing recovery artifact.',
+          artifactDirectory.path,
+        );
+      }
+      await artifactDirectory.create();
+      final createdAt = _clock().toUtc();
+      final operation = RecoveryArtifactOperation._(
+        lifecycle: this,
+        artifactDirectory: artifactDirectory,
+        finalDirectory: finalDirectory,
+        kind: kind,
+        operationId: operationId,
+        createdAt: createdAt,
+      );
+      // A create/write fault deliberately leaves the typed sibling path in
+      // place. Persisted cleanup refuses it unless a complete owned marker can
+      // be read.
+      await _createMarker(operation.marker);
+      await operation._writeIncompleteMarker();
+      await operation._assertOwnedIncompleteMarker();
+      return operation;
+    } on Object {
+      _activeOperationIds.remove(operationId);
+      rethrow;
+    }
   }
 
   Future<RecoveryArtifactCleanupReport> cleanupPersistedArtifacts(
@@ -429,7 +437,8 @@ class RecoveryArtifactLifecycle {
     RecoveryArtifactMarker incomplete;
     RecoveryArtifactMarker? failed;
     try {
-      incomplete = await RecoveryArtifactMarker.read(
+      await _assertArtifactRootSafe(artifact, trustedParent: artifact.parent);
+      incomplete = await _readRegularLifecycleMarker(
         File(p.join(artifact.path, recoveryArtifactLifecycleMarkerFile)),
       );
       if (incomplete.operationId != parsed.operationId ||
@@ -440,15 +449,19 @@ class RecoveryArtifactLifecycle {
         p.join(artifact.path, recoveryArtifactFailedMarkerFile),
       );
       if (parsed.state == RecoveryArtifactState.failed) {
-        failed = await RecoveryArtifactMarker.read(failedFile);
+        failed = await _readRegularLifecycleMarker(failedFile);
         if (failed.operationId != parsed.operationId ||
             failed.kind != incomplete.kind ||
             failed.createdAt != incomplete.createdAt ||
             failed.state != RecoveryArtifactState.failed) {
           throw const FormatException('Failed marker does not match.');
         }
-      } else if (await failedFile.exists()) {
-        failed = await RecoveryArtifactMarker.read(failedFile);
+      } else if (await FileSystemEntity.type(
+            failedFile.path,
+            followLinks: false,
+          ) !=
+          FileSystemEntityType.notFound) {
+        failed = await _readRegularLifecycleMarker(failedFile);
         if (failed.operationId != parsed.operationId ||
             failed.kind != incomplete.kind ||
             failed.createdAt != incomplete.createdAt ||
@@ -456,6 +469,11 @@ class RecoveryArtifactLifecycle {
           throw const FormatException('Failed marker does not match.');
         }
       }
+    } on _ArtifactLinkException {
+      return RecoveryArtifactCleanupResult(
+        artifact: artifact,
+        disposition: RecoveryArtifactCleanupDisposition.refusedLink,
+      );
     } on Object {
       return RecoveryArtifactCleanupResult(
         artifact: artifact,
@@ -807,6 +825,17 @@ _ParsedArtifactName? _parseArtifactName(String name) {
   );
 }
 
+Future<RecoveryArtifactMarker> _readRegularLifecycleMarker(File marker) async {
+  final type = await FileSystemEntity.type(marker.path, followLinks: false);
+  if (type == FileSystemEntityType.link) {
+    throw const _ArtifactLinkException();
+  }
+  if (type != FileSystemEntityType.file) {
+    throw const FormatException('Lifecycle marker must be a regular file.');
+  }
+  return RecoveryArtifactMarker.read(marker);
+}
+
 void _validateDeletionLimits(RecoveryArtifactDeletionLimits limits) {
   if (limits.maxEntries <= 0 ||
       limits.maxEntries > recoveryArtifactMaxDeletionEntries) {
@@ -965,22 +994,44 @@ Future<void> _assertDirectoryChainSafe(String directoryPath) async {
   } on Object {
     throw const _ArtifactLinkException();
   }
+  await _assertRealDirectoryChain(normalized);
   if (!p.equals(normalized, resolved)) {
-    throw const _ArtifactLinkException();
+    // Windows canonicalization expands valid 8.3 path components (for example,
+    // RUNNER~1) even when no link is present. Validate the canonical chain as
+    // well instead of treating that textual difference as proof of a link.
+    await _assertRealDirectoryChain(resolved);
   }
-  final parts = p.split(normalized);
+}
+
+Future<void> _assertRealDirectoryChain(String directoryPath) async {
+  final parts = p.split(directoryPath);
   if (parts.isEmpty) throw const _ArtifactLinkException();
   var current = parts.first;
-  if (await FileSystemEntity.type(current, followLinks: false) !=
+  await _assertRealDirectoryComponent(current);
+  for (final part in parts.skip(1)) {
+    current = p.join(current, part);
+    await _assertRealDirectoryComponent(current);
+  }
+}
+
+Future<void> _assertRealDirectoryComponent(String path) async {
+  if (await FileSystemEntity.type(path, followLinks: false) !=
       FileSystemEntityType.directory) {
     throw const _ArtifactLinkException();
   }
-  for (final part in parts.skip(1)) {
-    current = p.join(current, part);
-    if (await FileSystemEntity.type(current, followLinks: false) !=
-        FileSystemEntityType.directory) {
+  if (!Platform.isWindows) return;
+
+  final nativePath = path.toNativeUtf16();
+  try {
+    final attributes = GetFileAttributes(nativePath);
+    if (attributes == 0xffffffff ||
+        attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0) {
+      // Junctions, symbolic links, mount points, and other reparse-backed
+      // directories are not valid cleanup ancestors.
       throw const _ArtifactLinkException();
     }
+  } finally {
+    calloc.free(nativePath);
   }
 }
 

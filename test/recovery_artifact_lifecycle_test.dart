@@ -423,6 +423,71 @@ void main() {
     await operation.fail();
   });
 
+  test('begin registers the operation before publishing its marker', () async {
+    late RecoveryArtifactLifecycle lifecycle;
+    var observedActive = false;
+    lifecycle = RecoveryArtifactLifecycle(
+      clock: () => createdAt,
+      operationId: () => 'a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1',
+      writeMarker: (marker, contents) async {
+        await marker.writeAsString(contents, flush: true);
+        if (p.basename(marker.path) == recoveryArtifactLifecycleMarkerFile) {
+          final report = await lifecycle.cleanupPersistedArtifacts(
+            root,
+            limits: const RecoveryArtifactCleanupLimits(
+              minimumAge: Duration(microseconds: 1),
+            ),
+          );
+          observedActive =
+              report.results.single.disposition ==
+              RecoveryArtifactCleanupDisposition.retainedActive;
+        }
+      },
+    );
+
+    final operation = await lifecycle.begin(
+      Directory(p.join(root.path, 'artifact')),
+      kind: RecoveryArtifactKind.fullBackup,
+    );
+
+    expect(observedActive, isTrue);
+    expect(await operation.artifactDirectory.exists(), isTrue);
+    await operation.fail();
+  });
+
+  test(
+    'begin releases its active registration when publication fails',
+    () async {
+      var failFirstMarker = true;
+      final lifecycle = RecoveryArtifactLifecycle(
+        clock: () => createdAt,
+        operationId: () => 'a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2',
+        createMarker: (marker) async {
+          if (failFirstMarker) {
+            failFirstMarker = false;
+            throw const FileSystemException('injected marker failure');
+          }
+          await marker.create(exclusive: true);
+        },
+      );
+
+      await expectLater(
+        lifecycle.begin(
+          Directory(p.join(root.path, 'first-artifact')),
+          kind: RecoveryArtifactKind.fullBackup,
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
+      final operation = await lifecycle.begin(
+        Directory(p.join(root.path, 'second-artifact')),
+        kind: RecoveryArtifactKind.fullBackup,
+      );
+
+      expect(await operation.artifactDirectory.exists(), isTrue);
+      await operation.fail();
+    },
+  );
+
   test(
     'persisted cleanup fingerprints same-size same-mtime mutations',
     () async {
@@ -481,6 +546,47 @@ void main() {
       ),
       throwsA(isA<FileSystemException>()),
     );
+  });
+
+  test('persisted cleanup refuses a linked lifecycle marker', () async {
+    final operation =
+        await RecoveryArtifactLifecycle(
+          clock: () => createdAt,
+          operationId: () => 'a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3',
+          deleteArtifact: (_) async {
+            throw const FileSystemException('retain quarantine');
+          },
+        ).begin(
+          Directory(p.join(root.path, 'artifact')),
+          kind: RecoveryArtifactKind.fullBackup,
+        );
+    await operation.fail();
+    final marker = File(
+      p.join(
+        operation.artifactDirectory.path,
+        recoveryArtifactLifecycleMarkerFile,
+      ),
+    );
+    final outsideMarker = File(p.join(root.path, 'outside-marker.json'));
+    await marker.copy(outsideMarker.path);
+    await marker.delete();
+    try {
+      await Link(marker.path).create(outsideMarker.path);
+    } on FileSystemException {
+      markTestSkipped('Symbolic links are unavailable on this host.');
+      return;
+    }
+
+    final report = await RecoveryArtifactLifecycle(
+      clock: () => createdAt.add(const Duration(hours: 2)),
+    ).cleanupPersistedArtifacts(root);
+
+    expect(
+      report.results.single.disposition,
+      RecoveryArtifactCleanupDisposition.refusedLink,
+    );
+    expect(await operation.artifactDirectory.exists(), isTrue);
+    expect(await outsideMarker.exists(), isTrue);
   });
 
   test('persisted cleanup refuses a substituted descendant link', () async {
