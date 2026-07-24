@@ -12,32 +12,31 @@ for the guarded worker is recorded in the
 The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
-Recovery findings R-01 through R-11 and agent-integrity findings A-01 through
-A-11 are closed. R-12 through R-14 remain open, so WP2 is not fully closed.
+Recovery findings R-01 through R-12 and agent-integrity findings A-01 through
+A-11 are closed. R-13 and R-14 remain open, so WP2 is not fully closed.
 The attended single-worker operating constraint was retired only after
 A-03/A-04 merged and their post-merge proof passed. A-11's exact-main proof
 also passed, so WP3 is closed. A-08/A-09 exact-main proof passed, PR #45
 merged the canonical closure evidence, and WP4 is closed. The package-specific
 attended single-worker constraint for WP4 is retired. Keep the remaining WP2
-follow-up queue attended and single-worker until R-12 through R-14 each have
+follow-up queue attended and single-worker until R-13 and R-14 each have
 hosted merge and exact-main proof.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
 contact data, machine-specific paths, and unrelated project references.
 
-Last updated: 2026-07-23.
+Last updated: 2026-07-24.
 
 ## Audit resume checkpoint
 
-Use `f228b62` (`Close R11 recovery artifact lifecycle finding (#47)`) as the
-canonical closure anchor. It is a clean descendant of implementation commit
-`fce3769` (`Harden recovery artifact lifecycle (#46)`) and contains only the
-R-11 evidence closure after that implementation. A later handoff-only commit
-may be present; verify that current `main` is a clean descendant of this
-anchor before resuming.
+Use `6f59203` (`Add recovery artifact retention policy (#50)`) as the current
+implementation anchor. It is a clean descendant of the R-11 closure anchor
+`f228b62` and contains the R-12 implementation after its hosted PR proof.
+Verify that current `main` is a clean descendant of this anchor and that
+exact-main push run `30056513672` passed before resuming.
 
-The canonical matrix contains 51 findings: 22 Closed and 29 Open. The
+The canonical matrix contains 51 findings: 23 Closed and 28 Open. The
 completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
@@ -78,35 +77,34 @@ completed integrity sequence is:
   active-operation race closure, hosted CI, and exact-main proof.
 - PR #47 / `f228b62`: R-11 canonical closure evidence after the implementation
   and exact-main proof passed.
+- PR #50 / `6f59203`: R-12 two-phase bounded recovery-artifact retention,
+  active-plan and newest-safety-backup preservation, exact snapshot
+  revalidation, shared recovery locking, hosted CI, and exact-main proof.
 
-Current verification baseline on merged closure `main` at `f228b62`:
+Current verification baseline on exact implementation `main` at `6f59203`:
 
-- focused recovery-artifact lifecycle and integration suite: 63/63;
-- full Flutter suite: 598 passed with 1 intentional skip;
+- focused R-12 retention, locking, and live-plan suite: 35/35;
+- broader recovery/export/import integration selection: 130/130;
+- full Flutter suite: 615 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
-- hosted implementation PR CI run 144 and exact-implementation-main push run
-  145: passed;
-- hosted closure PR CI run 146 passed on retry after an isolated local 13/13
-  queue-lease proof confirmed its first-attempt hosted SQLite contention was
-  transient; and
-- exact-closure-main push run 147, including generation, policy, analysis,
-  MCP adapter, full tests, Windows release, seeded fixture, and gateway smoke:
-  passed.
+- hosted PR CI run `30052185036` passed unchanged on attempt 2 after its first
+  attempt timed out only in an existing schema-migration test, with every
+  R-12 test already passed; and
+- exact-main push run `30056513672`, including generation, policy, analysis,
+  MCP adapter, full tests, Windows release, seeded fixture, and gateway smoke,
+  passed on `6f59203`.
 
 ### Recommended resume sequence
 
 Do not begin implementation until the canonical matrix and current status have
 been reviewed. Keep the WP2 queue attended and single-worker throughout:
 
-1. R-12: verify and design a local, previewed recovery-artifact retention
-   policy that preserves the newest safety backup and every active recovery
-   plan. Obtain hosted merge and exact-main proof before proceeding.
-2. R-13: verify portable-export memory behavior, then implement bounded
+1. R-13: verify portable-export memory behavior, then implement bounded
    streaming/isolate export with progress and cancellation. Obtain hosted
    merge and exact-main proof before proceeding.
-3. R-14: verify DOCX/HTML extraction behavior, then implement async/isolate
+2. R-14: verify DOCX/HTML extraction behavior, then implement async/isolate
    extraction with source and expanded-size limits. Obtain hosted merge and
    exact-main proof before retiring the WP2 constraint.
 
@@ -122,8 +120,9 @@ queue-lease suite had passed 13/13 with `--concurrency=1`.
 The CI full-suite command is therefore serialized with
 `flutter test --concurrency=1`. This is test-runner hardening only: it changes
 no production behavior and does not reopen A-01, A-02, or A-05. Before
-starting R-12, verify that the serialization PR and its exact-main follow-up
-run passed, and keep the WP2 attended single-worker constraint in force.
+starting R-13, verify that R-12 implementation commit `6f59203` and its
+exact-main run `30056513672` passed, and keep the WP2 attended single-worker
+constraint in force.
 
 ### Closed bundle-integrity package
 
@@ -138,7 +137,7 @@ guidance; `project_bundle.json` remains schema v1.
 
 The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
-R-12 through R-14 remain open, so WP2 is not closed. A-08 and A-09 are closed,
+R-13 and R-14 remain open, so WP2 is not closed. A-08 and A-09 are closed,
 so WP4 is complete.
 
 ### Closed R-11 artifact-lifecycle package
@@ -156,6 +155,24 @@ run 147 passed. Local exact-main proof at `fce3769` passed the focused suite
 (63/63), full Flutter suite (598 passed, 1 intentional skip), static analysis,
 30 Python policy/maintenance tests, and the Windows release build. R-11 is
 closed.
+
+### Closed R-12 artifact-retention package
+
+PR #50 merged R-12 as `6f59203`. Retention is an explicit two-phase local
+operator action: preview discovers bounded managed candidates, and apply
+repeats discovery under the recovery-artifact lock before deleting only exact
+unchanged selections. Age and aggregate-size policy never delete malformed or
+unmanaged content, never follow links, retain every registered active plan and
+its rollback/staging state, and retain the newest valid safety backup per root.
+
+Local proof passed the focused retention/locking/live-plan suite (35/35), the
+broader recovery/export/import selection (130/130), full Flutter suite (615
+passed, 1 intentional skip), static analysis, 30 Python policy/maintenance
+tests, and the Windows release build. Hosted PR run `30052185036` passed on an
+unchanged retry after an unrelated existing migration test hit its fixed
+30-second timeout. Exact-main push run `30056513672` then passed generation,
+policy, analysis, MCP adapter, all tests, Windows release, seeded fixture, and
+gateway smoke on `6f59203`. R-12 is closed; R-13 and R-14 remain open.
 
 Earlier R-07 through R-10 post-merge proof on exact implementation `main` at
 `9d0e792`:
