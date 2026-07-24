@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'atlas_full_backup_service.dart';
+import 'recovery_artifact_lock.dart';
 import '../db/db_open.dart';
 
 /// A restart-only, replace-active-instance recovery handoff.
@@ -16,6 +17,7 @@ import '../db/db_open.dart';
 /// after the UI process exits.
 class AtlasLiveRecoveryService {
   static const planSchema = 'project_atlas_live_recovery_plan_v2';
+  static final Set<String> _activePreparedPlanPaths = <String>{};
   final Future<AtlasFullBackupService> Function()? _backupService;
   final Future<AtlasLiveRecoveryPaths> Function()? _paths;
   final Future<void> Function(Duration) _delay;
@@ -43,6 +45,10 @@ class AtlasLiveRecoveryService {
   Future<Directory> _ownedHandoffRoot() async {
     final override = _handoffRoot;
     if (override != null) return override();
+    return currentHandoffRoot();
+  }
+
+  static Future<Directory> currentHandoffRoot() async {
     final support = await getApplicationSupportDirectory();
     return Directory(p.join(support.path, 'recovery_handoffs'));
   }
@@ -63,6 +69,22 @@ class AtlasLiveRecoveryService {
     required Directory sourceBundle,
     required Directory safetyBackupRoot,
   }) async {
+    final planRoot = await _ownedHandoffRoot();
+    return withRecoveryArtifactLock(
+      planRoot,
+      () => _preparePlanLocked(
+        planRoot: planRoot,
+        sourceBundle: sourceBundle,
+        safetyBackupRoot: safetyBackupRoot,
+      ),
+    );
+  }
+
+  Future<AtlasLiveRecoveryPlan> _preparePlanLocked({
+    required Directory planRoot,
+    required Directory sourceBundle,
+    required Directory safetyBackupRoot,
+  }) async {
     final backup = await _backup();
     final validation = await backup.validateBundle(sourceBundle);
     if (!validation.isValid) {
@@ -71,8 +93,6 @@ class AtlasLiveRecoveryService {
         '${validation.errors.join('; ')}',
       );
     }
-    final planRoot = await _ownedHandoffRoot();
-    await planRoot.create(recursive: true);
     final id = _clock().toUtc().toIso8601String().replaceAll(':', '-');
     final planFile = File(p.join(planRoot.path, 'live-recovery-$id.json'));
     final manifest = validation.manifest!;
@@ -88,12 +108,40 @@ class AtlasLiveRecoveryService {
       databaseInventory: manifest['databaseInventory'],
     );
     await plan.write();
+    _activePreparedPlanPaths.add(_planKey(plan.planFile));
     return plan;
+  }
+
+  static bool isPreparedPlanActive(File planFile) =>
+      _activePreparedPlanPaths.contains(_planKey(planFile));
+
+  Future<void> discardPreparedPlan(AtlasLiveRecoveryPlan plan) async {
+    final ownedRoot = await _ownedHandoffRoot();
+    await withRecoveryArtifactLock(ownedRoot, () async {
+      await _validatePlanLocation(plan.planFile, ownedRoot);
+      if (await plan.planFile.exists()) await plan.planFile.delete();
+      if (await plan.acceptanceFile.exists()) {
+        await plan.acceptanceFile.delete();
+      }
+      _activePreparedPlanPaths.remove(_planKey(plan.planFile));
+    });
   }
 
   /// Called before Flutter opens the database in a fresh process.
   Future<void> applyPlan(File planFile) async {
     final ownedRoot = await _ownedHandoffRoot();
+    await withRecoveryArtifactLock(
+      ownedRoot,
+      () => _applyPlanLocked(planFile, ownedRoot),
+    );
+  }
+
+  static String _planKey(File file) {
+    final normalized = p.normalize(p.absolute(file.path));
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
+  Future<void> _applyPlanLocked(File planFile, Directory ownedRoot) async {
     await _validatePlanLocation(planFile, ownedRoot);
     final consumedFile = File('${planFile.path}.consuming-$pid');
     await planFile.rename(consumedFile.path);

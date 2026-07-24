@@ -11,6 +11,7 @@ import '../../services/ollama_service.dart';
 import '../../services/atlas_agent_service.dart';
 import '../../services/mcp_disclosure_preview_service.dart';
 import '../../services/project_runtime_service.dart';
+import '../../services/recovery_artifact_retention_service.dart';
 import '../../services/telegram_service.dart';
 import '../../shared/models/app_state.dart';
 import '../../shared/models/app_state_scope.dart';
@@ -2737,7 +2738,11 @@ class _AdminTabState extends State<_AdminTab> {
       );
       if (!mounted) return;
       final confirmed = await _confirmLiveReplacement(plan.managedFileCount);
-      if (confirmed != true || !mounted) return;
+      if (confirmed != true) {
+        await state.discardPreparedLiveRecovery(plan);
+        return;
+      }
+      if (!mounted) return;
       await state.launchConfirmedLiveRecovery(plan);
       // The child process performs the safety backup and replacement only
       // after this process exits and releases SQLite file handles.
@@ -2748,6 +2753,169 @@ class _AdminTabState extends State<_AdminTab> {
       }
     }
   }
+
+  Future<void> _previewRecoveryArtifactCleanup() async {
+    final includeSafetyRoot = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _panel,
+        title: const Text('Preview recovery cleanup'),
+        content: const SizedBox(
+          width: 540,
+          child: Text(
+            'Atlas will scan its owned recovery handoff folder using a 30-day, '
+            '10 GiB retention policy. You may also select a safety-backup root. '
+            'Nothing is deleted during this scan, and the newest valid safety '
+            'backup in every inspected root is always preserved.',
+            style: TextStyle(height: 1.45),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Atlas-owned only'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Include safety folder'),
+          ),
+        ],
+      ),
+    );
+    if (includeSafetyRoot == null || !mounted) return;
+    Directory? safetyRoot;
+    if (includeSafetyRoot) {
+      final selected = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Choose a safety-backup root to include',
+      );
+      if (selected == null || selected.trim().isEmpty || !mounted) return;
+      safetyRoot = Directory(selected);
+    }
+    final state = AppStateScope.of(context);
+    try {
+      final preview = await state.previewRecoveryArtifactRetention(
+        safetyBackupRoot: safetyRoot,
+      );
+      if (!mounted) return;
+      final confirmed = await _confirmRecoveryArtifactCleanup(preview);
+      if (confirmed != true || !mounted) return;
+      final result = await state.applyRecoveryArtifactRetention(preview);
+      if (!mounted) return;
+      final refused = result.results.length - result.deletedCount;
+      setState(
+        () => _status =
+            'Recovery cleanup deleted ${result.deletedCount} previewed '
+            'artifact(s)${refused == 0 ? '.' : '; $refused changed or were refused.'}',
+      );
+    } catch (error) {
+      if (mounted) {
+        setState(() => _status = 'Recovery cleanup failed: $error');
+      }
+    }
+  }
+
+  Future<bool?> _confirmRecoveryArtifactCleanup(
+    RecoveryArtifactRetentionPreview preview,
+  ) => showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: _panel,
+      title: const Text('Recovery cleanup preview'),
+      content: SizedBox(
+        width: 700,
+        height: 430,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              preview.candidates.isEmpty
+                  ? 'No recovery artifacts are eligible for deletion.'
+                  : '${preview.candidates.length} artifact(s), '
+                        '${_formatRetentionBytes(preview.candidateBytes)}, '
+                        'are eligible. Every path is revalidated before deletion.',
+              style: const TextStyle(height: 1.4),
+            ),
+            if (preview.scanLimitReached ||
+                preview.candidateLimitReached ||
+                preview.issues.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                '${preview.issues.length} retained or unverified item(s)'
+                '${preview.scanLimitReached ? '; scan limit reached' : ''}'
+                '${preview.candidateLimitReached ? '; candidate limit reached' : ''}.',
+                style: const TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Expanded(
+              child: preview.candidates.isEmpty
+                  ? const Center(
+                      child: Icon(
+                        Icons.check_circle_outline,
+                        color: Colors.tealAccent,
+                        size: 42,
+                      ),
+                    )
+                  : ListView.separated(
+                      itemCount: preview.candidates.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(color: _line, height: 14),
+                      itemBuilder: (_, index) {
+                        final item = preview.candidates[index];
+                        final reason = item.triggers
+                            .map((trigger) => trigger.name)
+                            .join(' + ');
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${item.kind.name} · $reason · '
+                              '${_formatRetentionBytes(item.bytes)}',
+                              style: const TextStyle(
+                                color: _text87,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            SelectableText(
+                              item.path,
+                              style: const TextStyle(
+                                color: _text54,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text(preview.candidates.isEmpty ? 'Close' : 'Cancel'),
+        ),
+        if (preview.candidates.isNotEmpty)
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+            label: Text('Delete ${preview.candidates.length} previewed'),
+          ),
+      ],
+    ),
+  );
 
   Future<bool?> _confirmLiveReplacement(int managedFileCount) async {
     final controller = TextEditingController();
@@ -2963,6 +3131,11 @@ class _AdminTabState extends State<_AdminTab> {
               icon: const Icon(Icons.warning_amber_outlined, size: 16),
               label: const Text('Replace active Atlas from backup'),
             ),
+            OutlinedButton.icon(
+              onPressed: _previewRecoveryArtifactCleanup,
+              icon: const Icon(Icons.cleaning_services_outlined, size: 16),
+              label: const Text('Preview recovery cleanup'),
+            ),
           ],
         ),
         const SizedBox(height: 10),
@@ -3064,6 +3237,15 @@ class _AdminTabState extends State<_AdminTab> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+String _formatRetentionBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final kib = bytes / 1024;
+  if (kib < 1024) return '${kib.toStringAsFixed(1)} KiB';
+  final mib = kib / 1024;
+  if (mib < 1024) return '${mib.toStringAsFixed(1)} MiB';
+  return '${(mib / 1024).toStringAsFixed(1)} GiB';
+}
 
 class _WizardStepPanel extends StatelessWidget {
   final String step;
