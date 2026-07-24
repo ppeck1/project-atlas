@@ -512,11 +512,14 @@ class AtlasProposalConflict implements Exception {
 class AtlasAgentService {
   final AppState state;
   final Future<void> Function(String step)? _proposalApprovalStepHook;
+  final DateTime Function() _now;
 
   AtlasAgentService(
     this.state, {
     Future<void> Function(String step)? proposalApprovalStepHook,
-  }) : _proposalApprovalStepHook = proposalApprovalStepHook;
+    DateTime Function()? now,
+  }) : _proposalApprovalStepHook = proposalApprovalStepHook,
+       _now = now ?? DateTime.now;
 
   static const String proposalDraftKind = 'atlas_agent_proposal';
   static const String handoffDraftKind = 'project_handoff';
@@ -2107,6 +2110,7 @@ class AtlasAgentService {
           githubRemote: githubRemote,
           activeWorkItems: activeItems.length,
           blockedWorkItems: blockedWorkItems,
+          now: _now(),
         );
 
     return AtlasProjectStatus(
@@ -2162,6 +2166,7 @@ class AtlasAgentService {
             ),
           )
           .length,
+      now: _now(),
     );
   }
 
