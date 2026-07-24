@@ -14,6 +14,7 @@ import '../../services/github_remote_metadata_service.dart';
 import '../../services/atlas_full_backup_service.dart';
 import '../../services/atlas_live_recovery_service.dart';
 import '../../services/recovery_artifact_retention_service.dart';
+import '../../services/portable_export_service.dart';
 import '../../services/local_git_visibility_service.dart';
 import '../../services/local_git_archive_service.dart';
 import '../../services/local_project_refresh_service.dart';
@@ -36,6 +37,11 @@ import 'atlas_operation_status.dart';
 import 'project_capsule_truth.dart';
 
 export '../../services/github_archive_service.dart' show GithubArchiveFetcher;
+export '../../services/portable_export_service.dart'
+    show
+        PortableExportCancelledException,
+        PortableExportPhase,
+        PortableExportProgress;
 export '../../services/project_enrichment_service.dart'
     show
         ProjectEnrichmentStatusCallback,
@@ -573,6 +579,18 @@ class _ProjectGitArchive {
   });
 }
 
+class _PreparedPortableDataExport {
+  final Map<String, Object?> payload;
+  final List<PortableExportSource> sources;
+  final List<String> warnings;
+
+  const _PreparedPortableDataExport({
+    required this.payload,
+    required this.sources,
+    required this.warnings,
+  });
+}
+
 /// App-wide state wrapper around [AppDb].
 class AppState extends ChangeNotifier {
   final AppDb db;
@@ -624,6 +642,11 @@ class AppState extends ChangeNotifier {
   int? _projectEnrichmentProgressTotal;
   AtlasFullBackupProgress? _fullBackupProgress;
   Future<AtlasFullBackupCreation>? _fullBackupOperation;
+  PortableExportTask? _portableExportTask;
+  PortableExportProgress? _portableExportProgress;
+  StreamSubscription<PortableExportProgress>? _portableExportProgressSub;
+  bool _portableExportRunning = false;
+  bool _portableExportCancelRequested = false;
   final Map<String, AtlasOperationStatus> _operationStatuses = {};
   final List<StreamSubscription<String?>> _settingsSubscriptions = [];
 
@@ -661,6 +684,8 @@ class AppState extends ChangeNotifier {
   /// an in-progress backup.
   AtlasFullBackupProgress? get fullBackupProgress => _fullBackupProgress;
   bool get isFullBackupRunning => _fullBackupOperation != null;
+  PortableExportProgress? get portableExportProgress => _portableExportProgress;
+  bool get isPortableExportRunning => _portableExportRunning;
 
   /// The most recent operations, with running work retained alongside recent
   /// completion/failure results so concurrent jobs cannot overwrite each other.
@@ -8334,19 +8359,127 @@ class AppState extends ChangeNotifier {
     },
   );
 
-  /// Writes a portable archive for inspection and selective transfer. It does
-  /// not include every Atlas table and cannot restore an Atlas instance.
-  Future<int> exportPortableDataArchive(String path) => _trackOperation(
-    title: 'Portable export',
-    startingMessage: 'Collecting Atlas records and files…',
-    run: () => _exportPortableDataArchive(path),
-  );
+  /// Writes a bounded portable archive for inspection and selective transfer.
+  /// It does not include every Atlas table and cannot restore an Atlas
+  /// instance.
+  Future<int> exportPortableDataArchive(String path) async {
+    if (_portableExportRunning) {
+      throw StateError('A portable export is already running.');
+    }
+    _portableExportRunning = true;
+    _portableExportCancelRequested = false;
+    _portableExportProgress = const PortableExportProgress(
+      phase: PortableExportPhase.preparing,
+      message: 'Collecting bounded Atlas records and file metadata…',
+    );
+    _setActiveOperation(
+      title: 'Portable export',
+      message: _portableExportProgress!.message,
+    );
+    notifyListeners();
 
-  Future<int> _exportPortableDataArchive(String path) async {
+    try {
+      final prepared = await _preparePortableDataExport();
+      if (_portableExportCancelRequested) {
+        throw const PortableExportCancelledException();
+      }
+      final task = await PortableExportService().start(
+        outputPath: path,
+        payload: prepared.payload,
+        sources: prepared.sources,
+        warnings: prepared.warnings,
+      );
+      _portableExportTask = task;
+      _portableExportProgressSub = task.progress.listen((progress) {
+        _portableExportProgress = progress;
+        _setActiveOperation(
+          title: 'Portable export',
+          message: progress.message,
+          state: switch (progress.phase) {
+            PortableExportPhase.complete => AtlasOperationState.complete,
+            PortableExportPhase.cancelled ||
+            PortableExportPhase.failed => AtlasOperationState.failed,
+            _ => AtlasOperationState.running,
+          },
+          current: progress.totalBytes > 0
+              ? progress.processedBytes
+              : progress.completedEntries,
+          total: progress.totalBytes > 0
+              ? progress.totalBytes
+              : progress.totalEntries,
+          notify: false,
+        );
+        notifyListeners();
+      });
+      if (_portableExportCancelRequested) {
+        unawaited(task.cancel());
+      }
+      final report = await task.result;
+      await db.logEvent(
+        area: 'export',
+        action: 'portable_data_exported',
+        outputJson: jsonEncode({
+          'path': report.output.path,
+          'metadataRecords': report.metadataRecords,
+          'exportedFiles': report.exportedFiles,
+          'sourceBytes': report.sourceBytes,
+          'manifestBytes': report.manifestBytes,
+          'outputBytes': report.outputBytes,
+          'warnings': report.warnings,
+        }),
+      );
+      _setActiveOperation(
+        title: 'Portable export',
+        message: 'Portable export complete.',
+        state: AtlasOperationState.complete,
+      );
+      return report.payloadSections;
+    } on PortableExportCancelledException {
+      await db.logEvent(
+        area: 'export',
+        action: 'portable_data_export_cancelled',
+        outputJson: jsonEncode({'path': path}),
+      );
+      _setActiveOperation(
+        title: 'Portable export',
+        message: 'Portable export cancelled.',
+        state: AtlasOperationState.failed,
+      );
+      rethrow;
+    } catch (error) {
+      await db.logEvent(
+        area: 'export',
+        action: 'portable_data_export_failed',
+        outputJson: jsonEncode({'path': path}),
+        error: '$error',
+      );
+      _setActiveOperation(
+        title: 'Portable export',
+        message: 'Portable export failed: $error',
+        state: AtlasOperationState.failed,
+      );
+      rethrow;
+    } finally {
+      await _portableExportProgressSub?.cancel();
+      _portableExportProgressSub = null;
+      _portableExportTask = null;
+      _portableExportRunning = false;
+      _portableExportCancelRequested = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> cancelPortableDataExport() async {
+    _portableExportCancelRequested = true;
+    final task = _portableExportTask;
+    if (task != null) await task.cancel();
+  }
+
+  Future<_PreparedPortableDataExport> _preparePortableDataExport() async {
     final allDocs = await db.select(db.documents).get();
     final allMedia = await db.getAllProjectMedia();
 
-    final payload = {
+    final payload = <String, Object?>{
       'schema': 'project_atlas_portable_export_v1',
       'exportedAt': DateTime.now().toIso8601String(),
       'projects': (await db.select(db.projects).get())
@@ -8400,48 +8533,50 @@ class AppState extends ChangeNotifier {
           .toList(),
     };
 
-    final archive = Archive();
-
-    // Add the portable export manifest.
-    final jsonBytes = utf8.encode(
-      const JsonEncoder.withIndent('  ').convert(payload),
-    );
-    archive.addFile(
-      ArchiveFile('portable_export.json', jsonBytes.length, jsonBytes),
-    );
-
-    // Add document files
+    final sources = <PortableExportSource>[];
+    final warnings = <String>[];
     for (final doc in allDocs) {
-      if (doc.storedPath != null) {
-        final f = File(doc.storedPath!);
-        if (await f.exists()) {
-          final bytes = await f.readAsBytes();
-          final name = 'documents/${doc.id}.${doc.extension ?? 'bin'}';
-          archive.addFile(ArchiveFile(name, bytes.length, bytes));
-        }
+      final storedPath = doc.storedPath;
+      if (storedPath == null) continue;
+      final type = await FileSystemEntity.type(storedPath, followLinks: false);
+      if (type == FileSystemEntityType.file) {
+        sources.add(
+          PortableExportSource(
+            sourcePath: storedPath,
+            archivePath: 'documents/${doc.id}.${doc.extension ?? 'bin'}',
+          ),
+        );
+      } else {
+        warnings.add('Document source was missing or unsafe: ${doc.id}');
       }
     }
 
-    // Add project media files
-    for (final m in allMedia) {
-      final f = File(m.storedPath);
-      if (await f.exists()) {
-        final bytes = await f.readAsBytes();
-        final ext = m.extension ?? m.storedPath.split('.').lastOrNull ?? 'bin';
-        archive.addFile(ArchiveFile('media/${m.id}.$ext', bytes.length, bytes));
+    for (final media in allMedia) {
+      final type = await FileSystemEntity.type(
+        media.storedPath,
+        followLinks: false,
+      );
+      if (type == FileSystemEntityType.file) {
+        final pathExtension = p.extension(media.storedPath);
+        final extension =
+            media.extension ??
+            (pathExtension.isEmpty ? 'bin' : pathExtension.substring(1));
+        sources.add(
+          PortableExportSource(
+            sourcePath: media.storedPath,
+            archivePath: 'media/${media.id}.$extension',
+          ),
+        );
+      } else {
+        warnings.add('Media source was missing or unsafe: ${media.id}');
       }
     }
 
-    // Write ZIP
-    final zipBytes = ZipEncoder().encode(archive)!;
-    await File(path).writeAsBytes(zipBytes);
-
-    await db.logEvent(
-      area: 'export',
-      action: 'portable_data_exported',
-      outputJson: jsonEncode({'path': path}),
+    return _PreparedPortableDataExport(
+      payload: payload,
+      sources: sources,
+      warnings: warnings,
     );
-    return payload.length;
   }
 
   Future<ProjectBundleExportPreview> previewProjectBundleExport(
@@ -9604,6 +9739,8 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    unawaited(_portableExportTask?.cancel());
+    unawaited(_portableExportProgressSub?.cancel());
     _localProjectRefreshTimer?.cancel();
     for (final subscription in _settingsSubscriptions) {
       unawaited(subscription.cancel());

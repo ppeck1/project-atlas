@@ -76,4 +76,6 @@ and source-recovery evidence retain full-chain verification.
 
 The database is local and currently plaintext. The Settings portable export is
 not a complete backup and cannot restore an Atlas instance; full backup and
-restore remain separate recovery work.
+restore remain separate recovery work. Its bounded isolate, streaming,
+cancellation, and limit boundary is defined by the
+[`portable export contract`](PORTABLE_EXPORT_CONTRACT.md).
