@@ -10,6 +10,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:project_atlas/db/app_db.dart';
 import 'package:project_atlas/services/windows_secret_store.dart';
+import 'package:project_atlas/shared/models/atlas_operation_status.dart';
 import 'package:project_atlas/shared/models/app_state.dart';
 
 // ── Minimal path_provider mock ──────────────────────────────────────────────
@@ -110,11 +111,107 @@ void main() {
       final src = File(p.join(tempDir.path, 'report.docx'))
         ..writeAsBytesSync(docxBytes);
 
-      await db.importDocumentFromPath(src.path);
+      final id = await db.importDocumentFromPath(src.path);
 
       final docs = await db.watchDocuments().first;
+      expect(id, docs.first.id);
       expect(docs.first.extractedText, contains('Document content here'));
+      expect(docs.first.parseError, isNull);
     });
+
+    test(
+      'detailed import preserves the String ID compatibility wrapper',
+      () async {
+        final src = File(p.join(tempDir.path, 'compatible.html'))
+          ..writeAsStringSync('<p>Compatible import</p>');
+
+        final detailed = await db.importDocumentFromPathDetailed(src.path);
+        final legacyId = await db.importDocumentFromPath(src.path);
+
+        expect(detailed.documentId, isNotEmpty);
+        expect(detailed.warning, isNull);
+        expect(legacyId, isA<String>());
+        expect(legacyId, isNot(equals(detailed.documentId)));
+      },
+    );
+
+    test(
+      'malformed DOCX is imported with a structured warning and owned file',
+      () async {
+        final src = File(p.join(tempDir.path, 'malformed.docx'))
+          ..writeAsBytesSync([0, 1, 2, 3]);
+
+        final result = await db.importDocumentFromPathDetailed(src.path);
+        final docs = await db.watchDocuments().first;
+        final doc = docs.single;
+
+        expect(result.documentId, doc.id);
+        expect(result.warning?.code, 'invalid_archive');
+        expect(doc.status, 'imported');
+        expect(doc.extractedText, isNull);
+        expect(doc.renderedMarkdown, isNull);
+        expect(File(doc.storedPath!).existsSync(), isTrue);
+        final warning = jsonDecode(doc.parseError!) as Map<String, dynamic>;
+        expect(warning['schema'], 'atlas.document_extraction_warning.v1');
+        expect(warning['code'], 'invalid_archive');
+        expect(warning['format'], 'docx');
+        expect(warning['message'], isNot(contains(src.path)));
+      },
+    );
+
+    test(
+      'oversized HTML is imported without extraction and records its limit',
+      () async {
+        const maxSourceBytes = 10 * 1024 * 1024;
+        final src = File(p.join(tempDir.path, 'oversized.html'))
+          ..writeAsBytesSync(List<int>.filled(maxSourceBytes + 1, 0x41));
+
+        final result = await db.importDocumentFromPathDetailed(src.path);
+        final doc = (await db.watchDocuments().first).single;
+
+        expect(result.warning?.code, 'source_size_limit');
+        expect(doc.status, 'imported');
+        expect(doc.extractedText, isNull);
+        expect(doc.renderedMarkdown, isNull);
+        expect(File(doc.storedPath!).lengthSync(), maxSourceBytes + 1);
+        final warning = jsonDecode(doc.parseError!) as Map<String, dynamic>;
+        expect(warning['sourceBytes'], maxSourceBytes + 1);
+        expect(warning['limitBytes'], maxSourceBytes);
+      },
+    );
+
+    test(
+      'AppState reports warning imports as complete and audits the warning',
+      () async {
+        final state = AppState(db, enableBackgroundSummaryRefresh: false);
+        addTearDown(state.dispose);
+        final src = File(p.join(tempDir.path, 'warning.docx'))
+          ..writeAsBytesSync([0, 1, 2, 3]);
+
+        final result = await state.importDocumentFromPathDetailed(src.path);
+
+        expect(result.warning, isNotNull);
+        final operation = state.operationStatuses.singleWhere(
+          (item) => item.title == 'Document import',
+        );
+        expect(operation.state, AtlasOperationState.complete);
+        expect(operation.message, contains('text preview unavailable'));
+        final events = await db.getRecentEvents();
+        expect(
+          events.map((event) => event.action),
+          containsAll([
+            'import_request',
+            'import_completed_with_extraction_warning',
+          ]),
+        );
+        final completed = events.firstWhere(
+          (event) => event.action == 'import_completed_with_extraction_warning',
+        );
+        expect(completed.level, 'warn');
+        expect(completed.entityId, result.documentId);
+        expect(completed.outputJson, contains('invalid_archive'));
+      },
+    );
 
     test('throws FileSystemException for missing file', () async {
       expect(
@@ -584,20 +681,23 @@ This is the email body.''';
   });
 
   group('protected integration settings', () {
-    test('migrates a legacy Telegram token out of AppMeta on first read', () async {
-      final secrets = MemorySecretStore();
-      final state = AppState(
-        db,
-        enableBackgroundSummaryRefresh: false,
-        secretStore: secrets,
-      );
-      addTearDown(state.dispose);
-      await db.setMetaString(AppDb.kTelegramBotToken, 'legacy-token');
+    test(
+      'migrates a legacy Telegram token out of AppMeta on first read',
+      () async {
+        final secrets = MemorySecretStore();
+        final state = AppState(
+          db,
+          enableBackgroundSummaryRefresh: false,
+          secretStore: secrets,
+        );
+        addTearDown(state.dispose);
+        await db.setMetaString(AppDb.kTelegramBotToken, 'legacy-token');
 
-      expect(await state.getSetting(AppDb.kTelegramBotToken), 'legacy-token');
-      expect(secrets.values[AppDb.kTelegramBotToken], 'legacy-token');
-      expect(await db.getMetaString(AppDb.kTelegramBotToken), isNull);
-    });
+        expect(await state.getSetting(AppDb.kTelegramBotToken), 'legacy-token');
+        expect(secrets.values[AppDb.kTelegramBotToken], 'legacy-token');
+        expect(await db.getMetaString(AppDb.kTelegramBotToken), isNull);
+      },
+    );
 
     test('writes and clears Telegram tokens outside AppMeta', () async {
       final secrets = MemorySecretStore();

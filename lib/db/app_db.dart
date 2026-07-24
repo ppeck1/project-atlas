@@ -30,6 +30,17 @@ part 'app_db.g.dart';
 /// carries them. This typedef keeps call-sites unchanged.
 typedef ProjectFull = Project;
 
+/// Result from a document import when callers need extraction diagnostics.
+///
+/// [importDocumentFromPath] remains the compatibility API for callers that
+/// only need the created document ID.
+class DocumentImportResult {
+  final String documentId;
+  final DocumentExtractionWarning? warning;
+
+  const DocumentImportResult({required this.documentId, this.warning});
+}
+
 String _capsuleLedgerDigestForRow(
   String previousDigest,
   ProjectCapsuleRevisionRow row,
@@ -3249,6 +3260,22 @@ class AppDb extends _$AppDb {
     String? displayTitle,
     String? source,
     String? metadataJson,
+  }) async => (await importDocumentFromPathDetailed(
+    path,
+    projectId: projectId,
+    title: title,
+    displayTitle: displayTitle,
+    source: source,
+    metadataJson: metadataJson,
+  )).documentId;
+
+  Future<DocumentImportResult> importDocumentFromPathDetailed(
+    String path, {
+    String? projectId,
+    String? title,
+    String? displayTitle,
+    String? source,
+    String? metadataJson,
   }) => AtlasOwnedFileSnapshotCoordinator.instance.runMutation(
     () => _importDocumentFromPathWithSnapshotCoordination(
       path,
@@ -3260,7 +3287,7 @@ class AppDb extends _$AppDb {
     ),
   );
 
-  Future<String> _importDocumentFromPathWithSnapshotCoordination(
+  Future<DocumentImportResult> _importDocumentFromPathWithSnapshotCoordination(
     String path, {
     String? projectId,
     String? title,
@@ -3293,12 +3320,22 @@ class AppDb extends _$AppDb {
 
     String? extractedTextValue;
     String? renderedMarkdownValue;
+    DocumentExtractionWarning? extractionWarning;
     const _maxExtractBytes = 10 * 1024 * 1024;
     try {
       if (ext != null) {
         final destFile = File(destPath);
         final fileSize = await destFile.length();
-        if (fileSize <= _maxExtractBytes) {
+        if (ext == 'docx' || ext == 'html' || ext == 'htm') {
+          final extraction = await extractDocument(
+            destPath,
+            ext,
+            limits: const DocumentExtractionLimits(),
+          );
+          extractedTextValue = extraction.extractedText;
+          renderedMarkdownValue = extraction.renderedMarkdown;
+          extractionWarning = extraction.warning;
+        } else if (fileSize <= _maxExtractBytes) {
           Future<String> readText() async {
             try {
               return await destFile.readAsString();
@@ -3312,12 +3349,6 @@ class AppDb extends _$AppDb {
             extractedTextValue = await readText();
           } else if (ext == 'md' || ext == 'mdx') {
             renderedMarkdownValue = await readText();
-          } else if (ext == 'docx') {
-            extractedTextValue = extractDocxText(destPath);
-          } else if (ext == 'html' || ext == 'htm') {
-            final raw = await readText();
-            renderedMarkdownValue = raw;
-            extractedTextValue = extractHtmlText(destPath);
           } else if (ext == 'eml') {
             final raw = await readText();
             extractedTextValue = stripEmlBody(raw);
@@ -3331,6 +3362,14 @@ class AppDb extends _$AppDb {
       );
       extractedTextValue = null;
       renderedMarkdownValue = null;
+      if (ext == 'docx' || ext == 'html' || ext == 'htm') {
+        extractionWarning = DocumentExtractionWarning(
+          code: 'extraction_failed',
+          format: ext!,
+          message:
+              'Text extraction failed; the document was imported without a preview.',
+        );
+      }
     }
 
     try {
@@ -3354,6 +3393,7 @@ class AppDb extends _$AppDb {
           metadataJson: Value(metadataJson),
           extractedText: Value(extractedTextValue),
           renderedMarkdown: Value(renderedMarkdownValue),
+          parseError: Value(extractionWarning?.encode()),
           createdAt: Value(now),
           updatedAt: Value(now),
         ),
@@ -3370,7 +3410,7 @@ class AppDb extends _$AppDb {
       }
       rethrow;
     }
-    return id;
+    return DocumentImportResult(documentId: id, warning: extractionWarning);
   }
 
   Future<List<Document>> getDocumentsForProject(String projectId) =>

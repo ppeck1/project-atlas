@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../db/app_db.dart';
+import '../../db/document_extractor.dart' show DocumentExtractionLimits;
 import '../../services/github_archive_service.dart';
 import '../../services/github_remote_metadata_service.dart';
 import '../../services/atlas_full_backup_service.dart';
@@ -7374,6 +7375,8 @@ class AppState extends ChangeNotifier {
     final fromMarkdown = clean(doc.renderedMarkdown);
     if (fromMarkdown != null) return fromMarkdown;
 
+    if (doc.parseError?.trim().isNotEmpty == true) return null;
+
     final path = doc.storedPath;
     final ext = doc.extension?.toLowerCase();
     if (path != null &&
@@ -7382,7 +7385,21 @@ class AppState extends ChangeNotifier {
       try {
         final file = File(path);
         if (await file.exists()) {
-          final text = await file.readAsString();
+          const limits = DocumentExtractionLimits();
+          final bytes = <int>[];
+          await for (final chunk in file.openRead(
+            0,
+            limits.maxSourceBytes + 1,
+          )) {
+            bytes.addAll(chunk);
+            if (bytes.length > limits.maxSourceBytes) return null;
+          }
+          String text;
+          try {
+            text = utf8.decode(bytes);
+          } on FormatException {
+            text = latin1.decode(bytes);
+          }
           return clean(text);
         }
       } catch (e) {
@@ -7401,17 +7418,63 @@ class AppState extends ChangeNotifier {
   Stream<List<Document>> watchDocuments() => db.watchDocuments();
 
   Future<void> importDocumentFromPath(String path, {String? projectId}) async {
+    await importDocumentFromPathDetailed(path, projectId: projectId);
+  }
+
+  Future<DocumentImportResult> importDocumentFromPathDetailed(
+    String path, {
+    String? projectId,
+  }) async {
+    final filename = p.basename(path);
+    _setActiveOperation(
+      title: 'Document import',
+      message: 'Copying and extracting $filename…',
+    );
     try {
       await db.logEvent(
         area: 'documents',
         action: 'import_request',
         inputJson: path,
       );
-      await db.importDocumentFromPath(
+      final result = await db.importDocumentFromPathDetailed(
         path,
         projectId: projectId ?? activeProject?.id,
       );
+      final warning = result.warning;
+      try {
+        await db.logEvent(
+          level: warning == null ? 'info' : 'warn',
+          area: 'documents',
+          action: warning == null
+              ? 'import_completed'
+              : 'import_completed_with_extraction_warning',
+          entityType: 'document',
+          entityId: result.documentId,
+          outputJson: jsonEncode({'warning': warning?.toJson()}),
+        );
+      } catch (auditError) {
+        // The owned file and document row are already committed. An audit-log
+        // failure must not turn that successful import into a reported failure
+        // that encourages a duplicate retry.
+        debugPrint(
+          '[Atlas] document import completion audit failed '
+          '(${auditError.runtimeType}); the committed import remains successful.',
+        );
+      }
+      _setActiveOperation(
+        title: 'Document import',
+        message: warning == null
+            ? 'Document imported.'
+            : 'Document imported; text preview unavailable: ${warning.message}',
+        state: AtlasOperationState.complete,
+      );
+      return result;
     } catch (e, st) {
+      _setActiveOperation(
+        title: 'Document import',
+        message: 'Document import failed: $e',
+        state: AtlasOperationState.failed,
+      );
       await db.logError(
         area: 'documents',
         action: 'import_failed',

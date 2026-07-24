@@ -76,7 +76,7 @@ closed. The ledger contains 24 Closed and 27 Open findings.
 | SPA-20260721-R-11 | P2 | Accepted | Closed | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Codex | PR #46/#47 | Typed incomplete/failed sibling paths, operation-owned no-follow markers, serialized terminal promotion/failure, bounded persisted cleanup, Windows reparse/8.3 validation, and active-operation race handling merged as `fce3769`; hosted PR CI run 144, exact-implementation-main push run 145, local exact-main proof, canonical closure PR #47 at `f228b62`, and exact-closure-main push run 147 passed. |
 | SPA-20260721-R-12 | P2 | Accepted | Closed | WP2 | Recovery artifacts have no retention policy. | Codex | PR #50/#51 | Two-phase bounded age/size retention, exact snapshot revalidation, newest valid safety-backup exclusion, active-plan preservation, operator preview, local audit, and recovery-mutation locking merged as `6f59203`; hosted PR CI run `30052185036` passed on unchanged retry and exact-main push run `30056513672` passed. PR #51 records canonical closure evidence. Contract: `docs/RECOVERY_ARTIFACT_RETENTION_CONTRACT.md`. |
 | SPA-20260721-R-13 | P2 | Accepted | Closed | WP2 | Portable export builds the full archive in memory. | Codex | PR #52/#53 | Dedicated-isolate store-mode ZIP writing, incremental bounded manifest emission, source/entry/aggregate/path/record limits, exact source revalidation, progress, cancellation, typed partial cleanup, structured per-file errors, and compatibility proof merged as `b541724`; hosted PR run `30064193299` and exact-main push run `30064872862` passed. PR #53 records canonical closure evidence. Contract: `docs/PORTABLE_EXPORT_CONTRACT.md`. |
-| SPA-20260721-R-14 | P2 | Needs verification | Open | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Unassigned | TBD | Async/isolate extraction with source and expanded-size limits. |
+| SPA-20260721-R-14 | P2 | Accepted | In progress | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Codex | Implementation PR pending | Dedicated-isolate extraction, bounded DOCX ZIP preflight and actual expansion, single-read bounded HTML, source revalidation, structured non-fatal warnings, bounded preview/evidence fallbacks, and compatibility proof are implemented on the R-14 branch. Closure awaits hosted merge and exact-main proof. Contract: `docs/DOCUMENT_EXTRACTION_CONTRACT.md`. |
 | SPA-20260721-A-01 | P0 | Accepted | Closed | WP3 | LLM claim is a select-then-unconditional-update race. | Codex | PR #33 | Atomic specific-task and claim-next CAS merged as `8a90d6e`; two-connection contention proof passed on merged `main`. |
 | SPA-20260721-A-02 | P0 | Accepted | Closed | WP3 | Complete/fail does not enforce lease owner or expiry. | Codex | PR #33 | Worker-plus-attempt CAS with strict expiry and typed conflicts merged as `8a90d6e`; wrong-owner, exact-expiry, and same-worker ABA proof passed on merged `main`. |
 | SPA-20260721-A-03 | P0 | Accepted | Closed | WP4 | Proposal side effect and review approval are not atomic/idempotent. | Codex | PR #35 | One transaction claims pending review state, applies every proposal kind, and records stable review/entity/audit results. Merged as `a3c88f6`; post-merge write-boundary rollback, two-connection contention, rejection-race, and replay proof passed. |
@@ -116,6 +116,32 @@ closed. The ledger contains 24 Closed and 27 Open findings.
 | SPA-20260721-D-06 | P3 | Needs verification | Open | WP11 | Public metadata, captures, reported version, and database opener have stale residue. | Unassigned | TBD | Metadata/version/capture manifest and truthful database opener naming. |
 
 ## Progress evidence
+
+### WP2 R-14 local implementation slice — 2026-07-24
+
+- DOCX/HTML extraction now runs in a dedicated isolate with bounded source,
+  archive-directory, entry, compressed, actual-expanded, and extracted-text
+  limits; HTML is read once through a capped stream.
+- Hostile, malformed, changed, or oversized sources retain the successful
+  owned-file import and record a sanitized non-fatal extraction warning.
+  Preview and project-summary fallbacks cannot bypass that warning or the
+  source-byte cap.
+- The legacy byte helper now preflights ZIP entry and central-directory bounds
+  before generic decoding. Post-commit audit failure cannot convert a
+  successful import into a reported failure.
+- Verification-loop repair also made R-13 cancellation cooperative before its
+  bounded forced-stop fallback, shortened manifest lifetime, added a bounded
+  Windows handle-release cleanup barrier, and separated publication commit
+  from prior-artifact cleanup.
+- Focused extractor suite: 27/27; combined extraction/import/preview/operation/
+  summary/export suite: 106/106; portable-export suite: 7/7 plus three repeated
+  cancellation passes.
+- Full serialized Flutter suite: 635 passed with 1 intentional skip. Static
+  analysis was clean; Python policy/maintenance suite passed 30/30; Drift
+  regeneration produced no tracked diff; Windows release build succeeded.
+- Three-agent audit/implementation/review loop found no remaining Critical or
+  High issue. R-14 remains In progress until hosted PR CI, merge, and exact-main
+  proof pass.
 
 ### WP2 R-13 closure — 2026-07-24
 

@@ -295,6 +295,7 @@ class PortableExportService {
     final result = Completer<PortableExportReport>();
     final workerExited = Completer<void>();
     Isolate? worker;
+    SendPort? workerControl;
     var terminal = false;
     var cancelled = false;
     var readyReceived = false;
@@ -303,14 +304,26 @@ class PortableExportService {
     StreamSubscription<dynamic>? errorSubscription;
     StreamSubscription<dynamic>? exitSubscription;
 
+    Future<bool> deleteTransient(File file) async {
+      const attempts = 80;
+      for (var attempt = 0; attempt < attempts; attempt++) {
+        try {
+          if (await file.exists()) await file.delete();
+          return true;
+        } on FileSystemException {
+          if (attempt == attempts - 1) return false;
+          // Windows can deliver isolate exit just before its file handles
+          // become deletable. Keep cleanup behind a bounded release barrier.
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+        }
+      }
+      return false;
+    }
+
     Future<void> cleanup() async {
       for (final file in [partial, manifest, previous]) {
         if (identical(file, previous) && retainPrevious) continue;
-        try {
-          if (await file.exists()) await file.delete();
-        } on FileSystemException {
-          // Best effort after a terminal export result.
-        }
+        await deleteTransient(file);
       }
     }
 
@@ -353,44 +366,19 @@ class PortableExportService {
         ),
       );
       var movedPrevious = false;
+      late final int outputBytes;
       try {
         if (await output.exists()) {
           await output.rename(previous.path);
           movedPrevious = true;
         }
         await partial.rename(output.path);
-        if (movedPrevious && await previous.exists()) {
-          await previous.delete();
-        }
-        terminal = true;
-        final report = PortableExportReport(
-          output: output,
-          payloadSections: payload.length,
-          metadataRecords: metadataRecords,
-          exportedFiles: workerSources.length,
-          sourceBytes: totalSourceBytes,
-          manifestBytes: message['manifestBytes']! as int,
-          outputBytes: await output.length(),
-          warnings: List.unmodifiable(warnings),
-        );
-        progress.add(
-          PortableExportProgress(
-            phase: PortableExportPhase.complete,
-            message: 'Portable export complete.',
-            completedEntries: workerSources.length + 1,
-            totalEntries: workerSources.length + 1,
-            processedBytes: totalSourceBytes,
-            totalBytes: totalSourceBytes,
-          ),
-        );
-        result.complete(report);
-        await closePorts();
+        outputBytes = await output.length();
       } catch (error, stackTrace) {
-        if (movedPrevious &&
-            !await output.exists() &&
-            await previous.exists()) {
+        if (movedPrevious) {
           try {
-            await previous.rename(output.path);
+            if (await output.exists()) await output.delete();
+            if (await previous.exists()) await previous.rename(output.path);
           } on FileSystemException {
             // Preserve the previous file under its typed sibling on failure.
             retainPrevious = true;
@@ -400,12 +388,51 @@ class PortableExportService {
           PortableExportException('promotion_failed', '$error'),
           stackTrace,
         );
+        return;
       }
+
+      final reportWarnings = [...warnings];
+      if (movedPrevious && !await deleteTransient(previous)) {
+        retainPrevious = true;
+        reportWarnings.add(
+          'The prior export remains in a typed .atlas-previous sibling because '
+          'Windows did not release it during the bounded cleanup window.',
+        );
+      }
+      terminal = true;
+      final report = PortableExportReport(
+        output: output,
+        payloadSections: payload.length,
+        metadataRecords: metadataRecords,
+        exportedFiles: workerSources.length,
+        sourceBytes: totalSourceBytes,
+        manifestBytes: message['manifestBytes']! as int,
+        outputBytes: outputBytes,
+        warnings: List.unmodifiable(reportWarnings),
+      );
+      progress.add(
+        PortableExportProgress(
+          phase: PortableExportPhase.complete,
+          message: 'Portable export complete.',
+          completedEntries: workerSources.length + 1,
+          totalEntries: workerSources.length + 1,
+          processedBytes: totalSourceBytes,
+          totalBytes: totalSourceBytes,
+        ),
+      );
+      result.complete(report);
+      await closePorts();
     }
 
     eventSubscription = events.listen((dynamic rawMessage) {
-      if (rawMessage is! Map<Object?, Object?> || terminal) return;
+      if (rawMessage is! Map<Object?, Object?>) return;
       final type = rawMessage['type'];
+      if (type == 'control') {
+        workerControl = rawMessage['sendPort']! as SendPort;
+        if (cancelled) workerControl!.send('cancel');
+        return;
+      }
+      if (terminal) return;
       if (type == 'progress') {
         progress.add(_progressFromMessage(rawMessage));
       } else if (type == 'ready') {
@@ -497,11 +524,16 @@ class PortableExportService {
       if (terminal || cancelled || readyReceived) return;
       cancelled = true;
       terminal = true;
-      worker?.kill(priority: Isolate.immediate);
+      workerControl?.send('cancel');
       try {
         await workerExited.future.timeout(const Duration(seconds: 2));
       } on TimeoutException {
-        // Continue best-effort cleanup after the bounded release wait.
+        worker?.kill(priority: Isolate.immediate);
+        try {
+          await workerExited.future.timeout(const Duration(seconds: 2));
+        } on TimeoutException {
+          // Continue best-effort cleanup after both bounded release waits.
+        }
       }
       await cleanup();
       progress.add(
@@ -563,6 +595,12 @@ class PortableExportService {
 
 Future<void> _portableExportWorker(Map<String, Object?> message) async {
   final sendPort = message['sendPort']! as SendPort;
+  final control = ReceivePort();
+  var cancelled = false;
+  final controlSubscription = control.listen((dynamic command) {
+    if (command == 'cancel') cancelled = true;
+  });
+  sendPort.send({'type': 'control', 'sendPort': control.sendPort});
   final payload = (message['payload']! as Map).cast<String, Object?>();
   final sources = (message['sources']! as List)
       .map((value) => (value as Map).cast<String, Object?>())
@@ -576,6 +614,10 @@ Future<void> _portableExportWorker(Map<String, Object?> message) async {
   String? currentSourcePath;
   var processedBytes = 0;
   ZipFileEncoder? encoder;
+
+  void checkCancelled() {
+    if (cancelled) throw const _WorkerCancelled();
+  }
 
   void progress(
     PortableExportPhase phase,
@@ -596,30 +638,10 @@ Future<void> _portableExportWorker(Map<String, Object?> message) async {
   try {
     if (await partial.exists()) await partial.delete();
     if (await manifest.exists()) await manifest.delete();
-
-    progress(
-      PortableExportPhase.writingManifest,
-      'Writing bounded portable metadata…',
-      completedEntries: 0,
-    );
-    final manifestBytes = _writeBoundedJsonFile(
-      manifest,
-      payload,
-      limits['maxManifestBytes']!,
-    );
+    checkCancelled();
 
     encoder = ZipFileEncoder()
       ..create(partial.path, level: ZipFileEncoder.STORE);
-    await encoder.addFile(
-      manifest,
-      'portable_export.json',
-      ZipFileEncoder.STORE,
-    );
-    progress(
-      PortableExportPhase.addingFiles,
-      'Added portable metadata.',
-      completedEntries: 1,
-    );
 
     for (var index = 0; index < sources.length; index++) {
       final source = sources[index];
@@ -632,6 +654,7 @@ Future<void> _portableExportWorker(Map<String, Object?> message) async {
         currentSourcePath,
         followLinks: false,
       );
+      checkCancelled();
       if (type != FileSystemEntityType.file) {
         throw const _WorkerFailure(
           'source_changed',
@@ -639,6 +662,7 @@ Future<void> _portableExportWorker(Map<String, Object?> message) async {
         );
       }
       final before = await file.stat();
+      checkCancelled();
       if (before.size != expectedBytes ||
           before.modified.microsecondsSinceEpoch != expectedModifiedMicros) {
         throw const _WorkerFailure(
@@ -647,9 +671,12 @@ Future<void> _portableExportWorker(Map<String, Object?> message) async {
         );
       }
       final beforeDigest = await sha256.bind(file.openRead()).first;
+      checkCancelled();
       await encoder.addFile(file, currentArchivePath, ZipFileEncoder.STORE);
+      checkCancelled();
       final after = await file.stat();
       final afterDigest = await sha256.bind(file.openRead()).first;
+      checkCancelled();
       if (after.size != expectedBytes ||
           after.modified.microsecondsSinceEpoch != expectedModifiedMicros ||
           beforeDigest != afterDigest) {
@@ -662,14 +689,37 @@ Future<void> _portableExportWorker(Map<String, Object?> message) async {
       progress(
         PortableExportPhase.addingFiles,
         'Added ${index + 1} of ${sources.length} file(s).',
-        completedEntries: index + 2,
+        completedEntries: index + 1,
       );
     }
 
+    currentArchivePath = 'portable_export.json';
+    currentSourcePath = null;
+    progress(
+      PortableExportPhase.writingManifest,
+      'Writing bounded portable metadata…',
+      completedEntries: sources.length,
+    );
+    final manifestBytes = _writeBoundedJsonFile(
+      manifest,
+      payload,
+      limits['maxManifestBytes']!,
+    );
+    checkCancelled();
+    await encoder.addFile(
+      manifest,
+      'portable_export.json',
+      ZipFileEncoder.STORE,
+    );
+    checkCancelled();
+    await manifest.delete();
     await encoder.close();
     encoder = null;
-    await manifest.delete();
+    checkCancelled();
     sendPort.send({'type': 'ready', 'manifestBytes': manifestBytes});
+  } on _WorkerCancelled {
+    // The parent emits the terminal cancellation result after this worker has
+    // released its archive and source handles in the finally block.
   } on _WorkerFailure catch (error) {
     sendPort.send({
       'type': 'error',
@@ -697,6 +747,8 @@ Future<void> _portableExportWorker(Map<String, Object?> message) async {
     } catch (_) {
       // The parent also performs best-effort cleanup.
     }
+    await controlSubscription.cancel();
+    control.close();
   }
 }
 
@@ -753,4 +805,8 @@ class _WorkerFailure implements Exception {
   final String message;
 
   const _WorkerFailure(this.code, this.message);
+}
+
+class _WorkerCancelled implements Exception {
+  const _WorkerCancelled();
 }

@@ -226,11 +226,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final path = result?.files.single.path;
     if (path == null || path.trim().isEmpty) return;
     try {
-      await state.importDocumentFromPath(path);
+      final import = await state.importDocumentFromPathDetailed(path);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Document imported.')));
+        final warning = import.warning;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              warning == null
+                  ? 'Document imported.'
+                  : 'Document imported, but text extraction was skipped: '
+                        '${warning.message}',
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

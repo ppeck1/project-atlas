@@ -10,7 +10,11 @@ Project Atlas uses SQLite through Drift. The current schema version is `27`.
 - Documents and media: app-owned copies, extracted text, metadata, and links.
   Document deletion is soft (`documents.deleted_at`, added in v23): deleted
   documents are hidden from queries and undoable; a startup purge removes the
-  app-owned file and row after a retention window.
+  app-owned file and row after a retention window. DOCX and HTML extraction is
+  isolated and bounded; non-fatal extraction warnings use versioned JSON in
+  `documents.parse_error` while the owned copy and imported row remain valid.
+  The boundary is defined by the
+  [`bounded document extraction contract`](DOCUMENT_EXTRACTION_CONTRACT.md).
 - Activity events: operator-visible history for important actions.
 - Project Capsule revisions: immutable accepted-history rows containing a
   project-scoped revision number and parent, canonical truth hash, accepted
