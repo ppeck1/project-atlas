@@ -12,15 +12,15 @@ for the guarded worker is recorded in the
 The database-plus-owned-files consistency boundary is defined in the
 [`full backup snapshot contract`](docs/FULL_BACKUP_SNAPSHOT_CONTRACT.md).
 
-Recovery findings R-01 through R-13 and agent-integrity findings A-01 through
-A-11 are closed. R-14 remains open, so WP2 is not fully closed.
+Recovery findings R-01 through R-14 and agent-integrity findings A-01 through
+A-11 are closed. WP2 is fully closed.
 The attended single-worker operating constraint was retired only after
 A-03/A-04 merged and their post-merge proof passed. A-11's exact-main proof
 also passed, so WP3 is closed. A-08/A-09 exact-main proof passed, PR #45
 merged the canonical closure evidence, and WP4 is closed. The package-specific
-attended single-worker constraint for WP4 is retired. Keep the remaining WP2
-follow-up queue attended and single-worker until R-14 has hosted merge and
-exact-main proof.
+attended single-worker constraint for WP4 is retired. R-14 hosted merge and
+exact-main proof passed, so the WP2 attended single-worker constraint is also
+retired.
 
 This handoff records the public, portfolio-facing maintenance boundary for
 Project Atlas. It is intentionally free of private workspace records, personal
@@ -30,13 +30,13 @@ Last updated: 2026-07-24.
 
 ## Audit resume checkpoint
 
-Use `b541724` (`Bound portable export resource use (#52)`) as the current
-implementation anchor. It is a clean descendant of the R-12 closure anchor
-`a1fa583` and contains the R-13 implementation after its hosted PR proof.
-Verify that current `main` is a clean descendant of this anchor and that
-exact-main push run `30064872862` passed before resuming.
+Use `a3c66ff` (`Bound DOCX and HTML extraction off the UI isolate (#55)`) as
+the current implementation anchor. It is a clean descendant of the R-13
+closure anchor `0808c88` and contains the R-14 implementation after hosted PR
+and exact-main proof. Verify that current `main` is a clean descendant of this
+anchor and that exact-main push run `30096364363` passed before resuming.
 
-The canonical matrix contains 51 findings: 24 Closed and 27 Open. The
+The canonical matrix contains 51 findings: 25 Closed and 26 Open. The
 completed integrity sequence is:
 
 - PR #30 / `1e18ebd`: R-01 through R-05 recovery replacement atomicity,
@@ -87,29 +87,34 @@ completed integrity sequence is:
   revalidation, typed partial cleanup, hosted CI, and exact-main proof.
 - PR #53: R-13 canonical closure evidence after the implementation and
   exact-main proof passed.
+- PR #54 / `8c8ae48`: stabilize capsule freshness tests with an injectable
+  clock after the R-13 closure run crossed its fixed seven-day fixture window.
+- PR #55 / `a3c66ff`: R-14 dedicated-isolate bounded DOCX/HTML extraction,
+  structured non-fatal warnings, bounded preview/evidence fallbacks, hosted
+  CI, and exact-main proof.
 
-Current verification baseline on exact implementation `main` at `b541724`:
+Current verification baseline on exact implementation `main` at `a3c66ff`:
 
-- focused portable-export and document-import suite: 41/41;
-- broader portable-export/document-import/operation-status/registry selection:
-  103/103;
-- full Flutter suite: 622 passed with 1 intentional skip;
+- focused document-extractor suite: 27/27;
+- combined extraction/import/preview/operation/summary/export suite: 106/106;
+- full Flutter suite: 635 passed with 1 intentional skip;
 - static analysis: clean;
 - Python policy/maintenance suite: 30/30;
 - Windows release build: passed; and
-- hosted PR CI run `30064193299` passed; and
-- exact-main push run `30064872862`, including generation, policy, analysis,
+- hosted PR CI run `30095509920` passed; and
+- exact-main push run `30096364363`, including generation, policy, analysis,
   MCP adapter, full tests, Windows release, seeded fixture, and gateway smoke,
-  passed on `b541724`.
+  passed on `a3c66ff`.
 
 ### Recommended resume sequence
 
 Do not begin implementation until the canonical matrix and current status have
-been reviewed. Keep the WP2 queue attended and single-worker throughout:
+been reviewed. WP2 is closed; resume with the next ordered open package:
 
-1. R-14: verify DOCX/HTML extraction behavior, then implement async/isolate
-   extraction with source and expanded-size limits. Obtain hosted merge and
-   exact-main proof before retiring the WP2 constraint.
+1. WP5 A-12 through A-15: verify workload planning semantics before
+   implementation, beginning with malformed planning values and stale-work
+   ranking. Preserve fail-closed review-lane behavior and structured
+   recommendation identity/actor/gate/proof requirements.
 
 ### Hosted full-suite serialization
 
@@ -123,9 +128,8 @@ queue-lease suite had passed 13/13 with `--concurrency=1`.
 The CI full-suite command is therefore serialized with
 `flutter test --concurrency=1`. This is test-runner hardening only: it changes
 no production behavior and does not reopen A-01, A-02, or A-05. Before
-starting R-14, verify that R-13 implementation commit `b541724` and its
-exact-main run `30064872862` passed, and keep the WP2 attended single-worker
-constraint in force.
+resuming, verify that R-14 implementation commit `a3c66ff` and its exact-main
+run `30096364363` passed.
 
 ### Closed bundle-integrity package
 
@@ -140,9 +144,8 @@ guidance; `project_bundle.json` remains schema v1.
 
 The limits, manifest, path, and staging boundary are specified in the
 [`bundle recovery integrity contract`](docs/BUNDLE_RECOVERY_INTEGRITY_CONTRACT.md).
-R-13 subsequently closed; R-14 remains open, so WP2 is not closed. A-08 and
-A-09 are closed,
-so WP4 is complete.
+R-13 and R-14 subsequently closed, so WP2 is complete. A-08 and A-09 are
+closed, so WP4 is complete.
 
 ### Closed R-11 artifact-lifecycle package
 
@@ -176,8 +179,8 @@ tests, and the Windows release build. Hosted PR run `30052185036` passed on an
 unchanged retry after an unrelated existing migration test hit its fixed
 30-second timeout. Exact-main push run `30056513672` then passed generation,
 policy, analysis, MCP adapter, all tests, Windows release, seeded fixture, and
-gateway smoke on `6f59203`. R-12 is closed; R-13 subsequently closed and R-14
-remains open.
+gateway smoke on `6f59203`. R-12 is closed; R-13 and R-14 subsequently closed,
+completing WP2.
 
 ### Closed R-13 bounded portable-export package
 
@@ -186,8 +189,9 @@ from a dedicated isolate, streams source files without building full payload
 or archive buffers, and emits the manifest incrementally to bounded temporary
 storage. Hard entry, file, aggregate, manifest, record, and path limits fail
 closed; source type, length, and SHA-256 are revalidated around worker reads.
-Progress is visible, cancellation waits for the worker resource barrier, typed
-partials are removed, and an existing destination is preserved or restored.
+Progress is visible; cancellation requests cooperative handle release before a
+bounded forced-stop fallback; typed partials are removed; and an existing
+destination is preserved or restored.
 
 Local proof passed the focused portable-export/document-import suite (41/41),
 the broader operation integration selection (103/103), full Flutter suite
@@ -196,8 +200,37 @@ policy/maintenance tests, generated-code verification, and the Windows
 release build. Hosted PR run `30064193299` passed. Exact-main push run
 `30064872862` then passed generation, policy, analysis, MCP adapter, all
 tests, Windows release, seeded fixture, and gateway smoke on `b541724`.
-PR #53 records the canonical closure evidence. R-13 is closed; R-14 remains
-open.
+PR #53 records the canonical closure evidence. R-13 is closed; R-14
+subsequently closed and completed WP2.
+
+### Closed R-14 bounded document-extraction package
+
+PR #55 merged R-14 as `a3c66ff`. DOCX and HTML/HTM extraction now runs in a
+dedicated isolate. Source, ZIP entry and central-directory, compressed target,
+actual expanded XML, and extracted-text bounds are validated against hard
+maxima. DOCX preflight rejects malformed or ambiguous target metadata before
+inflation, verifies actual size and CRC, and parses strict bounded XML. HTML is
+read once through a capped stream.
+
+Hostile, malformed, changed, or oversized inputs retain the successful
+app-owned import with sanitized structured warning JSON. Preview and
+project-summary fallbacks do not bypass stored warnings or the source cap.
+Compatibility wrappers remain intact, and completion-audit failure cannot
+misreport an already committed import as failed.
+
+The verification loop also repaired the R-13 Windows cancellation artifact
+race with cooperative worker shutdown, bounded cleanup retries, minimal
+manifest lifetime, and a publication commit point that cannot misreport
+post-publication prior-artifact cleanup as failure.
+
+Local proof passed the focused extractor suite (27/27), combined integration
+selection (106/106), full Flutter suite (635 passed, 1 intentional skip),
+static analysis, 30 Python policy/maintenance tests, no-diff Drift
+regeneration, and the Windows release build. Hosted PR run `30095509920`
+passed. Exact-main push run `30096364363` then passed generation, policy,
+analysis, MCP adapter, all tests, Windows release, seeded fixture, and gateway
+smoke on `a3c66ff`. R-14 and WP2 are closed, and the WP2 attended
+single-worker constraint is retired.
 
 Earlier R-07 through R-10 post-merge proof on exact implementation `main` at
 `9d0e792`:

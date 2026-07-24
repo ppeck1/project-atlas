@@ -129,6 +129,6 @@ It is closed after its individual merge and exact-main gates. R-13 is specified
 by the [`portable export contract`](PORTABLE_EXPORT_CONTRACT.md) and is closed
 after its hosted merge and exact-main proof. R-14 is specified by the
 [`bounded document extraction contract`](DOCUMENT_EXTRACTION_CONTRACT.md) and
-remains open pending its hosted gates. The R-11 lifecycle above does not by
-itself claim recovery-artifact retention, streaming export, or bounded
-DOCX/HTML extraction. WP2 therefore remains open.
+is closed after its hosted merge and exact-main proof. The R-11 lifecycle above
+does not by itself claim recovery-artifact retention, streaming export, or
+bounded DOCX/HTML extraction. All WP2 findings are closed.
