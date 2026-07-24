@@ -92,6 +92,8 @@ completed integrity sequence is:
 - PR #55 / `a3c66ff`: R-14 dedicated-isolate bounded DOCX/HTML extraction,
   structured non-fatal warnings, bounded preview/evidence fallbacks, hosted
   CI, and exact-main proof.
+- PR #56: R-14 and WP2 canonical closure evidence and retirement of the WP2
+  attended single-worker constraint.
 
 Current verification baseline on exact implementation `main` at `a3c66ff`:
 
