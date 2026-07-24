@@ -61,11 +61,15 @@ The worker reports manifest, per-file, promotion, completion, cancellation,
 and failure phases with entry and source-byte progress. Settings exposes the
 current phase and a cancel action.
 
-Cancellation terminates the worker isolate, removes its typed manifest and ZIP
-partials, and leaves any existing destination file unchanged. A completed
-worker output is promoted only by the parent after it observes the ready
-message. An existing destination is moved to a typed sibling during promotion
-and restored if publication fails.
+Cancellation first asks the worker to stop cooperatively so it can close file
+handles, then uses a bounded forced-stop fallback. Parent cleanup uses a
+bounded Windows handle-release barrier for typed manifest and ZIP partials and
+leaves any existing destination file unchanged. A completed worker output is
+promoted only by the parent after it observes the ready message. An existing
+destination is moved to a typed sibling during promotion and restored if
+publication fails. Once publication is committed, failure to remove that
+previous sibling does not misreport the new export as failed: the typed sibling
+is retained and the success report carries a warning.
 
 ## Completion and audit
 

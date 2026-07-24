@@ -7,7 +7,8 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../db/app_db.dart';
-import '../../db/document_extractor.dart' show shouldLoadDocumentText;
+import '../../db/document_extractor.dart'
+    show DocumentExtractionLimits, shouldLoadDocumentText;
 
 class DocumentPreview extends StatelessWidget {
   final Document document;
@@ -19,17 +20,37 @@ class DocumentPreview extends StatelessWidget {
     if (stored == null || stored.isEmpty) return null;
     final file = File(stored);
     if (!await file.exists()) return null;
-    const maxBytes = 10 * 1024 * 1024;
-    if (await file.length() > maxBytes) return null;
+    const limits = DocumentExtractionLimits();
+    final bytes = <int>[];
+    await for (final chunk in file.openRead(0, limits.maxSourceBytes + 1)) {
+      bytes.addAll(chunk);
+      if (bytes.length > limits.maxSourceBytes) return null;
+    }
     try {
-      return await file.readAsString();
+      return utf8.decode(bytes);
     } on FormatException {
-      final bytes = await file.readAsBytes();
       return latin1.decode(bytes);
     }
   }
 
   bool get _shouldLoadText => shouldLoadDocumentText(_extension);
+
+  String? get _warningMessage {
+    final raw = document.parseError?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        final message = decoded['message'];
+        if (message is String && message.trim().isNotEmpty) {
+          return message.trim();
+        }
+      }
+    } catch (_) {
+      // Older rows may contain a plain-text parse error.
+    }
+    return raw;
+  }
 
   String get _extension =>
       (document.extension ?? document.originalFilename.split('.').last)
@@ -38,8 +59,12 @@ class DocumentPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final parsed = document.renderedMarkdown ?? document.extractedText;
+    final warningMessage = _warningMessage;
     return FutureBuilder<String?>(
-      future: (parsed == null || parsed.isEmpty) && _shouldLoadText
+      future:
+          warningMessage == null &&
+              (parsed == null || parsed.isEmpty) &&
+              _shouldLoadText
           ? _loadText()
           : null,
       builder: (context, snapshot) {
@@ -48,7 +73,35 @@ class DocumentPreview extends StatelessWidget {
             snapshot.data == null) {
           return const Center(child: CircularProgressIndicator());
         }
-        return _renderBody(context, body);
+        final preview = _renderBody(context, body);
+        if (warningMessage == null) return preview;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: Colors.amber.withAlpha(28),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.amber,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Text preview unavailable: $warningMessage',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: preview),
+          ],
+        );
       },
     );
   }

@@ -352,12 +352,16 @@ class _WorkItemDetailSheetState extends State<_WorkItemDetailSheet> {
     final path = result.files.single.path;
     if (path == null) return;
     try {
-      await _state.importDocumentFromPath(path);
+      final import = await _state.importDocumentFromPathDetailed(path);
       if (mounted) {
+        final warning = import.warning;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Document imported. Use Link existing document to attach it.',
+              warning == null
+                  ? 'Document imported. Use Link existing document to attach it.'
+                  : 'Document imported, but text extraction was skipped: '
+                        '${warning.message}',
             ),
           ),
         );
