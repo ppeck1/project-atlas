@@ -85,6 +85,8 @@ completed integrity sequence is:
 - PR #52 / `b541724`: R-13 bounded dedicated-isolate portable export,
   incremental manifest emission, progress and cancellation, exact source
   revalidation, typed partial cleanup, hosted CI, and exact-main proof.
+- PR #53: R-13 canonical closure evidence after the implementation and
+  exact-main proof passed.
 
 Current verification baseline on exact implementation `main` at `b541724`:
 
@@ -194,7 +196,8 @@ policy/maintenance tests, generated-code verification, and the Windows
 release build. Hosted PR run `30064193299` passed. Exact-main push run
 `30064872862` then passed generation, policy, analysis, MCP adapter, all
 tests, Windows release, seeded fixture, and gateway smoke on `b541724`.
-R-13 is closed; R-14 remains open.
+PR #53 records the canonical closure evidence. R-13 is closed; R-14 remains
+open.
 
 Earlier R-07 through R-10 post-merge proof on exact implementation `main` at
 `9d0e792`:
