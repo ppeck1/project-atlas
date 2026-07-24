@@ -19,10 +19,13 @@ void main() {
     setUp(() {
       db = AppDb.withExecutor(NativeDatabase.memory());
       state = AppState(db, enableBackgroundSummaryRefresh: false);
+      final now = DateTime.utc(2026, 7, 17, 12);
       service = ProjectCapsuleService(
-        AtlasAgentProjectCapsuleSource(AtlasAgentService(state)),
+        AtlasAgentProjectCapsuleSource(
+          AtlasAgentService(state, now: () => now),
+        ),
         truthService: ProjectCapsuleTruthService(db),
-        now: () => DateTime.utc(2026, 7, 17, 12),
+        now: () => now,
       );
     });
 
