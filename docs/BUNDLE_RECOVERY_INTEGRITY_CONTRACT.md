@@ -125,6 +125,8 @@ Nested Git ZIPs remain opaque hashed payloads and are not recursively expanded.
 
 R-12 is specified separately by the
 [`recovery artifact retention contract`](RECOVERY_ARTIFACT_RETENTION_CONTRACT.md).
-R-12 through R-14 remain open pending their individual closure gates. The
-R-11 lifecycle above does not by itself claim recovery-artifact retention,
-streaming export, or bounded DOCX/HTML extraction. WP2 therefore remains open.
+It is closed after its individual merge and exact-main gates. R-13 is specified
+by the [`portable export contract`](PORTABLE_EXPORT_CONTRACT.md) and awaits its
+hosted closure gates; R-14 remains open. The R-11 lifecycle above does not by
+itself claim recovery-artifact retention, streaming export, or bounded
+DOCX/HTML extraction. WP2 therefore remains open.

@@ -3016,25 +3016,44 @@ class _AdminTabState extends State<_AdminTab> {
           runSpacing: 10,
           children: [
             OutlinedButton.icon(
-              onPressed: () async {
-                final path = await _askPath(
-                  'Export portable data',
-                  r'C:\Users\you\Documents\project_atlas_portable_export.zip',
-                );
-                if (path == null) return;
-                try {
-                  await state.exportPortableDataArchive(path);
-                  if (mounted) {
-                    setState(() => _status = 'Portable export created: $path');
-                  }
-                } catch (e) {
-                  if (mounted)
-                    setState(() => _status = 'Portable export failed: $e');
-                }
-              },
+              onPressed: state.isPortableExportRunning
+                  ? null
+                  : () async {
+                      final path = await _askPath(
+                        'Export portable data',
+                        r'C:\Users\you\Documents\project_atlas_portable_export.zip',
+                      );
+                      if (path == null) return;
+                      try {
+                        await state.exportPortableDataArchive(path);
+                        if (mounted) {
+                          setState(
+                            () => _status = 'Portable export created: $path',
+                          );
+                        }
+                      } on PortableExportCancelledException {
+                        if (mounted) {
+                          setState(
+                            () => _status = 'Portable export cancelled.',
+                          );
+                        }
+                      } catch (e) {
+                        if (mounted) {
+                          setState(
+                            () => _status = 'Portable export failed: $e',
+                          );
+                        }
+                      }
+                    },
               icon: const Icon(Icons.save_alt, size: 16),
               label: const Text('Export portable data'),
             ),
+            if (state.isPortableExportRunning)
+              OutlinedButton.icon(
+                onPressed: state.cancelPortableDataExport,
+                icon: const Icon(Icons.cancel_outlined, size: 16),
+                label: const Text('Cancel portable export'),
+              ),
             OutlinedButton.icon(
               onPressed: () async {
                 try {
@@ -3050,6 +3069,18 @@ class _AdminTabState extends State<_AdminTab> {
             ),
           ],
         ),
+        if (state.isPortableExportRunning &&
+            state.portableExportProgress != null) ...[
+          const SizedBox(height: 12),
+          LinearProgressIndicator(
+            value: state.portableExportProgress!.fraction,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            state.portableExportProgress!.message,
+            style: const TextStyle(fontSize: 12, color: _text54),
+          ),
+        ],
         const SizedBox(height: 10),
         const Text(
           'Portable export is not a complete backup and cannot restore an Atlas instance.',
