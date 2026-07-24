@@ -17,8 +17,8 @@ reproduction or design disposition before implementation.
 ## Immediate operating constraints
 
 - Do not record formal Capsule Edit Truth v1 acceptance until WP6 completes.
-- Keep the WP2 follow-up queue attended and single-worker until R-13 and R-14
-  each have hosted merge and exact-main proof.
+- Keep the WP2 follow-up queue attended and single-worker until R-14 has
+  hosted merge and exact-main proof.
 
 ## Work packages and order
 
@@ -54,9 +54,10 @@ after PR #46 merged as `fce3769`, hosted PR CI run 144 and exact-main push run
 145 passed, and local exact-main proof passed. PR #47 merged the canonical
 closure evidence as `f228b62`, and exact-closure-main push run 147 passed all
 jobs. R-12 closed after PR #50 merged as `6f59203`, its hosted PR check passed
-on unchanged retry, and exact-main push run `30056513672` passed. R-13 and
-R-14 remain open, so WP2 is not closed. The ledger contains 23 Closed and 28
-Open findings.
+on unchanged retry, and exact-main push run `30056513672` passed. R-13 closed
+after PR #52 merged as `b541724`, hosted PR run `30064193299` passed, and
+exact-main push run `30064872862` passed. R-14 remains open, so WP2 is not
+closed. The ledger contains 24 Closed and 27 Open findings.
 
 ## Finding ledger
 
@@ -74,7 +75,7 @@ Open findings.
 | SPA-20260721-R-10 | P1 | Accepted | Closed | WP2 | Archive path validation is not canonical Windows containment validation. | Codex | PR #37 | Platform-independent Windows path, alias, ancestor, and containment checks reject traversal, drive, ADS, device, control, invalid-character, trailing-dot/space, and preexisting-stage inputs. Merged as `9d0e792`; exact-main post-merge proof passed. |
 | SPA-20260721-R-11 | P2 | Accepted | Closed | WP2 | Failed backup/staging operations retain ambiguous partial artifacts. | Codex | PR #46/#47 | Typed incomplete/failed sibling paths, operation-owned no-follow markers, serialized terminal promotion/failure, bounded persisted cleanup, Windows reparse/8.3 validation, and active-operation race handling merged as `fce3769`; hosted PR CI run 144, exact-implementation-main push run 145, local exact-main proof, canonical closure PR #47 at `f228b62`, and exact-closure-main push run 147 passed. |
 | SPA-20260721-R-12 | P2 | Accepted | Closed | WP2 | Recovery artifacts have no retention policy. | Codex | PR #50/#51 | Two-phase bounded age/size retention, exact snapshot revalidation, newest valid safety-backup exclusion, active-plan preservation, operator preview, local audit, and recovery-mutation locking merged as `6f59203`; hosted PR CI run `30052185036` passed on unchanged retry and exact-main push run `30056513672` passed. PR #51 records canonical closure evidence. Contract: `docs/RECOVERY_ARTIFACT_RETENTION_CONTRACT.md`. |
-| SPA-20260721-R-13 | P2 | Accepted | In progress | WP2 | Portable export builds the full archive in memory. | Codex | Implementation PR pending | Dedicated-isolate store-mode ZIP writing, incremental bounded manifest emission, source/entry/aggregate/path/record limits, exact source revalidation, progress, cancellation, partial cleanup, structured per-file errors, and compatibility proof are implemented on the R-13 branch. Closure awaits hosted merge and exact-main proof. Contract: `docs/PORTABLE_EXPORT_CONTRACT.md`. |
+| SPA-20260721-R-13 | P2 | Accepted | Closed | WP2 | Portable export builds the full archive in memory. | Codex | PR #52 / closure PR pending | Dedicated-isolate store-mode ZIP writing, incremental bounded manifest emission, source/entry/aggregate/path/record limits, exact source revalidation, progress, cancellation, typed partial cleanup, structured per-file errors, and compatibility proof merged as `b541724`; hosted PR run `30064193299` and exact-main push run `30064872862` passed. Contract: `docs/PORTABLE_EXPORT_CONTRACT.md`. |
 | SPA-20260721-R-14 | P2 | Needs verification | Open | WP2 | DOCX/HTML extraction uses synchronous unbounded reads. | Unassigned | TBD | Async/isolate extraction with source and expanded-size limits. |
 | SPA-20260721-A-01 | P0 | Accepted | Closed | WP3 | LLM claim is a select-then-unconditional-update race. | Codex | PR #33 | Atomic specific-task and claim-next CAS merged as `8a90d6e`; two-connection contention proof passed on merged `main`. |
 | SPA-20260721-A-02 | P0 | Accepted | Closed | WP3 | Complete/fail does not enforce lease owner or expiry. | Codex | PR #33 | Worker-plus-attempt CAS with strict expiry and typed conflicts merged as `8a90d6e`; wrong-owner, exact-expiry, and same-worker ABA proof passed on merged `main`. |
@@ -116,6 +117,36 @@ Open findings.
 
 ## Progress evidence
 
+### WP2 R-13 closure — 2026-07-24
+
+PR #52 merged as `b541724`. R-13 is closed after hosted CI and exact-main
+post-merge proof passed.
+
+- Portable export writes a ZIP in store mode from a dedicated isolate, streams
+  source bytes, and emits its manifest incrementally without retaining the
+  complete payload, manifest, or archive in memory.
+- Default and hard entry, per-file, aggregate, manifest, metadata-record, and
+  path-length limits reject oversized work before promotion.
+- Normalized relative POSIX paths, case-folded duplicate rejection, no-follow
+  regular-file checks, and pre/post length and SHA-256 validation bind each
+  worker read to the parent-preflight source.
+- Progress covers preparation, writing, and promotion. Cancellation kills the
+  isolate, waits for its resource-release barrier, removes typed partials, and
+  preserves an existing destination.
+- Focused portable-export and document-import suite: 41/41.
+- Broader portable-export/document-import/operation-status/registry selection:
+  103/103.
+- Full Flutter suite: 622 passed with 1 intentional skip.
+- Static analysis: clean.
+- Python policy/maintenance suite: 30/30.
+- Generated-code verification: clean.
+- Windows release build: passed.
+- Hosted PR run `30064193299` passed all gates, and exact-main push run
+  `30064872862` repeated generation, policy, analysis, MCP adapter, all tests,
+  Windows release, seeded fixture, and gateway smoke on `b541724`.
+- R-14 remains open, so WP2 remains open and its attended single-worker
+  follow-up constraint remains in force.
+
 ### WP2 R-12 closure — 2026-07-24
 
 PR #50 merged as `6f59203`. R-12 is closed after hosted CI and exact-main
@@ -142,8 +173,8 @@ post-merge proof passed.
   existing schema-migration test after every R-12 test passed. Its unchanged
   retry passed all gates, and exact-main push run `30056513672` repeated the
   complete proof on `6f59203`.
-- R-13 and R-14 remain open, so WP2 remains open and its attended
-  single-worker follow-up constraint remains in force.
+- R-13 subsequently closed; R-14 remains open, so WP2 remains open and its
+  attended single-worker follow-up constraint remains in force.
 
 ### WP2 R-11 closure — 2026-07-23
 
@@ -176,8 +207,8 @@ as `f228b62`. R-11 is closed after hosted CI and exact-main proof passed.
 - Exact-main static analysis: clean.
 - Exact-main Python policy/maintenance suite: 30/30.
 - Exact-main Windows release build: passed.
-- R-13 and R-14 remain open, so WP2 remains open and its attended
-  single-worker follow-up constraint remains in force.
+- R-13 subsequently closed; R-14 remains open, so WP2 remains open and its
+  attended single-worker follow-up constraint remains in force.
 
 ### WP4 A-08/A-09 closure — 2026-07-22
 
@@ -274,7 +305,7 @@ full post-merge proof passed on exact current `main`.
 - Windows release build: passed.
 - Hosted PR #37 CI passed, including generated-code verification, analysis,
   full tests, Windows release build, seeded MCP fixture, and gateway smoke.
-- R-12 subsequently closed under the evidence above. R-13 and R-14 remain
+- R-12 and R-13 subsequently closed under the evidence above. R-14 remains
   open, so WP2 remains open.
 
 ### WP4 A-03/A-04 closure — 2026-07-21
